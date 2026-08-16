@@ -31,7 +31,18 @@ export type Robot = {
   joints: Joint[];
 };
 export type SimulationState = { positions: number[]; training: boolean };
-export type Demonstration = { current: number[]; target: number[] };
+export type DemonstrationFrame = {
+  timestamp: number;
+  positions: number[];
+};
+export type Demonstration = {
+  id: string;
+  name: string;
+  kind: "pose" | "gesture";
+  current: number[];
+  target: number[];
+  frames: DemonstrationFrame[];
+};
 export type TrainingConfig = {
   hidden_layers: number[];
   activation: string;

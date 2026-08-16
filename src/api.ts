@@ -46,6 +46,20 @@ export function createSession(robotId: string) {
   );
 }
 
+export function saveDemonstrations(
+  sessionId: string,
+  demonstrations: Demonstration[],
+) {
+  return request<{ status: string; demonstrations: number }>(
+    `/api/sessions/${sessionId}/demonstrations`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ demonstrations }),
+    },
+  );
+}
+
 export function trainSession(
   sessionId: string,
   demonstrations: Demonstration[],

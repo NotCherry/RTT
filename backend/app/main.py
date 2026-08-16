@@ -200,9 +200,22 @@ class TrainConfig(BaseModel):
     batch_size: int = Field(16, ge=1, le=256)
 
 
+class DemonstrationFrame(BaseModel):
+    timestamp: float = Field(ge=0)
+    positions: list[float]
+
+
 class Demonstration(BaseModel):
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    name: str = "Untitled pose"
+    kind: str = "pose"
     current: list[float]
     target: list[float]
+    frames: list[DemonstrationFrame] = Field(default_factory=list)
+
+
+class DemonstrationsRequest(BaseModel):
+    demonstrations: list[Demonstration]
 
 
 class TrainRequest(BaseModel):
@@ -353,15 +366,24 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+def robot_file_path(robot_id: str) -> Path:
+    if not robot_id or any(not (character.isalnum() or character == "-") for character in robot_id):
+        raise ValueError("Invalid robot storage identifier.")
+    data_root = DATA_DIR.resolve()
+    robot_dir = (data_root / robot_id).resolve()
+    if data_root not in robot_dir.parents:
+        raise ValueError("Robot storage path escaped the data directory.")
+    robot_dir.mkdir(parents=True, exist_ok=True)
+    return robot_dir / "robot.urdf"
+
+
 @app.post("/api/robots/parse")
 async def upload_robot(file: UploadFile = File(...)) -> dict[str, Any]:
     raw = await file.read()
     if len(raw) > MAX_UPLOAD_BYTES:
         raise HTTPException(413, f"URDF upload exceeds the {MAX_UPLOAD_BYTES // 1024 // 1024} MB limit.")
     robot_id = uuid.uuid4().hex
-    robot_dir = DATA_DIR / robot_id
-    robot_dir.mkdir(parents=True, exist_ok=True)
-    path = robot_dir / "robot.urdf"
+    path = robot_file_path(robot_id)
     try:
         robot = parse_urdf(raw, file.filename or "robot.urdf", path)
     except ValueError as exc:
@@ -375,9 +397,7 @@ async def upload_robot(file: UploadFile = File(...)) -> dict[str, Any]:
 def demo_robot() -> dict[str, Any]:
     robot_id = "demo-slider-arm"
     if robot_id not in ROBOTS:
-        robot_dir = DATA_DIR / robot_id
-        robot_dir.mkdir(parents=True, exist_ok=True)
-        path = robot_dir / "robot.urdf"
+        path = robot_file_path(robot_id)
         path.write_text(DEMO_URDF)
         ROBOTS[robot_id] = parse_urdf(DEMO_URDF.encode(), "slider-arm.urdf", path)
     return serializable_robot(ROBOTS[robot_id])
@@ -392,6 +412,20 @@ def create_session(request: SessionRequest) -> dict[str, Any]:
     session = SimulationSession(session_id, robot)
     SESSIONS[session_id] = session
     return {"session_id": session_id, "robot": serializable_robot(robot), "state": session.state()}
+
+
+@app.put("/api/sessions/{session_id}/demonstrations")
+def save_demonstrations(session_id: str, request: DemonstrationsRequest) -> dict[str, Any]:
+    session = SESSIONS.get(session_id)
+    if session is None:
+        raise HTTPException(404, "Session not found.")
+    if len(request.demonstrations) > MAX_DEMONSTRATIONS:
+        raise HTTPException(413, f"A maximum of {MAX_DEMONSTRATIONS} demonstrations is supported.")
+    joint_count = len(session.joints)
+    if any(len(item.current) != joint_count or len(item.target) != joint_count for item in request.demonstrations):
+        raise HTTPException(422, "Each demonstration must contain one value per controllable joint.")
+    session.demonstrations = [item.model_dump() for item in request.demonstrations]
+    return {"status": "saved", "demonstrations": len(session.demonstrations)}
 
 
 @app.post("/api/sessions/{session_id}/train")
