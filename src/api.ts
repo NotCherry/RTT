@@ -1,0 +1,92 @@
+import type {
+  Demonstration,
+  Robot,
+  SimulationState,
+  TrainingConfig,
+} from "./types";
+
+const runtimeMeta = import.meta as unknown as {
+  env?: { VITE_API_URL?: string };
+};
+const API_BASE = runtimeMeta.env?.VITE_API_URL ?? "";
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(`${API_BASE}${path}`, init);
+  if (!response.ok) {
+    let message = `Request failed (${response.status})`;
+    try {
+      const body = (await response.json()) as { detail?: string };
+      message = body.detail ?? message;
+    } catch {
+      // Keep the status message when the server did not send JSON.
+    }
+    throw new Error(message);
+  }
+  return response.json() as Promise<T>;
+}
+
+export function loadDemoRobot() {
+  return request<Robot>("/api/robots/demo");
+}
+
+export function uploadRobot(file: File) {
+  const form = new FormData();
+  form.append("file", file);
+  return request<Robot>("/api/robots/parse", { method: "POST", body: form });
+}
+
+export function createSession(robotId: string) {
+  return request<{ session_id: string; robot: Robot; state: SimulationState }>(
+    "/api/sessions",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ robot_id: robotId }),
+    },
+  );
+}
+
+export function trainSession(
+  sessionId: string,
+  demonstrations: Demonstration[],
+  config: TrainingConfig,
+) {
+  return request<{ status: string }>(`/api/sessions/${sessionId}/train`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ demonstrations, config }),
+  });
+}
+
+export function predictPose(
+  sessionId: string,
+  target: number[],
+  current: number[],
+) {
+  return request<{ target: number[]; positions: number[]; error: number }>(
+    `/api/sessions/${sessionId}/predict`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ target, current }),
+    },
+  );
+}
+
+export function exportUrl(sessionId: string) {
+  return `${API_BASE}/api/sessions/${sessionId}/export`;
+}
+
+export function websocketUrl(sessionId: string) {
+  if (API_BASE) {
+    try {
+      const url = new URL(`${API_BASE}/ws/sessions/${sessionId}`);
+      url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+      return url.toString();
+    } catch {
+      // Fall back to the current origin when a deployment provides a malformed API URL.
+    }
+  }
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  return `${protocol}//${window.location.host}/ws/sessions/${sessionId}`;
+}
