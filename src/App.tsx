@@ -10,6 +10,13 @@ import {
   websocketUrl,
 } from "./api";
 import { RobotScene } from "./RobotScene";
+import {
+  Button,
+  Panel,
+  PanelHeader,
+  StatusPill,
+  TabButton,
+} from "./components/ui";
 import type {
   Demonstration,
   DemonstrationFrame,
@@ -520,10 +527,9 @@ export default function App() {
           </div>
         </div>
         <div className="topbar-actions">
-          <span className={`connection-pill ${sessionId ? "online" : ""}`}>
-            <span className="status-dot" />
+          <StatusPill online={Boolean(sessionId)}>
             {sessionId ? "Session live" : "No session"}
-          </span>
+          </StatusPill>
           {sessionId && (
             <a className="button ghost small" href={exportUrl(sessionId)}>
               Export session
@@ -562,8 +568,8 @@ export default function App() {
         </div>
       )}
       <section className="workbench-grid">
-        <div className="viewer-column panel">
-          <div className="panel-header">
+        <Panel className="viewer-column">
+          <PanelHeader>
             <div>
               <p className="panel-label">LIVE VIEWPORT</p>
               <h3>{robot?.name ?? "Awaiting robot"}</h3>
@@ -584,7 +590,7 @@ export default function App() {
                 Open sample
               </button>
             </div>
-          </div>
+          </PanelHeader>
           <RobotScene robot={robot} state={state} />
           <div className="viewer-footer">
             <span>
@@ -595,9 +601,9 @@ export default function App() {
             </span>
             <span className="viewer-hint">Drag to orbit · Scroll to zoom</span>
           </div>
-        </div>
+        </Panel>
 
-        <aside className="controls-column panel">
+        <Panel className="controls-column">
           <div className="panel-header compact">
             <div>
               <p className="panel-label">ROBOT INPUT</p>
@@ -669,39 +675,46 @@ export default function App() {
             ))}
           </div>
           <div className="capture-actions">
-            <button
-              className="button primary full capture-button"
+            <Button
+              variant="primary"
+              full
+              className="capture-button"
               onClick={captureDemonstration}
               disabled={!robot || !controllableJoints.length || recording}
+              type="button"
             >
               <span>＋</span> Capture pose <b>{demonstrations.length}</b>
-            </button>
+            </Button>
             {recording ? (
-              <button
-                className="button recording-button full"
+              <Button
+                variant="recording"
+                full
                 onClick={stopRecording}
+                type="button"
               >
                 <span className="recording-dot" /> Stop recording ·{" "}
                 {recordingFrameCount} frames
-              </button>
+              </Button>
             ) : (
-              <button
-                className="button secondary full"
+              <Button
+                variant="secondary"
+                full
                 onClick={startRecording}
                 disabled={!robot || !controllableJoints.length}
+                type="button"
               >
                 Record gesture
-              </button>
+              </Button>
             )}
           </div>
           <p className="helper-text">
             Capture a static pose or record a timestamped gesture. Recorded
             frames are archived with the demonstration.
           </p>
-        </aside>
+        </Panel>
 
-        <aside className="training-column panel">
-          <div className="panel-header compact">
+        <Panel className="training-column">
+          <PanelHeader compact>
             <div>
               <p className="panel-label">MODEL TRAINING</p>
               <h3>Behavior cloning</h3>
@@ -712,44 +725,39 @@ export default function App() {
               <span className="status-dot" />
               {state?.training ? "Training" : "Idle"}
             </span>
-          </div>
+          </PanelHeader>
           <div
             className="tab-switcher"
             role="tablist"
             aria-label="Training workspace"
           >
-            <button
-              className={
-                activeTab === "training" ? "tab-button active" : "tab-button"
-              }
+            <TabButton
+              active={activeTab === "training"}
               onClick={() => setActiveTab("training")}
               role="tab"
               aria-selected={activeTab === "training"}
+              type="button"
             >
               Train
-            </button>
-            <button
-              className={
-                activeTab === "demonstrations"
-                  ? "tab-button active"
-                  : "tab-button"
-              }
+            </TabButton>
+            <TabButton
+              active={activeTab === "demonstrations"}
               onClick={() => setActiveTab("demonstrations")}
               role="tab"
               aria-selected={activeTab === "demonstrations"}
+              type="button"
             >
               Demonstrations <span>{demonstrations.length}</span>
-            </button>
-            <button
-              className={
-                activeTab === "testing" ? "tab-button active" : "tab-button"
-              }
+            </TabButton>
+            <TabButton
+              active={activeTab === "testing"}
               onClick={() => setActiveTab("testing")}
               role="tab"
               aria-selected={activeTab === "testing"}
+              type="button"
             >
               Test
-            </button>
+            </TabButton>
           </div>
           {activeTab === "training" ? (
             <>
@@ -1149,7 +1157,7 @@ export default function App() {
               )}
             </div>
           )}
-        </aside>
+        </Panel>
       </section>
       <footer className="footer">
         <span>FastAPI · PyBullet · PyTorch · Three.js</span>

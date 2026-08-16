@@ -22,3 +22,7 @@ docker compose up --build
 ```
 
 Then open `http://localhost:8080`.
+
+## Frontend design reference
+
+The current visual language, tokens, component recipes, and Tailwind migration rules are documented in [`docs/design-reference.md`](./docs/design-reference.md).
