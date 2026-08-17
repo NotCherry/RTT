@@ -198,6 +198,10 @@ class TrainConfig(BaseModel):
     learning_rate: float = Field(0.003, gt=0.000001, le=1.0)
     epochs: int = Field(300, ge=1, le=MAX_EPOCHS)
     batch_size: int = Field(16, ge=1, le=256)
+    timestep_ms: int = Field(120, ge=10, le=2000)
+    random_starts: int = Field(4, ge=0, le=64)
+    random_seed: int = Field(7, ge=0, le=1_000_000)
+    rollout_steps: int = Field(160, ge=1, le=2000)
 
 
 class DemonstrationFrame(BaseModel):
@@ -212,10 +216,24 @@ class Demonstration(BaseModel):
     current: list[float]
     target: list[float]
     frames: list[DemonstrationFrame] = Field(default_factory=list)
+    start_frame_index: int = Field(0, ge=0)
+    dataset_id: str | None = None
+
+
+class Dataset(BaseModel):
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    name: str = "Untitled dataset"
+    demonstration_ids: list[str] = Field(default_factory=list)
+    created_at: str = ""
+    updated_at: str = ""
 
 
 class DemonstrationsRequest(BaseModel):
     demonstrations: list[Demonstration]
+
+
+class DatasetsRequest(BaseModel):
+    datasets: list[Dataset]
 
 
 class TrainRequest(BaseModel):
@@ -232,6 +250,13 @@ class PredictRequest(BaseModel):
     current: list[float] | None = None
 
 
+class RolloutRequest(BaseModel):
+    frames: list[DemonstrationFrame]
+    current: list[float] | None = None
+    timestep_ms: int = Field(120, ge=10, le=2000)
+    max_steps: int = Field(160, ge=1, le=2000)
+
+
 class SimulationSession:
     def __init__(self, session_id: str, robot: dict[str, Any]):
         self.id = session_id
@@ -241,7 +266,9 @@ class SimulationSession:
         self.training = False
         self.model: torch.nn.Module | None = None
         self.model_config: dict[str, Any] | None = None
+        self.model_mode = "temporal"
         self.demonstrations: list[dict[str, Any]] = []
+        self.datasets: list[dict[str, Any]] = []
         self.client = p.connect(p.DIRECT)
         p.setGravity(0, 0, -9.81, physicsClientId=self.client)
         self.body: int | None = None
@@ -325,6 +352,89 @@ def make_model(input_size: int, output_size: int, config: TrainConfig) -> torch.
     return torch.nn.Sequential(*layers)
 
 
+def _lerp_positions(start: list[float], end: list[float], progress: float) -> list[float]:
+    return [
+        value + ((end[index] if index < len(end) else value) - value) * progress
+        for index, value in enumerate(start)
+    ]
+
+
+def _interpolate_frame_positions(frames: list[DemonstrationFrame], timestamp: float) -> list[float]:
+    ordered = sorted(frames, key=lambda frame: frame.timestamp)
+    if not ordered:
+        return []
+    if timestamp <= ordered[0].timestamp:
+        return list(ordered[0].positions)
+    if timestamp >= ordered[-1].timestamp:
+        return list(ordered[-1].positions)
+    next_index = next(index for index, frame in enumerate(ordered) if frame.timestamp >= timestamp)
+    next_frame = ordered[next_index]
+    previous = ordered[max(0, next_index - 1)]
+    duration = max(next_frame.timestamp - previous.timestamp, 1.0)
+    progress = (timestamp - previous.timestamp) / duration
+    return _lerp_positions(previous.positions, next_frame.positions, progress)
+
+
+def build_incremental_samples(
+    demonstrations: list[Demonstration],
+    joints: list[dict[str, Any]],
+    timestep_ms: int,
+    random_starts: int = 0,
+    random_seed: int = 7,
+) -> list[dict[str, Any]]:
+    """Expand authored checkpoints into small next-state delta samples."""
+    if timestep_ms < 1:
+        raise ValueError("The training timestep must be positive.")
+    rng = np.random.default_rng(random_seed)
+    samples: list[dict[str, Any]] = []
+    step = max(1, timestep_ms)
+
+    for demonstration in demonstrations:
+        frames = sorted(demonstration.frames, key=lambda frame: frame.timestamp)
+        if not frames:
+            frames = [DemonstrationFrame(timestamp=0, positions=demonstration.target)]
+        start_index = min(demonstration.start_frame_index, len(frames) - 1)
+        frames = frames[start_index:]
+        if any(len(frame.positions) != len(joints) for frame in frames):
+            raise ValueError("Each timeline frame must contain one value per controllable joint.")
+        if len(frames) == 1:
+            frames = [
+                DemonstrationFrame(timestamp=0, positions=demonstration.current),
+                DemonstrationFrame(timestamp=step, positions=frames[0].positions),
+            ]
+
+        starts = [list(frames[0].positions)]
+        for _ in range(random_starts):
+            starts.append([
+                joint["lower"] + (joint["upper"] - joint["lower"]) * rng.random()
+                for joint in joints
+            ])
+
+        for start_index_value, initial in enumerate(starts):
+            route = frames if start_index_value == 0 else [
+                DemonstrationFrame(timestamp=0, positions=initial),
+                *frames,
+            ]
+            for segment_index in range(len(route) - 1):
+                segment_start = route[segment_index]
+                segment_end = route[segment_index + 1]
+                duration = max(segment_end.timestamp - segment_start.timestamp, step)
+                for elapsed in np.arange(0, duration, step):
+                    progress = min(1.0, elapsed / duration)
+                    next_progress = min(1.0, (elapsed + step) / duration)
+                    current = _lerp_positions(segment_start.positions, segment_end.positions, progress)
+                    next_state = _lerp_positions(segment_start.positions, segment_end.positions, next_progress)
+                    current_normalized = normalized(current, joints)
+                    next_normalized = normalized(next_state, joints)
+                    samples.append({
+                        "current": current_normalized,
+                        "goal": normalized(segment_end.positions, joints),
+                        "progress": progress,
+                        "delta": [next_value - current_value for next_value, current_value in zip(next_normalized, current_normalized)],
+                    })
+    return samples
+
+
 def train_session(session: SimulationSession, request: TrainRequest) -> None:
     try:
         if not request.demonstrations:
@@ -332,12 +442,21 @@ def train_session(session: SimulationSession, request: TrainRequest) -> None:
         joint_count = len(session.joints)
         if any(len(item.current) != joint_count or len(item.target) != joint_count for item in request.demonstrations):
             raise ValueError("Each demonstration must contain one value per controllable joint.")
-        torch.manual_seed(7)
-        inputs = [normalized(item.current, session.joints) + normalized(item.target, session.joints) for item in request.demonstrations]
-        targets = [normalized(item.target, session.joints) for item in request.demonstrations]
+        torch.manual_seed(request.config.random_seed)
+        samples = build_incremental_samples(
+            request.demonstrations,
+            session.joints,
+            request.config.timestep_ms,
+            request.config.random_starts,
+            request.config.random_seed,
+        )
+        if not samples:
+            raise ValueError("Capture at least two timeline checkpoints before training.")
+        inputs = [sample["current"] + sample["goal"] + [sample["progress"]] for sample in samples]
+        targets = [sample["delta"] for sample in samples]
         x = torch.tensor(inputs, dtype=torch.float32)
         y = torch.tensor(targets, dtype=torch.float32)
-        model = make_model(joint_count * 2, joint_count, request.config)
+        model = make_model(joint_count * 2 + 1, joint_count, request.config)
         optimizer = torch.optim.Adam(model.parameters(), lr=request.config.learning_rate)
         loss_function = torch.nn.SmoothL1Loss()
         steps = request.config.epochs
@@ -349,12 +468,13 @@ def train_session(session: SimulationSession, request: TrainRequest) -> None:
             loss.backward()
             optimizer.step()
             if epoch == 0 or (epoch + 1) % max(1, steps // 20) == 0 or epoch == steps - 1:
-                session.events.append({"type": "training", "epoch": epoch + 1, "epochs": steps, "loss": float(loss.item())})
+                session.events.append({"type": "training", "epoch": epoch + 1, "epochs": steps, "loss": float(loss.item()), "samples": len(samples)})
         with session.lock:
             session.model = model.eval()
             session.model_config = request.config.model_dump()
+            session.model_mode = "temporal"
             session.demonstrations = [item.model_dump() for item in request.demonstrations]
-            session.events.append({"type": "training_complete", "loss": float(loss.item()), "demonstrations": len(request.demonstrations)})
+            session.events.append({"type": "training_complete", "loss": float(loss.item()), "demonstrations": len(request.demonstrations), "samples": len(samples)})
     except Exception as exc:
         session.events.append({"type": "error", "message": str(exc)})
     finally:
@@ -424,8 +544,35 @@ def save_demonstrations(session_id: str, request: DemonstrationsRequest) -> dict
     joint_count = len(session.joints)
     if any(len(item.current) != joint_count or len(item.target) != joint_count for item in request.demonstrations):
         raise HTTPException(422, "Each demonstration must contain one value per controllable joint.")
+    if any(
+        len(frame.positions) != joint_count
+        or any(left.timestamp > right.timestamp for left, right in zip(item.frames, item.frames[1:]))
+        for item in request.demonstrations
+        for frame in item.frames
+    ):
+        raise HTTPException(422, "Timeline frames must be ordered and match the controllable joints.")
+    if any(item.start_frame_index >= len(item.frames) for item in request.demonstrations if item.frames):
+        raise HTTPException(422, "The selected starting frame does not exist.")
     session.demonstrations = [item.model_dump() for item in request.demonstrations]
     return {"status": "saved", "demonstrations": len(session.demonstrations)}
+
+
+@app.put("/api/sessions/{session_id}/datasets")
+def save_datasets(session_id: str, request: DatasetsRequest) -> dict[str, Any]:
+    session = SESSIONS.get(session_id)
+    if session is None:
+        raise HTTPException(404, "Session not found.")
+    if len(request.datasets) > MAX_DEMONSTRATIONS:
+        raise HTTPException(413, f"A maximum of {MAX_DEMONSTRATIONS} datasets is supported.")
+    known_ids = {item["id"] for item in session.demonstrations}
+    if any(
+        demonstration_id not in known_ids
+        for dataset in request.datasets
+        for demonstration_id in dataset.demonstration_ids
+    ):
+        raise HTTPException(422, "Datasets may only contain demonstrations in this session.")
+    session.datasets = [dataset.model_dump() for dataset in request.datasets]
+    return {"status": "saved", "datasets": len(session.datasets)}
 
 
 @app.post("/api/sessions/{session_id}/train")
@@ -452,11 +599,67 @@ def predict(session_id: str, request: PredictRequest) -> dict[str, Any]:
     if len(request.target) != len(session.joints):
         raise HTTPException(422, "The target pose does not match the robot joints.")
     current = request.current or [0.0] * len(session.joints)
-    features = torch.tensor([normalized(current, session.joints) + normalized(request.target, session.joints)], dtype=torch.float32)
-    with torch.no_grad():
-        prediction = session.model(features)[0].tolist()
-    positions = denormalized(prediction, session.joints)
+    if len(current) != len(session.joints):
+        raise HTTPException(422, "The current pose does not match the robot joints.")
+    current_normalized = normalized(current, session.joints)
+    target_normalized = normalized(request.target, session.joints)
+    if session.model_mode == "temporal":
+        features = torch.tensor([current_normalized + target_normalized + [1.0]], dtype=torch.float32)
+        with torch.no_grad():
+            delta = session.model(features)[0].tolist()
+        positions = denormalized([value + change for value, change in zip(current_normalized, delta)], session.joints)
+    else:
+        features = torch.tensor([current_normalized + target_normalized], dtype=torch.float32)
+        with torch.no_grad():
+            prediction = session.model(features)[0].tolist()
+        positions = denormalized(prediction, session.joints)
     return {"target": request.target, "positions": positions, "error": max(abs(a - b) for a, b in zip(positions, request.target))}
+
+
+@app.post("/api/sessions/{session_id}/rollout")
+def rollout(session_id: str, request: RolloutRequest) -> dict[str, Any]:
+    session = SESSIONS.get(session_id)
+    if session is None:
+        raise HTTPException(404, "Session not found.")
+    if session.model is None:
+        raise HTTPException(409, "Train a model before requesting a rollout.")
+    if len(request.frames) < 2:
+        raise HTTPException(422, "A rollout requires at least two checkpoints.")
+    joint_count = len(session.joints)
+    if any(len(frame.positions) != joint_count for frame in request.frames):
+        raise HTTPException(422, "Each checkpoint must match the robot joints.")
+    ordered = sorted(request.frames, key=lambda frame: frame.timestamp)
+    current = request.current or list(ordered[0].positions)
+    if len(current) != joint_count:
+        raise HTTPException(422, "The current pose does not match the robot joints.")
+    result = [{"timestamp": 0, "positions": list(current), "expected": list(ordered[0].positions)}]
+    current_timestamp = 0
+    total_steps = 0
+    for checkpoint_index in range(1, len(ordered)):
+        checkpoint = ordered[checkpoint_index]
+        previous_timestamp = ordered[checkpoint_index - 1].timestamp
+        segment_steps = max(1, math.ceil(max(checkpoint.timestamp - previous_timestamp, request.timestep_ms) / request.timestep_ms))
+        for step_index in range(segment_steps):
+            if total_steps >= request.max_steps:
+                break
+            progress = min(1.0, (step_index + 1) / segment_steps)
+            current_normalized = normalized(current, session.joints)
+            target_normalized = normalized(checkpoint.positions, session.joints)
+            features = torch.tensor([current_normalized + target_normalized + [progress]], dtype=torch.float32)
+            with torch.no_grad():
+                delta = session.model(features)[0].tolist()
+            current = denormalized([value + change for value, change in zip(current_normalized, delta)], session.joints)
+            current_timestamp += request.timestep_ms
+            expected = _lerp_positions(
+                ordered[checkpoint_index - 1].positions,
+                checkpoint.positions,
+                progress,
+            )
+            result.append({"timestamp": current_timestamp, "positions": list(current), "expected": expected})
+            total_steps += 1
+        if total_steps >= request.max_steps:
+            break
+    return {"frames": result, "steps": total_steps}
 
 
 @app.get("/api/sessions/{session_id}/export")
@@ -467,6 +670,7 @@ def export_session(session_id: str) -> StreamingResponse:
     snapshot = {
         "robot": serializable_robot(session.robot),
         "demonstrations": session.demonstrations,
+        "datasets": session.datasets,
         "model_config": session.model_config,
         "positions": session.positions,
     }

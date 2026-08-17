@@ -4,6 +4,8 @@ import {
   exportUrl,
   loadDemoRobot,
   predictPose,
+  rolloutSession,
+  saveDatasets,
   saveDemonstrations,
   trainSession,
   uploadRobot,
@@ -14,6 +16,7 @@ import {
   formatJointValue as formatJoint,
   meanAbsoluteError as meanError,
 } from "./domain/metrics";
+import { interpolatePositions, normalizeFrames } from "./domain/timeline";
 import {
   Button,
   Panel,
@@ -22,9 +25,12 @@ import {
   TabButton,
 } from "./components/ui";
 import type {
+  Dataset,
   Demonstration,
   DemonstrationFrame,
+  Joint,
   Robot,
+  RolloutFrame,
   SimulationState,
   TrainingConfig,
 } from "./types";
@@ -35,6 +41,10 @@ const initialConfig: TrainingConfig = {
   learning_rate: 0.003,
   epochs: 300,
   batch_size: 16,
+  timestep_ms: 120,
+  random_starts: 4,
+  random_seed: 7,
+  rollout_steps: 160,
 };
 
 type TrainingMetric = { epoch: number; epochs: number; loss: number };
@@ -59,6 +69,7 @@ export default function App() {
   const [metric, setMetric] = useState<TrainingMetric | null>(null);
   const [metricHistory, setMetricHistory] = useState<TrainingMetric[]>([]);
   const [evaluation, setEvaluation] = useState<EvaluationResult | null>(null);
+  const [rolloutFrames, setRolloutFrames] = useState<RolloutFrame[]>([]);
   const [trained, setTrained] = useState(false);
   const [message, setMessage] = useState(
     "Load the sample robot or upload a primitive URDF.",
@@ -66,12 +77,18 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [activeTab, setActiveTab] = useState<
-    "training" | "demonstrations" | "testing"
+    "training" | "timeline" | "demonstrations" | "datasets" | "testing"
   >("training");
   const [selectedDemoId, setSelectedDemoId] = useState<string | null>(null);
   const [editingDemoId, setEditingDemoId] = useState<string | null>(null);
   const [recording, setRecording] = useState(false);
   const [recordingFrameCount, setRecordingFrameCount] = useState(0);
+  const [recordingFrames, setRecordingFrames] = useState<DemonstrationFrame[]>(
+    [],
+  );
+  const [selectedFrameIndex, setSelectedFrameIndex] = useState(0);
+  const [datasets, setDatasets] = useState<Dataset[]>([]);
+  const [activeDatasetId, setActiveDatasetId] = useState<string | null>(null);
   const [replayingDemoId, setReplayingDemoId] = useState<string | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
   const positionsRef = useRef<number[]>([]);
@@ -85,6 +102,13 @@ export default function App() {
   );
   const positions = state?.positions ?? controllableJoints.map(() => 0);
   const hiddenLayerText = config.hidden_layers.join(", ");
+  const timelineDemonstration = demonstrations.find(
+    (demonstration) =>
+      demonstration.id === selectedDemoId && demonstration.kind === "gesture",
+  );
+  const timelineFrames = normalizeFrames(
+    recording ? recordingFrames : (timelineDemonstration?.frames ?? []),
+  );
 
   useEffect(() => {
     positionsRef.current = positions;
@@ -99,6 +123,7 @@ export default function App() {
         timestamp: performance.now() - draft.startedAt,
         positions: [...positionsRef.current],
       });
+      setRecordingFrames([...draft.frames]);
       setRecordingFrameCount(draft.frames.length);
     }, 120);
     return () => {
@@ -172,16 +197,85 @@ export default function App() {
       socketRef.current.send(JSON.stringify(payload));
   }
 
-  function persistDemonstrations(next: Demonstration[]) {
-    setDemonstrations(next);
+  function persistDatasets(next: Dataset[]) {
+    setDatasets(next);
     if (!sessionId) return;
-    void saveDemonstrations(sessionId, next).catch((cause) => {
+    void saveDatasets(sessionId, next).catch((cause) => {
       setError(
-        cause instanceof Error
-          ? cause.message
-          : "Unable to save demonstrations.",
+        cause instanceof Error ? cause.message : "Unable to save datasets.",
       );
     });
+  }
+
+  function persistDemonstrations(next: Demonstration[]) {
+    setDemonstrations(next);
+    const previousIds = new Set(
+      demonstrations.map((demonstration) => demonstration.id),
+    );
+    const retainedIds = new Set(next.map((demonstration) => demonstration.id));
+    const newIds = next
+      .filter((demonstration) => !previousIds.has(demonstration.id))
+      .map((demonstration) => demonstration.id);
+    const nextDatasets = datasets.map((dataset) => {
+      const members = dataset.demonstration_ids.filter((id) =>
+        retainedIds.has(id),
+      );
+      return {
+        ...dataset,
+        demonstration_ids:
+          dataset.id === activeDatasetId
+            ? [...new Set([...members, ...newIds])]
+            : members,
+        updated_at: new Date().toISOString(),
+      };
+    });
+    if (!sessionId) {
+      if (nextDatasets.length) setDatasets(nextDatasets);
+      return;
+    }
+    void saveDemonstrations(sessionId, next)
+      .then(() => {
+        if (nextDatasets.length) persistDatasets(nextDatasets);
+      })
+      .catch((cause) => {
+        setError(
+          cause instanceof Error
+            ? cause.message
+            : "Unable to save demonstrations.",
+        );
+      });
+  }
+
+  function moveDemonstration(demonstrationId: string, datasetId: string) {
+    const nextDemonstrations = demonstrations.map((demonstration) =>
+      demonstration.id === demonstrationId
+        ? { ...demonstration, dataset_id: datasetId }
+        : demonstration,
+    );
+    const nextDatasets = datasets.map((dataset) => ({
+      ...dataset,
+      demonstration_ids:
+        dataset.id === datasetId
+          ? [...new Set([...dataset.demonstration_ids, demonstrationId])]
+          : dataset.demonstration_ids.filter((id) => id !== demonstrationId),
+      updated_at: new Date().toISOString(),
+    }));
+    setDemonstrations(nextDemonstrations);
+    if (sessionId) {
+      void saveDemonstrations(sessionId, nextDemonstrations)
+        .then(() => persistDatasets(nextDatasets))
+        .catch((cause) => {
+          setError(
+            cause instanceof Error
+              ? cause.message
+              : "Unable to move demonstration.",
+          );
+        });
+    } else {
+      persistDatasets(nextDatasets);
+    }
+    setActiveDatasetId(datasetId);
+    setMessage("Demonstration moved to the selected dataset.");
   }
 
   function applyPositions(next: number[]) {
@@ -200,6 +294,91 @@ export default function App() {
     setReplayingDemoId(null);
   }
 
+  function replaceTimelineFrames(nextFrames: DemonstrationFrame[]) {
+    const next = normalizeFrames(nextFrames);
+    if (recording && recordingRef.current) {
+      recordingRef.current.frames = next;
+      setRecordingFrames(next);
+      setRecordingFrameCount(next.length);
+      return;
+    }
+    if (!timelineDemonstration) return;
+    const target = next[next.length - 1]?.positions ?? positions;
+    persistDemonstrations(
+      demonstrations.map((demonstration) =>
+        demonstration.id === timelineDemonstration.id
+          ? {
+              ...demonstration,
+              current: next[0]?.positions ?? target,
+              target,
+              frames: next,
+            }
+          : demonstration,
+      ),
+    );
+  }
+
+  function captureCheckpoint() {
+    if (!controllableJoints.length) return;
+    if (!recording && !timelineDemonstration) {
+      startRecording();
+      return;
+    }
+    const timestamp = recording
+      ? performance.now() -
+        (recordingRef.current?.startedAt ?? performance.now())
+      : (timelineFrames[timelineFrames.length - 1]?.timestamp ?? 0) + 500;
+    replaceTimelineFrames([
+      ...timelineFrames,
+      { timestamp, positions: [...positionsRef.current] },
+    ]);
+    setSelectedFrameIndex(Math.max(0, timelineFrames.length));
+    setMessage(`Captured checkpoint ${timelineFrames.length + 1}.`);
+  }
+
+  function selectTimelineFrame(index: number) {
+    const frame = timelineFrames[index];
+    if (!frame) return;
+    setSelectedFrameIndex(index);
+    applyPositions([...frame.positions]);
+  }
+
+  function updateTimelineFrame(
+    frameIndex: number,
+    jointIndex: number,
+    value: number,
+  ) {
+    replaceTimelineFrames(
+      timelineFrames.map((frame, index) =>
+        index === frameIndex
+          ? {
+              ...frame,
+              positions: frame.positions.map((position, positionIndex) =>
+                positionIndex === jointIndex ? value : position,
+              ),
+            }
+          : frame,
+      ),
+    );
+  }
+
+  function updateTimelineTimestamp(frameIndex: number, value: number) {
+    replaceTimelineFrames(
+      timelineFrames.map((frame, index) =>
+        index === frameIndex
+          ? { ...frame, timestamp: Math.max(0, value) }
+          : frame,
+      ),
+    );
+  }
+
+  function deleteTimelineFrame(frameIndex: number) {
+    if (timelineFrames.length <= 1) return;
+    const next = timelineFrames.filter((_, index) => index !== frameIndex);
+    replaceTimelineFrames(next);
+    setSelectedFrameIndex(Math.min(frameIndex, next.length - 1));
+  }
+
   function startRecording() {
     if (!controllableJoints.length || recording) return;
     stopReplay();
@@ -211,9 +390,10 @@ export default function App() {
       startedAt,
       frames: [{ timestamp: 0, positions: [...positionsRef.current] }],
     };
+    setRecordingFrames(recordingRef.current.frames);
     setRecordingFrameCount(1);
     setRecording(true);
-    setActiveTab("demonstrations");
+    setActiveTab("timeline");
     setMessage(
       "Recording gesture. Move the joints, then stop recording to archive it.",
     );
@@ -235,15 +415,49 @@ export default function App() {
       current: frames[0]?.positions ?? finalPositions,
       target: finalPositions,
       frames,
+      start_frame_index: 0,
+      dataset_id: activeDatasetId ?? undefined,
     };
     const next = [...demonstrations, demonstration];
     recordingRef.current = null;
     setRecording(false);
+    setRecordingFrames([]);
     setRecordingFrameCount(0);
     persistDemonstrations(next);
     setSelectedDemoId(demonstration.id);
     setTrained(false);
     setMessage(`Archived ${demonstration.name} with ${frames.length} frames.`);
+  }
+
+  function replayFrames(frames: RolloutFrame[], label: string) {
+    stopReplay();
+    if (!frames.length) return;
+    setReplayingDemoId("evaluation");
+    let frameIndex = 0;
+    const playFrame = () => {
+      const frame = frames[frameIndex];
+      if (!frame) {
+        stopReplay();
+        return;
+      }
+      applyPositions([...frame.positions]);
+      frameIndex += 1;
+      if (frameIndex >= frames.length) {
+        setReplayingDemoId(null);
+        setMessage(`Finished replaying ${label}.`);
+        return;
+      }
+      const nextFrame = frames[frameIndex];
+      replayTimerRef.current = window.setTimeout(
+        playFrame,
+        Math.max(
+          40,
+          Math.min(500, nextFrame.timestamp - frame.timestamp || 120),
+        ),
+      );
+    };
+    setMessage(`Replaying ${label} through the viewport.`);
+    playFrame();
   }
 
   function replayDemonstration(demonstration: Demonstration) {
@@ -262,7 +476,9 @@ export default function App() {
         stopReplay();
         return;
       }
-      applyPositions([...frame.positions]);
+      applyPositions(
+        interpolatePositions(demonstration.frames, frame.timestamp),
+      );
       frameIndex += 1;
       if (frameIndex >= demonstration.frames.length) {
         setReplayingDemoId(null);
@@ -292,7 +508,21 @@ export default function App() {
       recordingRef.current = null;
       setRecording(false);
       setDemonstrations([]);
+      const datasetId = `dataset-${Date.now()}`;
+      const now = new Date().toISOString();
+      setDatasets([
+        {
+          id: datasetId,
+          name: "Untitled dataset",
+          demonstration_ids: [],
+          created_at: now,
+          updated_at: now,
+        },
+      ]);
+      setActiveDatasetId(datasetId);
       setSelectedDemoId(null);
+      setSelectedFrameIndex(0);
+      setRecordingFrames([]);
       setEditingDemoId(null);
       setActiveTab("training");
       setMetric(null);
@@ -375,6 +605,8 @@ export default function App() {
       current: target.map(() => 0),
       target,
       frames: [{ timestamp: 0, positions: target }],
+      start_frame_index: 0,
+      dataset_id: activeDatasetId ?? undefined,
     };
     persistDemonstrations([...demonstrations, demonstration]);
     setSelectedDemoId(id);
@@ -395,8 +627,14 @@ export default function App() {
   function beginEditing(demonstration: Demonstration) {
     selectDemonstration(demonstration);
     setEditingDemoId(demonstration.id);
-    setActiveTab("demonstrations");
-    setMessage(`Editing ${demonstration.name}. Adjust the sliders, then save.`);
+    setActiveTab(
+      demonstration.kind === "gesture" ? "timeline" : "demonstrations",
+    );
+    setMessage(
+      demonstration.kind === "gesture"
+        ? `Editing ${demonstration.name} checkpoints in the timeline.`
+        : `Editing ${demonstration.name}. Adjust the pose editor, then save.`,
+    );
   }
 
   function saveEditedDemonstration() {
@@ -461,6 +699,7 @@ export default function App() {
     setMetric(null);
     setMetricHistory([]);
     setEvaluation(null);
+    setRolloutFrames([]);
     try {
       await trainSession(sessionId, demonstrations, config);
       setMessage("Training started in the backend worker.");
@@ -481,17 +720,46 @@ export default function App() {
     setBusy(true);
     setError(null);
     try {
-      const result = await predictPose(
-        sessionId,
-        demonstration.target,
-        demonstration.current,
-      );
-      setEvaluation(result);
-      applyPositions(result.positions);
-      setActiveTab("testing");
-      setMessage(
-        `Evaluated ${demonstration.name}. Maximum joint error: ${result.error.toFixed(4)} native units.`,
-      );
+      if (demonstration.kind === "gesture" && demonstration.frames.length > 1) {
+        const result = await rolloutSession(
+          sessionId,
+          demonstration.frames,
+          demonstration.current,
+          config.timestep_ms,
+          config.rollout_steps,
+        );
+        const finalFrame = result.frames[result.frames.length - 1];
+        if (!finalFrame) throw new Error("The rollout returned no frames.");
+        const error = Math.max(
+          ...finalFrame.positions.map((position, index) =>
+            Math.abs(position - (finalFrame.expected[index] ?? position)),
+          ),
+        );
+        setRolloutFrames(result.frames);
+        setEvaluation({
+          target: finalFrame.expected,
+          positions: finalFrame.positions,
+          error,
+        });
+        applyPositions(finalFrame.positions);
+        setActiveTab("testing");
+        setMessage(
+          `Rolled out ${demonstration.name} through ${result.frames.length} incremental frames. Maximum error: ${error.toFixed(4)} native units.`,
+        );
+      } else {
+        const result = await predictPose(
+          sessionId,
+          demonstration.target,
+          demonstration.current,
+        );
+        setRolloutFrames([]);
+        setEvaluation(result);
+        applyPositions(result.positions);
+        setActiveTab("testing");
+        setMessage(
+          `Evaluated ${demonstration.name}. Maximum joint error: ${result.error.toFixed(4)} native units.`,
+        );
+      }
     } catch (cause) {
       setError(
         cause instanceof Error
@@ -659,6 +927,18 @@ export default function App() {
                   <output>
                     {formatJoint(joint.type, positions[index] ?? 0)}
                   </output>
+                  <input
+                    className="joint-number"
+                    aria-label={`${joint.name} numeric position`}
+                    type="number"
+                    min={joint.lower}
+                    max={joint.upper}
+                    step="0.001"
+                    value={positions[index] ?? 0}
+                    onChange={(event) =>
+                      updateJoint(index, Number(event.target.value))
+                    }
+                  />
                 </div>
                 <input
                   aria-label={`${joint.name} position`}
@@ -745,6 +1025,15 @@ export default function App() {
               Train
             </TabButton>
             <TabButton
+              active={activeTab === "timeline"}
+              onClick={() => setActiveTab("timeline")}
+              role="tab"
+              aria-selected={activeTab === "timeline"}
+              type="button"
+            >
+              Timeline <span>{timelineFrames.length}</span>
+            </TabButton>
+            <TabButton
               active={activeTab === "demonstrations"}
               onClick={() => setActiveTab("demonstrations")}
               role="tab"
@@ -752,6 +1041,15 @@ export default function App() {
               type="button"
             >
               Demonstrations <span>{demonstrations.length}</span>
+            </TabButton>
+            <TabButton
+              active={activeTab === "datasets"}
+              onClick={() => setActiveTab("datasets")}
+              role="tab"
+              aria-selected={activeTab === "datasets"}
+              type="button"
+            >
+              Datasets <span>{datasets.length}</span>
             </TabButton>
             <TabButton
               active={activeTab === "testing"}
@@ -825,6 +1123,42 @@ export default function App() {
                     }
                   />
                 </label>
+                <label>
+                  <span>Increment (ms)</span>
+                  <input
+                    type="number"
+                    min="10"
+                    max="2000"
+                    value={config.timestep_ms}
+                    onChange={(event) =>
+                      updateConfig("timestep_ms", event.target.value)
+                    }
+                  />
+                </label>
+                <label>
+                  <span>Random starts</span>
+                  <input
+                    type="number"
+                    min="0"
+                    max="64"
+                    value={config.random_starts}
+                    onChange={(event) =>
+                      updateConfig("random_starts", event.target.value)
+                    }
+                  />
+                </label>
+                <label>
+                  <span>Rollout steps</span>
+                  <input
+                    type="number"
+                    min="1"
+                    max="2000"
+                    value={config.rollout_steps}
+                    onChange={(event) =>
+                      updateConfig("rollout_steps", event.target.value)
+                    }
+                  />
+                </label>
               </div>
               <div className="training-actions">
                 <button
@@ -854,7 +1188,7 @@ export default function App() {
                 </div>
                 <div>
                   <span>Inputs</span>
-                  <strong>{controllableJoints.length * 2}</strong>
+                  <strong>{controllableJoints.length * 2 + 1}</strong>
                 </div>
                 <div>
                   <span>Outputs</span>
@@ -875,6 +1209,20 @@ export default function App() {
                 )}
               </div>
             </>
+          ) : activeTab === "timeline" ? (
+            <TimelinePanel
+              frames={timelineFrames}
+              joints={controllableJoints}
+              recording={recording}
+              selectedFrameIndex={selectedFrameIndex}
+              onCapture={captureCheckpoint}
+              onSelectFrame={selectTimelineFrame}
+              onUpdateFrame={updateTimelineFrame}
+              onUpdateTimestamp={updateTimelineTimestamp}
+              onDeleteFrame={deleteTimelineFrame}
+              onStopRecording={stopRecording}
+              onStartRecording={startRecording}
+            />
           ) : activeTab === "demonstrations" ? (
             <div className="demonstrations-panel">
               <div className="demo-toolbar">
@@ -997,7 +1345,9 @@ export default function App() {
                         >
                           {editingDemoId === demonstration.id
                             ? "Editing…"
-                            : "Edit pose"}
+                            : demonstration.kind === "gesture"
+                              ? "Edit timeline"
+                              : "Edit pose"}
                         </button>
                       </div>
                     </article>
@@ -1045,6 +1395,45 @@ export default function App() {
                 </p>
               )}
             </div>
+          ) : activeTab === "datasets" ? (
+            <DatasetPanel
+              datasets={datasets}
+              activeDatasetId={activeDatasetId}
+              demonstrations={demonstrations}
+              onSelect={(datasetId) => {
+                setActiveDatasetId(datasetId);
+                const dataset = datasets.find((item) => item.id === datasetId);
+                if (dataset) {
+                  setMessage(`Selected ${dataset.name}.`);
+                }
+              }}
+              onCreate={() => {
+                const now = new Date().toISOString();
+                const dataset = {
+                  id: `dataset-${Date.now()}`,
+                  name: `Dataset ${datasets.length + 1}`,
+                  demonstration_ids: demonstrations.map((item) => item.id),
+                  created_at: now,
+                  updated_at: now,
+                };
+                persistDatasets([...datasets, dataset]);
+                setActiveDatasetId(dataset.id);
+              }}
+              onRename={(datasetId, name) =>
+                persistDatasets(
+                  datasets.map((dataset) =>
+                    dataset.id === datasetId
+                      ? {
+                          ...dataset,
+                          name,
+                          updated_at: new Date().toISOString(),
+                        }
+                      : dataset,
+                  ),
+                )
+              }
+              onMoveDemonstration={moveDemonstration}
+            />
           ) : (
             <div className="testing-panel">
               <div className="test-heading">
@@ -1067,6 +1456,21 @@ export default function App() {
               >
                 Evaluate selected demonstration
               </button>
+              {rolloutFrames.length > 1 && (
+                <button
+                  className="button secondary full"
+                  onClick={() =>
+                    replayingDemoId === "evaluation"
+                      ? stopReplay()
+                      : replayFrames(rolloutFrames, "the evaluated trajectory")
+                  }
+                  disabled={busy}
+                >
+                  {replayingDemoId === "evaluation"
+                    ? "Stop trajectory replay"
+                    : "Play evaluated trajectory"}
+                </button>
+              )}
               <div className="chart-card">
                 <div className="chart-header">
                   <span className="panel-label">TRAINING LOSS</span>
@@ -1104,7 +1508,11 @@ export default function App() {
                 <div className="evaluation-card">
                   <div className="chart-header">
                     <span className="panel-label">SELECTED DEMONSTRATION</span>
-                    <strong>Prediction error</strong>
+                    <strong>
+                      {rolloutFrames.length
+                        ? `Trajectory error · ${rolloutFrames.length} frames`
+                        : "Prediction error"}
+                    </strong>
                   </div>
                   <div className="evaluation-summary">
                     <span>
@@ -1168,6 +1576,282 @@ export default function App() {
         <span>Primitive URDF workbench / local session</span>
       </footer>
     </main>
+  );
+}
+
+type TimelinePanelProps = {
+  frames: DemonstrationFrame[];
+  joints: Joint[];
+  recording: boolean;
+  selectedFrameIndex: number;
+  onCapture: () => void;
+  onSelectFrame: (index: number) => void;
+  onUpdateFrame: (
+    frameIndex: number,
+    jointIndex: number,
+    value: number,
+  ) => void;
+  onUpdateTimestamp: (frameIndex: number, value: number) => void;
+  onDeleteFrame: (index: number) => void;
+  onStartRecording: () => void;
+  onStopRecording: () => void;
+};
+
+function TimelinePanel({
+  frames,
+  joints,
+  recording,
+  selectedFrameIndex,
+  onCapture,
+  onSelectFrame,
+  onUpdateFrame,
+  onUpdateTimestamp,
+  onDeleteFrame,
+  onStartRecording,
+  onStopRecording,
+}: TimelinePanelProps) {
+  return (
+    <div className="timeline-panel">
+      <div className="demo-toolbar">
+        <div>
+          <p className="panel-label">GESTURE TIMELINE</p>
+          <strong>
+            {frames.length} checkpoint{frames.length === 1 ? "" : "s"}
+          </strong>
+        </div>
+        <div className="demo-card-actions">
+          {recording ? (
+            <button
+              className="button recording small"
+              onClick={onStopRecording}
+            >
+              Stop recording
+            </button>
+          ) : (
+            <button
+              className="button secondary small"
+              onClick={onStartRecording}
+            >
+              Start gesture
+            </button>
+          )}
+          <button
+            className="button primary small"
+            onClick={onCapture}
+            disabled={!joints.length}
+          >
+            Capture checkpoint
+          </button>
+        </div>
+      </div>
+      <p className="helper-text">
+        Every checkpoint captures the complete robot state. Edit multiple joints
+        before saving, then use timestamps to shape the interpolated motion.
+      </p>
+      {frames.length ? (
+        <>
+          <div
+            className="timeline-track"
+            role="list"
+            aria-label="Gesture checkpoints"
+          >
+            {frames.map((frame, index) => (
+              <button
+                className={`timeline-marker ${selectedFrameIndex === index ? "selected" : ""}`}
+                key={`marker-${index}-${frame.timestamp}`}
+                onClick={() => onSelectFrame(index)}
+                type="button"
+              >
+                <span>{index + 1}</span>
+                <small>{Math.round(frame.timestamp)} ms</small>
+              </button>
+            ))}
+          </div>
+          <div className="timeline-frame-list">
+            {frames.map((frame, frameIndex) => (
+              <article
+                className={`timeline-frame ${selectedFrameIndex === frameIndex ? "selected" : ""}`}
+                key={`frame-${frameIndex}-${frame.timestamp}`}
+              >
+                <div className="timeline-frame-header">
+                  <button
+                    className="button ghost small"
+                    onClick={() => onSelectFrame(frameIndex)}
+                  >
+                    Checkpoint {frameIndex + 1}
+                  </button>
+                  <label>
+                    <span>Time (ms)</span>
+                    <input
+                      aria-label={`Timestamp for checkpoint ${frameIndex + 1}`}
+                      type="number"
+                      min="0"
+                      step="10"
+                      value={Math.round(frame.timestamp)}
+                      onChange={(event) =>
+                        onUpdateTimestamp(
+                          frameIndex,
+                          Number(event.target.value),
+                        )
+                      }
+                    />
+                  </label>
+                  <button
+                    className="icon-button"
+                    aria-label={`Delete checkpoint ${frameIndex + 1}`}
+                    onClick={() => onDeleteFrame(frameIndex)}
+                    disabled={frames.length <= 1}
+                  >
+                    ×
+                  </button>
+                </div>
+                <div className="timeline-joint-grid">
+                  {joints.map((joint, jointIndex) => (
+                    <label key={`${frameIndex}-${joint.name}`}>
+                      <span>{joint.name}</span>
+                      <input
+                        aria-label={`${joint.name} at checkpoint ${frameIndex + 1}`}
+                        type="number"
+                        min={joint.lower}
+                        max={joint.upper}
+                        step="0.001"
+                        value={frame.positions[jointIndex] ?? 0}
+                        onChange={(event) =>
+                          onUpdateFrame(
+                            frameIndex,
+                            jointIndex,
+                            Number(event.target.value),
+                          )
+                        }
+                      />
+                    </label>
+                  ))}
+                </div>
+              </article>
+            ))}
+          </div>
+        </>
+      ) : (
+        <div className="demo-empty">
+          <strong>No checkpoints yet</strong>
+          <span>Start a gesture or capture the current full-robot pose.</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+type DatasetPanelProps = {
+  datasets: Dataset[];
+  activeDatasetId: string | null;
+  demonstrations: Demonstration[];
+  onSelect: (datasetId: string) => void;
+  onCreate: () => void;
+  onRename: (datasetId: string, name: string) => void;
+  onMoveDemonstration: (demonstrationId: string, datasetId: string) => void;
+};
+
+function DatasetPanel({
+  datasets,
+  activeDatasetId,
+  demonstrations,
+  onSelect,
+  onCreate,
+  onRename,
+  onMoveDemonstration,
+}: DatasetPanelProps) {
+  return (
+    <div className="datasets-panel">
+      <div className="demo-toolbar">
+        <div>
+          <p className="panel-label">ROBOT DATASETS</p>
+          <strong>
+            {datasets.length} saved dataset{datasets.length === 1 ? "" : "s"}
+          </strong>
+        </div>
+        <button className="button primary small" onClick={onCreate}>
+          New dataset
+        </button>
+      </div>
+      <p className="helper-text">
+        Datasets organize the current robot's captured poses and gestures. The
+        active dataset receives new demonstrations.
+      </p>
+      {datasets.length ? (
+        <div className="dataset-list">
+          {datasets.map((dataset) => (
+            <article
+              className={`dataset-card ${dataset.id === activeDatasetId ? "selected" : ""}`}
+              key={dataset.id}
+            >
+              <button
+                className="dataset-select"
+                onClick={() => onSelect(dataset.id)}
+              >
+                <span className="panel-label">
+                  {dataset.id === activeDatasetId
+                    ? "ACTIVE DATASET"
+                    : "DATASET"}
+                </span>
+                <strong>{dataset.name}</strong>
+                <small>{dataset.demonstration_ids.length} demonstrations</small>
+              </button>
+              <input
+                aria-label={`Rename ${dataset.name}`}
+                value={dataset.name}
+                onChange={(event) => onRename(dataset.id, event.target.value)}
+              />
+            </article>
+          ))}
+        </div>
+      ) : (
+        <div className="demo-empty">
+          <strong>No datasets yet</strong>
+          <span>Create one before capturing a demonstration.</span>
+        </div>
+      )}
+      {demonstrations.length > 0 && datasets.length > 0 && (
+        <div className="dataset-members">
+          <p className="panel-label">DEMONSTRATION MEMBERSHIP</p>
+          {demonstrations.map((demonstration) => {
+            const memberDataset = datasets.find((dataset) =>
+              dataset.demonstration_ids.includes(demonstration.id),
+            );
+            return (
+              <label key={demonstration.id}>
+                <span>{demonstration.name}</span>
+                <select
+                  aria-label={`Dataset for ${demonstration.name}`}
+                  value={memberDataset?.id ?? ""}
+                  onChange={(event) =>
+                    onMoveDemonstration(demonstration.id, event.target.value)
+                  }
+                >
+                  <option value="" disabled>
+                    Select dataset
+                  </option>
+                  {datasets.map((dataset) => (
+                    <option value={dataset.id} key={dataset.id}>
+                      {dataset.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            );
+          })}
+        </div>
+      )}
+      <div className="training-summary">
+        <div>
+          <span>Current archive</span>
+          <strong>{demonstrations.length}</strong>
+        </div>
+        <div>
+          <span>Robot scope</span>
+          <strong>1</strong>
+        </div>
+      </div>
+    </div>
   );
 }
 

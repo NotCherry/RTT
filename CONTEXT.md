@@ -12,6 +12,10 @@ _Avoid_: Target-only sample, random pose
 A timestamped robot state captured as one point in an expected behavior.
 _Avoid_: Prediction, training sample
 
+**Checkpoint**:
+An authored Frame in the gesture timeline. A checkpoint stores the complete controllable-joint state; motion between checkpoints is interpolated for preview, training, and evaluation.
+_Avoid_: Individual slider change, model prediction
+
 **Gesture**:
 An ordered sequence of frames that describes a motion or behavior over time.
 _Avoid_: Pose, trajectory label
@@ -23,6 +27,10 @@ _Avoid_: Random test, model output
 **Archive**:
 The durable collection of robot context, demonstrations, annotations, and related experiment records.
 _Avoid_: Dataset-only, model checkpoint
+
+**Dataset**:
+A named, robot-scoped collection inside an Archive used to organize compatible pose and gesture demonstrations for a teaching or training workflow.
+_Avoid_: Entire archive, model checkpoint
 
 ## Training and Evaluation
 

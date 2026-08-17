@@ -9,10 +9,15 @@ from fastapi.testclient import TestClient  # type: ignore[import-not-found]
 from app.main import (  # type: ignore[import-not-found]
     ROBOTS,
     SESSIONS,
+    Demonstration,
+    TrainConfig,
+    TrainRequest,
     app,
+    build_incremental_samples,
     denormalized,
     normalized,
     parse_urdf,
+    train_session,
 )
 
 client = TestClient(app)
@@ -105,6 +110,100 @@ def test_demonstrations_are_persisted_and_exported_as_frames():
     assert exported["name"] == "reach forward"
     assert exported["kind"] == "gesture"
     assert len(exported["frames"]) == 2
+
+
+def test_incremental_samples_learn_small_next_state_deltas():
+    demonstration = Demonstration(
+        id="reach",
+        name="reach",
+        kind="gesture",
+        current=[0.0, 0.0],
+        target=[0.9, -0.6],
+        frames=[
+            {"timestamp": 0, "positions": [0.0, 0.0]},
+            {"timestamp": 300, "positions": [0.9, -0.6]},
+        ],
+    )
+    joints = [
+        {"lower": -1.0, "upper": 1.0},
+        {"lower": -1.0, "upper": 1.0},
+    ]
+
+    samples = build_incremental_samples([demonstration], joints, 100)
+
+    assert len(samples) == 3
+    assert samples[0]["progress"] == pytest.approx(0)
+    assert samples[0]["delta"] == pytest.approx([0.3, -0.2])
+    assert samples[-1]["current"] == pytest.approx([0.6, -0.4])
+
+
+def test_temporal_training_supports_checkpoint_rollout():
+    session_id, _ = create_sample_session()
+    demonstration = Demonstration(
+        id="gesture-train",
+        name="reach",
+        kind="gesture",
+        current=[0.0, 0.0],
+        target=[0.6, -0.4],
+        frames=[
+            {"timestamp": 0, "positions": [0.0, 0.0]},
+            {"timestamp": 240, "positions": [0.6, -0.4]},
+        ],
+    )
+    session = SESSIONS[session_id]
+    train_session(
+        session,
+        TrainRequest(
+            demonstrations=[demonstration],
+            config=TrainConfig(epochs=2, timestep_ms=120, random_starts=1),
+        ),
+    )
+
+    response = client.post(
+        f"/api/sessions/{session_id}/rollout",
+        json={"frames": [frame.model_dump() for frame in demonstration.frames]},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["steps"] > 0
+    assert len(response.json()["frames"]) > 1
+
+
+def test_datasets_are_persisted_and_exported_with_demonstrations():
+    session_id, _ = create_sample_session()
+    demonstration = {
+        "id": "pose-01",
+        "name": "home",
+        "kind": "pose",
+        "current": [0.0, 0.0],
+        "target": [0.4, -0.2],
+        "frames": [{"timestamp": 0, "positions": [0.4, -0.2]}],
+    }
+    assert client.put(
+        f"/api/sessions/{session_id}/demonstrations",
+        json={"demonstrations": [demonstration]},
+    ).status_code == 200
+
+    response = client.put(
+        f"/api/sessions/{session_id}/datasets",
+        json={
+            "datasets": [
+                {
+                    "id": "dataset-home",
+                    "name": "Home poses",
+                    "demonstration_ids": ["pose-01"],
+                    "created_at": "2025-01-01T00:00:00Z",
+                    "updated_at": "2025-01-01T00:00:00Z",
+                }
+            ]
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["datasets"] == 1
+
+    with zipfile.ZipFile(io.BytesIO(client.get(f"/api/sessions/{session_id}/export").content)) as archive:
+        snapshot = json.loads(archive.read("session.json"))
+    assert snapshot["datasets"][0]["name"] == "Home poses"
 
 
 def test_demonstrations_require_one_value_per_controllable_joint():

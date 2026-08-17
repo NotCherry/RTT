@@ -1,3 +1,5 @@
+/// <reference types="cypress" />
+
 const sampleRobot = {
   id: "demo-slider-arm",
   name: "slider-arm",
@@ -48,6 +50,9 @@ function stubSession() {
   cy.intercept("PUT", "/api/sessions/session-under-test/demonstrations", {
     body: { status: "saved", demonstrations: 1 },
   }).as("saveDemonstrations");
+  cy.intercept("PUT", "/api/sessions/session-under-test/datasets", {
+    body: { status: "saved", datasets: 1 },
+  }).as("saveDatasets");
 }
 
 describe("demonstration archive", () => {
@@ -73,6 +78,44 @@ describe("demonstration archive", () => {
     cy.contains("1 captured item").should("be.visible");
     cy.contains("Pose 01").should("be.visible");
     cy.contains("Preview pose").click();
+  });
+
+  it("authors full-robot checkpoints in the timeline", () => {
+    cy.contains("button", "Load the 2-joint sample arm").click();
+    cy.wait("@createSession");
+
+    cy.contains("button", "Record gesture").click();
+    cy.get('[role="tab"]').contains("Timeline").should("be.visible");
+    cy.contains("button", "Capture checkpoint").click();
+    cy.contains("button", "Stop recording").click();
+
+    cy.get('[role="tab"]').contains("Timeline").click();
+    cy.contains("checkpoint", { matchCase: false }).should("be.visible");
+    cy.get('input[aria-label="shoulder_joint at checkpoint 1"]').should(
+      "have.value",
+      "0",
+    );
+    cy.get('input[aria-label="elbow_joint at checkpoint 1"]').type("0.5");
+  });
+
+  it("organizes captured work in named datasets", () => {
+    cy.contains("button", "Load the 2-joint sample arm").click();
+    cy.wait("@createSession");
+    cy.contains("button", "Capture pose").click();
+    cy.wait("@saveDemonstrations");
+    cy.wait("@saveDatasets");
+
+    cy.get('[role="tab"]').contains("Datasets").click();
+    cy.contains("Untitled dataset").should("be.visible");
+    cy.contains("button", "New dataset").click();
+    cy.get('input[aria-label="Rename Dataset 2"]')
+      .clear()
+      .type("reach training");
+    cy.contains("reach training").should("be.visible");
+    cy.get('select[aria-label="Dataset for Pose 01"]')
+      .select("reach training")
+      .invoke("val")
+      .should("match", /^dataset-/);
   });
 
   it("records multiple frames for a gesture", () => {

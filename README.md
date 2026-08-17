@@ -58,7 +58,16 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload
 ```
 
-Open `http://localhost:5173`. The sample arm works without an upload. Capture poses or record gestures from the joint controls, then use the `Demonstrations` tab to rename, preview, replay, edit, and delete archived behavior. The `Test` tab shows training loss history and evaluates the selected demonstration after training. Uploaded URDFs must use boxes, cylinders, or spheres; external mesh assets are rejected in this MVP.
+Open `http://localhost:5173`. The sample arm works without an upload. The workbench now supports:
+
+- Multi-joint pose editing with precise numeric controls alongside sliders.
+- A `Timeline` tab for full-robot gesture checkpoints, timestamp editing, interpolation, checkpoint deletion, and replay.
+- A `Demonstrations` archive for naming, previewing, editing, replaying, and deleting captured behavior.
+- Robot-scoped `Datasets` for naming collections and moving demonstrations between training groups.
+- Temporal MLP training from incremental next-state deltas, configurable timestep size, seeded randomized starts, and rollout limits.
+- `Test` evaluation that can roll a trained model through every gesture checkpoint and replay the predicted trajectory.
+
+Uploaded URDFs must use boxes, cylinders, or spheres; external mesh assets are rejected in this MVP. See [ADR 0002](./docs/adr/0002-timeline-based-teaching-and-curriculum-training.md) for the timeline and curriculum-training decision.
 
 ## Tests
 

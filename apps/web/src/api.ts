@@ -1,6 +1,9 @@
 import type {
+  Dataset,
   Demonstration,
+  DemonstrationFrame,
   Robot,
+  RolloutFrame,
   SimulationState,
   TrainingConfig,
 } from "./types";
@@ -60,6 +63,17 @@ export function saveDemonstrations(
   );
 }
 
+export function saveDatasets(sessionId: string, datasets: Dataset[]) {
+  return request<{ status: string; datasets: number }>(
+    `/api/sessions/${sessionId}/datasets`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ datasets }),
+    },
+  );
+}
+
 export function trainSession(
   sessionId: string,
   demonstrations: Demonstration[],
@@ -70,6 +84,28 @@ export function trainSession(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ demonstrations, config }),
   });
+}
+
+export function rolloutSession(
+  sessionId: string,
+  frames: DemonstrationFrame[],
+  current: number[],
+  timestepMs: number,
+  maxSteps: number,
+) {
+  return request<{ frames: RolloutFrame[]; steps: number }>(
+    `/api/sessions/${sessionId}/rollout`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        frames,
+        current,
+        timestep_ms: timestepMs,
+        max_steps: maxSteps,
+      }),
+    },
+  );
 }
 
 export function predictPose(
