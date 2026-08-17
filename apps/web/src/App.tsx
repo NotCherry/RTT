@@ -1,4 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  BrowserRouter,
+  Link,
+  Navigate,
+  NavLink,
+  useLocation,
+} from "react-router-dom";
 import {
   createSession,
   exportUrl,
@@ -16,14 +23,21 @@ import {
   formatJointValue as formatJoint,
   meanAbsoluteError as meanError,
 } from "./domain/metrics";
-import { interpolatePositions, normalizeFrames } from "./domain/timeline";
+import {
+  framesToKeyframes,
+  interpolatePositions,
+  keyframesToFrames,
+  normalizeFrames,
+} from "./domain/timeline";
 import {
   Button,
   Panel,
   PanelHeader,
+  PanelLabel,
   StatusPill,
   TabButton,
 } from "./components/ui";
+import { useWorkbench, WorkbenchProvider } from "./workbench/context";
 import type {
   Dataset,
   Demonstration,
@@ -61,6 +75,15 @@ type RecordingDraft = {
 };
 
 export default function App() {
+  return (
+    <BrowserRouter>
+      <Workbench />
+    </BrowserRouter>
+  );
+}
+
+function Workbench() {
+  const location = useLocation();
   const [robot, setRobot] = useState<Robot | null>(null);
   const [state, setState] = useState<SimulationState | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -93,7 +116,6 @@ export default function App() {
   const socketRef = useRef<WebSocket | null>(null);
   const positionsRef = useRef<number[]>([]);
   const recordingRef = useRef<RecordingDraft | null>(null);
-  const recordingTimerRef = useRef<number | null>(null);
   const replayTimerRef = useRef<number | null>(null);
 
   const controllableJoints = useMemo(
@@ -107,32 +129,19 @@ export default function App() {
       demonstration.id === selectedDemoId && demonstration.kind === "gesture",
   );
   const timelineFrames = normalizeFrames(
-    recording ? recordingFrames : (timelineDemonstration?.frames ?? []),
+    recording
+      ? recordingFrames
+      : timelineDemonstration?.keyframes?.length
+        ? keyframesToFrames(
+            timelineDemonstration.keyframes,
+            timelineDemonstration.timeline_fps ?? 30,
+          )
+        : (timelineDemonstration?.frames ?? []),
   );
 
   useEffect(() => {
     positionsRef.current = positions;
   }, [positions]);
-
-  useEffect(() => {
-    if (!recording) return;
-    recordingTimerRef.current = window.setInterval(() => {
-      const draft = recordingRef.current;
-      if (!draft) return;
-      draft.frames.push({
-        timestamp: performance.now() - draft.startedAt,
-        positions: [...positionsRef.current],
-      });
-      setRecordingFrames([...draft.frames]);
-      setRecordingFrameCount(draft.frames.length);
-    }, 120);
-    return () => {
-      if (recordingTimerRef.current !== null) {
-        window.clearInterval(recordingTimerRef.current);
-        recordingTimerRef.current = null;
-      }
-    };
-  }, [recording]);
 
   useEffect(() => () => stopReplay(), []);
 
@@ -312,6 +321,11 @@ export default function App() {
               current: next[0]?.positions ?? target,
               target,
               frames: next,
+              keyframes: framesToKeyframes(next),
+              timeline_fps: 30,
+              duration_frames: Math.round(
+                ((next[next.length - 1]?.timestamp ?? 0) * 30) / 1000,
+              ),
             }
           : demonstration,
       ),
@@ -415,6 +429,11 @@ export default function App() {
       current: frames[0]?.positions ?? finalPositions,
       target: finalPositions,
       frames,
+      keyframes: framesToKeyframes(frames),
+      timeline_fps: 30,
+      duration_frames: Math.round(
+        ((frames[frames.length - 1]?.timestamp ?? 0) * 30) / 1000,
+      ),
       start_frame_index: 0,
       dataset_id: activeDatasetId ?? undefined,
     };
@@ -605,6 +624,9 @@ export default function App() {
       current: target.map(() => 0),
       target,
       frames: [{ timestamp: 0, positions: target }],
+      keyframes: framesToKeyframes([{ timestamp: 0, positions: target }]),
+      timeline_fps: 30,
+      duration_frames: 0,
       start_frame_index: 0,
       dataset_id: activeDatasetId ?? undefined,
     };
@@ -649,6 +671,12 @@ export default function App() {
               demonstration.kind === "pose"
                 ? [{ timestamp: 0, positions: [...positions] }]
                 : demonstration.frames,
+            keyframes:
+              demonstration.kind === "pose"
+                ? framesToKeyframes([
+                    { timestamp: 0, positions: [...positions] },
+                  ])
+                : demonstration.keyframes,
           }
         : demonstration,
     );
@@ -786,6 +814,595 @@ export default function App() {
     } else {
       setConfig((current) => ({ ...current, [key]: Number(value) }));
     }
+  }
+
+  const routePage = (() => {
+    if (location.pathname === "/") return <Navigate to="/teach/pose" replace />;
+    if (
+      ![
+        "/teach/pose",
+        "/teach/timeline",
+        "/archive",
+        "/train",
+        "/evaluate",
+      ].includes(location.pathname)
+    ) {
+      return <Navigate to="/teach/pose" replace />;
+    }
+    if (location.pathname === "/teach/timeline") {
+      return (
+        <div className="route-page">
+          <div className="route-heading">
+            <div>
+              <p className="kicker">TEACH / KEYFRAME ANIMATION</p>
+              <h2>Author the robot motion.</h2>
+              <p className="intro-copy">
+                Insert full-pose keyframes on a Blender-style timeline, then
+                preview the interpolated gesture.
+              </p>
+            </div>
+            <StatusPill online={recording}>
+              {recording ? "Keyframe capture" : "Timeline ready"}
+            </StatusPill>
+          </div>
+          <div className="route-two-column">
+            <Panel className="route-viewport-panel">
+              <PanelHeader>
+                <div>
+                  <PanelLabel>LIVE VIEWPORT</PanelLabel>
+                  <h3>{robot?.name ?? "Awaiting robot"}</h3>
+                </div>
+                <Button
+                  size="small"
+                  variant="secondary"
+                  onClick={resetPose}
+                  disabled={!robot}
+                >
+                  Reset pose
+                </Button>
+              </PanelHeader>
+              <RobotScene robot={robot} state={state} />
+            </Panel>
+            <Panel className="route-content-panel">
+              <PanelHeader>
+                <div>
+                  <PanelLabel>ANIMATION EDITOR</PanelLabel>
+                  <h3>Gesture keyframes</h3>
+                </div>
+                <span className="count-badge">
+                  {timelineFrames.length} keys
+                </span>
+              </PanelHeader>
+              <TimelinePanel
+                frames={timelineFrames}
+                joints={controllableJoints}
+                recording={recording}
+                selectedFrameIndex={selectedFrameIndex}
+                onCapture={captureCheckpoint}
+                onSelectFrame={selectTimelineFrame}
+                onUpdateFrame={updateTimelineFrame}
+                onUpdateTimestamp={updateTimelineTimestamp}
+                onDeleteFrame={deleteTimelineFrame}
+                onStartRecording={startRecording}
+                onStopRecording={stopRecording}
+              />
+            </Panel>
+          </div>
+        </div>
+      );
+    }
+    if (location.pathname === "/archive") {
+      return (
+        <div className="route-page">
+          <div className="route-heading">
+            <div>
+              <p className="kicker">ARCHIVE / DATASETS</p>
+              <h2>Organize expected behavior.</h2>
+              <p className="intro-copy">
+                Keep poses and authored gestures grouped by robot and training
+                purpose.
+              </p>
+            </div>
+          </div>
+          <div className="route-archive-grid">
+            <Panel className="route-content-panel">
+              <DatasetPanel
+                datasets={datasets}
+                activeDatasetId={activeDatasetId}
+                demonstrations={demonstrations}
+                onSelect={setActiveDatasetId}
+                onCreate={() => {
+                  const now = new Date().toISOString();
+                  const dataset = {
+                    id: `dataset-${Date.now()}`,
+                    name: `Dataset ${datasets.length + 1}`,
+                    demonstration_ids: demonstrations.map((item) => item.id),
+                    created_at: now,
+                    updated_at: now,
+                  };
+                  persistDatasets([...datasets, dataset]);
+                  setActiveDatasetId(dataset.id);
+                }}
+                onRename={(datasetId, name) =>
+                  persistDatasets(
+                    datasets.map((dataset) =>
+                      dataset.id === datasetId
+                        ? {
+                            ...dataset,
+                            name,
+                            updated_at: new Date().toISOString(),
+                          }
+                        : dataset,
+                    ),
+                  )
+                }
+                onMoveDemonstration={moveDemonstration}
+              />
+            </Panel>
+            <Panel className="route-content-panel archive-demo-panel">
+              <PanelHeader>
+                <div>
+                  <PanelLabel>DEMONSTRATIONS</PanelLabel>
+                  <h3>{demonstrations.length} captured items</h3>
+                </div>
+                <Link className="button secondary small" to="/teach/pose">
+                  New pose
+                </Link>
+              </PanelHeader>
+              <div className="archive-route-list">
+                {demonstrations.length ? (
+                  demonstrations.map((demonstration) => (
+                    <article
+                      className="archive-route-card"
+                      key={demonstration.id}
+                    >
+                      <div>
+                        <strong>{demonstration.name}</strong>
+                        <span>
+                          {demonstration.kind} ·{" "}
+                          {demonstration.keyframes?.length ??
+                            demonstration.frames.length}{" "}
+                          authored keyframes
+                        </span>
+                      </div>
+                      <div className="demo-card-actions">
+                        <Button
+                          size="small"
+                          variant="ghost"
+                          onClick={() => {
+                            setSelectedDemoId(demonstration.id);
+                            selectDemonstration(demonstration);
+                          }}
+                        >
+                          Preview
+                        </Button>
+                        {demonstration.kind === "gesture" && (
+                          <Link
+                            className="button secondary small"
+                            to="/teach/timeline"
+                            onClick={() => {
+                              setSelectedDemoId(demonstration.id);
+                            }}
+                          >
+                            Edit timeline
+                          </Link>
+                        )}
+                      </div>
+                    </article>
+                  ))
+                ) : (
+                  <div className="demo-empty">
+                    <strong>No demonstrations yet</strong>
+                    <span>Capture a pose or author a gesture timeline.</span>
+                  </div>
+                )}
+              </div>
+            </Panel>
+          </div>
+        </div>
+      );
+    }
+    if (location.pathname === "/train") {
+      return (
+        <div className="route-page">
+          <div className="route-heading">
+            <div>
+              <p className="kicker">TRAIN / TEMPORAL MLP</p>
+              <h2>Train from keyframe motion.</h2>
+              <p className="intro-copy">
+                The model learns small joint deltas between authored keyframes,
+                including seeded randomized starts.
+              </p>
+            </div>
+            <StatusPill online={Boolean(state?.training)}>
+              {state?.training ? "Training" : trained ? "Model ready" : "Idle"}
+            </StatusPill>
+          </div>
+          <Panel className="route-content-panel">
+            <PanelHeader>
+              <div>
+                <PanelLabel>TRAINING RUN</PanelLabel>
+                <h3>Behavior cloning configuration</h3>
+              </div>
+              <span className="count-badge">{demonstrations.length} demos</span>
+            </PanelHeader>
+            <div className="route-selection-grid">
+              <label>
+                Dataset
+                <select
+                  value={activeDatasetId ?? ""}
+                  onChange={(event) => setActiveDatasetId(event.target.value)}
+                >
+                  <option value="">All datasets</option>
+                  {datasets.map((dataset) => (
+                    <option value={dataset.id} key={dataset.id}>
+                      {dataset.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Demonstration
+                <select
+                  value={selectedDemoId ?? ""}
+                  onChange={(event) => setSelectedDemoId(event.target.value)}
+                >
+                  <option value="">All demonstrations</option>
+                  {demonstrations.map((demonstration) => (
+                    <option value={demonstration.id} key={demonstration.id}>
+                      {demonstration.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <div className="route-form-grid">
+              <label>
+                Hidden layers
+                <input
+                  value={hiddenLayerText}
+                  onChange={(event) =>
+                    updateConfig("hidden_layers", event.target.value)
+                  }
+                />
+              </label>
+              <label>
+                Activation
+                <select
+                  value={config.activation}
+                  onChange={(event) =>
+                    updateConfig("activation", event.target.value)
+                  }
+                >
+                  <option value="relu">ReLU</option>
+                  <option value="tanh">Tanh</option>
+                  <option value="gelu">GELU</option>
+                </select>
+              </label>
+              <label>
+                Increment (ms)
+                <input
+                  type="number"
+                  min="10"
+                  max="2000"
+                  value={config.timestep_ms}
+                  onChange={(event) =>
+                    updateConfig("timestep_ms", event.target.value)
+                  }
+                />
+              </label>
+              <label>
+                Random starts
+                <input
+                  type="number"
+                  min="0"
+                  max="64"
+                  value={config.random_starts}
+                  onChange={(event) =>
+                    updateConfig("random_starts", event.target.value)
+                  }
+                />
+              </label>
+              <label>
+                Rollout steps
+                <input
+                  type="number"
+                  min="1"
+                  max="2000"
+                  value={config.rollout_steps}
+                  onChange={(event) =>
+                    updateConfig("rollout_steps", event.target.value)
+                  }
+                />
+              </label>
+              <label>
+                Epochs
+                <input
+                  type="number"
+                  min="1"
+                  max="5000"
+                  value={config.epochs}
+                  onChange={(event) =>
+                    updateConfig("epochs", event.target.value)
+                  }
+                />
+              </label>
+            </div>
+            <div className="route-actions">
+              <Button
+                variant="primary"
+                onClick={startTraining}
+                disabled={
+                  !sessionId ||
+                  !demonstrations.length ||
+                  busy ||
+                  state?.training
+                }
+              >
+                Train temporal controller
+              </Button>
+              <Link className="button secondary" to="/evaluate">
+                Open evaluation
+              </Link>
+            </div>
+            <div className="route-metric-grid">
+              <div>
+                <PanelLabel>LATEST LOSS</PanelLabel>
+                <strong>{metric ? metric.loss.toFixed(5) : "—"}</strong>
+              </div>
+              <div>
+                <PanelLabel>PROGRESS</PanelLabel>
+                <strong>
+                  {metric ? `${metric.epoch}/${metric.epochs}` : "—"}
+                </strong>
+              </div>
+              <div>
+                <PanelLabel>INPUTS</PanelLabel>
+                <strong>{controllableJoints.length * 2 + 1}</strong>
+              </div>
+              <div>
+                <PanelLabel>OUTPUTS</PanelLabel>
+                <strong>{controllableJoints.length}</strong>
+              </div>
+            </div>
+          </Panel>
+        </div>
+      );
+    }
+    if (location.pathname === "/evaluate") {
+      return (
+        <div className="route-page">
+          <div className="route-heading">
+            <div>
+              <p className="kicker">EVALUATE / TRAJECTORY</p>
+              <h2>Inspect the learned motion.</h2>
+              <p className="intro-copy">
+                Compare the predicted rollout against every authored keyframe
+                instead of only checking the final pose.
+              </p>
+            </div>
+            <StatusPill online={trained}>
+              {trained ? "Evaluation ready" : "Train a model first"}
+            </StatusPill>
+          </div>
+          <div className="route-two-column">
+            <Panel className="route-viewport-panel">
+              <PanelHeader>
+                <div>
+                  <PanelLabel>PREDICTED VIEWPORT</PanelLabel>
+                  <h3>{robot?.name ?? "Awaiting robot"}</h3>
+                </div>
+                <Button
+                  size="small"
+                  variant="secondary"
+                  onClick={() =>
+                    replayFrames(rolloutFrames, "the evaluated trajectory")
+                  }
+                  disabled={rolloutFrames.length < 2}
+                >
+                  {replayingDemoId === "evaluation"
+                    ? "Replaying"
+                    : "Play rollout"}
+                </Button>
+              </PanelHeader>
+              <RobotScene robot={robot} state={state} />
+            </Panel>
+            <Panel className="route-content-panel">
+              <PanelHeader>
+                <div>
+                  <PanelLabel>CHECKPOINT COMPARISON</PanelLabel>
+                  <h3>
+                    {rolloutFrames.length
+                      ? `${rolloutFrames.length} predicted frames`
+                      : "No rollout yet"}
+                  </h3>
+                </div>
+              </PanelHeader>
+              <div className="evaluation-route-content">
+                <Button
+                  variant="primary"
+                  full
+                  onClick={testModel}
+                  disabled={!trained || !demonstrations.length || busy}
+                >
+                  Evaluate selected demonstration
+                </Button>
+                {evaluation ? (
+                  <>
+                    <div className="route-metric-grid">
+                      <div>
+                        <PanelLabel>MEAN ERROR</PanelLabel>
+                        <strong>
+                          {meanError(
+                            evaluation.target,
+                            evaluation.positions,
+                          ).toFixed(4)}
+                        </strong>
+                      </div>
+                      <div>
+                        <PanelLabel>MAX ERROR</PanelLabel>
+                        <strong>{evaluation.error.toFixed(4)}</strong>
+                      </div>
+                    </div>
+                    <div className="keyframe-results">
+                      {rolloutFrames.map((frame, index) => (
+                        <div
+                          className="keyframe-result"
+                          key={`${frame.timestamp}-${index}`}
+                        >
+                          <span>Frame {index + 1}</span>
+                          <span>
+                            {meanError(frame.expected, frame.positions).toFixed(
+                              4,
+                            )}{" "}
+                            error
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                ) : (
+                  <div className="test-empty">
+                    Select a demonstration and run evaluation to inspect the
+                    complete trajectory.
+                  </div>
+                )}
+              </div>
+            </Panel>
+          </div>
+        </div>
+      );
+    }
+    return (
+      <div className="route-page">
+        <div className="route-heading">
+          <div>
+            <p className="kicker">TEACH / POSE EDITOR</p>
+            <h2>Shape the robot pose.</h2>
+            <p className="intro-copy">
+              Edit every controllable joint together, then capture a full-pose
+              keyframe or continue in the animation timeline.
+            </p>
+          </div>
+          <div className="route-heading-actions">
+            <label className="button ghost route-upload">
+              <input
+                type="file"
+                accept=".urdf,application/xml,text/xml"
+                onChange={handleUpload}
+              />
+              Upload URDF
+            </label>
+            <Button variant="primary" onClick={handleDemo} disabled={busy}>
+              Open sample robot
+            </Button>
+          </div>
+        </div>
+        <div className="route-two-column">
+          <Panel className="route-viewport-panel">
+            <PanelHeader>
+              <div>
+                <PanelLabel>LIVE VIEWPORT</PanelLabel>
+                <h3>{robot?.name ?? "Awaiting robot"}</h3>
+              </div>
+              <Button
+                size="small"
+                variant="secondary"
+                onClick={resetPose}
+                disabled={!robot}
+              >
+                Reset pose
+              </Button>
+            </PanelHeader>
+            <RobotScene robot={robot} state={state} />
+          </Panel>
+          <Panel className="route-content-panel">
+            <PanelHeader>
+              <div>
+                <PanelLabel>FULL-ROBOT POSE</PanelLabel>
+                <h3>Joint editor</h3>
+              </div>
+              <span className="count-badge">
+                {controllableJoints.length} active
+              </span>
+            </PanelHeader>
+            <div className="route-joint-list">
+              {controllableJoints.map((joint, index) => (
+                <label className="route-joint-row" key={joint.name}>
+                  <span>
+                    {joint.name}
+                    <small>{joint.type}</small>
+                  </span>
+                  <input
+                    type="range"
+                    min={joint.lower}
+                    max={joint.upper}
+                    step="0.001"
+                    value={positions[index] ?? 0}
+                    onChange={(event) =>
+                      updateJoint(index, Number(event.target.value))
+                    }
+                  />
+                  <input
+                    type="number"
+                    min={joint.lower}
+                    max={joint.upper}
+                    step="0.001"
+                    value={positions[index] ?? 0}
+                    aria-label={`${joint.name} route position`}
+                    onChange={(event) =>
+                      updateJoint(index, Number(event.target.value))
+                    }
+                  />
+                </label>
+              ))}
+            </div>
+            <div className="route-actions">
+              <Button
+                variant="primary"
+                onClick={captureDemonstration}
+                disabled={!robot || !controllableJoints.length}
+              >
+                Capture pose
+              </Button>
+              <Link className="button secondary" to="/teach/timeline">
+                Open keyframe editor
+              </Link>
+            </div>
+          </Panel>
+        </div>
+      </div>
+    );
+  })();
+
+  if (location.pathname !== "/legacy") {
+    return (
+      <WorkbenchProvider
+        value={{
+          robot,
+          sessionId,
+          state,
+          positions,
+          demonstrations,
+          datasets,
+          activeDatasetId,
+          selectedDemoId,
+          applyPositions,
+          persistDemonstrations,
+          persistDatasets,
+        }}
+      >
+        <RouteFrame
+          robot={robot}
+          sessionId={sessionId}
+          error={error}
+          message={message}
+          onDismissError={() => setError(null)}
+        >
+          {routePage}
+        </RouteFrame>
+      </WorkbenchProvider>
+    );
   }
 
   return (
@@ -1579,6 +2196,86 @@ export default function App() {
   );
 }
 
+type RouteFrameProps = {
+  children: ReactNode;
+  robot: Robot | null;
+  sessionId: string | null;
+  error: string | null;
+  message: string;
+  onDismissError: () => void;
+};
+
+function RouteFrame({
+  children,
+  robot,
+  sessionId,
+  error,
+  message,
+  onDismissError,
+}: RouteFrameProps) {
+  const workspace = useWorkbench();
+  const navigation = [
+    ["/teach/pose", "Pose"],
+    ["/teach/timeline", "Timeline"],
+    ["/archive", "Archive"],
+    ["/train", "Train"],
+    ["/evaluate", "Evaluate"],
+  ] as const;
+  return (
+    <main className="app-shell route-shell">
+      <header className="topbar">
+        <Link className="brand-lockup brand-link" to="/teach/pose">
+          <div className="brand-mark">⌁</div>
+          <div>
+            <div className="eyebrow">ROBOTICS LAB / 01</div>
+            <h1>Learning Workbench</h1>
+          </div>
+        </Link>
+        <div className="topbar-actions">
+          <StatusPill online={Boolean(sessionId)}>
+            {sessionId ? "Session live" : "No session"}
+          </StatusPill>
+          {sessionId && (
+            <a className="button ghost small" href={exportUrl(sessionId)}>
+              Export session
+            </a>
+          )}
+        </div>
+      </header>
+      <nav className="route-nav" aria-label="Workbench pages">
+        {navigation.map(([href, label]) => (
+          <NavLink
+            className={({ isActive }) =>
+              `route-nav-link ${isActive ? "active" : ""}`
+            }
+            to={href}
+            key={href}
+          >
+            {label}
+          </NavLink>
+        ))}
+      </nav>
+      <div className="route-context">
+        <span>{workspace.robot?.name ?? robot?.name ?? "No robot loaded"}</span>
+        <span>·</span>
+        <span>{message}</span>
+      </div>
+      {error && (
+        <div className="alert error">
+          <strong>Attention</strong>
+          <span>{error}</span>
+          <button onClick={onDismissError}>×</button>
+        </div>
+      )}
+      {children}
+      <footer className="footer">
+        <span>FastAPI · PyBullet · PyTorch · Three.js</span>
+        <span>Robot teaching workspace / routed session</span>
+      </footer>
+    </main>
+  );
+}
+
 type TimelinePanelProps = {
   frames: DemonstrationFrame[];
   joints: Joint[];
@@ -1610,131 +2307,173 @@ function TimelinePanel({
   onStartRecording,
   onStopRecording,
 }: TimelinePanelProps) {
+  const fps = 30;
+  const lastFrame = frames[frames.length - 1]?.timestamp ?? 0;
+  const durationFrames = Math.max(60, Math.ceil((lastFrame / 1000) * fps) + 12);
+  const selected = frames[selectedFrameIndex];
+  const markerPosition = (timestamp: number) =>
+    `${Math.min(100, Math.max(0, (timestamp / Math.max(lastFrame, 1)) * 100))}%`;
+
   return (
-    <div className="timeline-panel">
-      <div className="demo-toolbar">
+    <div className="animation-editor">
+      <div className="animation-toolbar">
         <div>
-          <p className="panel-label">GESTURE TIMELINE</p>
+          <PanelLabel>KEYFRAME EDITOR · {fps} FPS</PanelLabel>
           <strong>
-            {frames.length} checkpoint{frames.length === 1 ? "" : "s"}
+            {frames.length} authored keyframe{frames.length === 1 ? "" : "s"}
           </strong>
         </div>
         <div className="demo-card-actions">
           {recording ? (
-            <button
-              className="button recording small"
-              onClick={onStopRecording}
-            >
-              Stop recording
-            </button>
+            <Button variant="recording" size="small" onClick={onStopRecording}>
+              Stop capture
+            </Button>
           ) : (
-            <button
-              className="button secondary small"
-              onClick={onStartRecording}
-            >
-              Start gesture
-            </button>
+            <Button variant="secondary" size="small" onClick={onStartRecording}>
+              Start capture
+            </Button>
           )}
-          <button
-            className="button primary small"
+          <Button
+            variant="primary"
+            size="small"
             onClick={onCapture}
             disabled={!joints.length}
           >
-            Capture checkpoint
-          </button>
+            Insert full-pose key
+          </Button>
         </div>
       </div>
       <p className="helper-text">
-        Every checkpoint captures the complete robot state. Edit multiple joints
-        before saving, then use timestamps to shape the interpolated motion.
+        Keyframes are authored diamonds. Motion between them is derived for
+        preview and training; fixed-rate samples are never treated as editable
+        keys.
       </p>
       {frames.length ? (
         <>
           <div
-            className="timeline-track"
-            role="list"
-            aria-label="Gesture checkpoints"
+            className="animation-ruler"
+            style={
+              { "--timeline-duration": durationFrames } as React.CSSProperties
+            }
           >
-            {frames.map((frame, index) => (
-              <button
-                className={`timeline-marker ${selectedFrameIndex === index ? "selected" : ""}`}
-                key={`marker-${index}-${frame.timestamp}`}
-                onClick={() => onSelectFrame(index)}
-                type="button"
-              >
-                <span>{index + 1}</span>
-                <small>{Math.round(frame.timestamp)} ms</small>
-              </button>
+            {Array.from(
+              { length: Math.ceil(durationFrames / 12) + 1 },
+              (_, index) => (
+                <span
+                  key={index}
+                  style={{ left: `${((index * 12) / durationFrames) * 100}%` }}
+                >
+                  {index * 12}
+                </span>
+              ),
+            )}
+            <i
+              className="animation-playhead"
+              style={{ left: markerPosition(selected?.timestamp ?? 0) }}
+            />
+          </div>
+          <div
+            className="animation-channels"
+            role="list"
+            aria-label="Robot animation channels"
+          >
+            <div className="channel-row channel-header">
+              <span>CHANNELS</span>
+              <span>AUTHORED KEYFRAMES</span>
+            </div>
+            {joints.map((joint) => (
+              <div className="channel-row" key={joint.name}>
+                <span className="channel-name">
+                  {joint.name}
+                  <small>{joint.type}</small>
+                </span>
+                <div className="channel-track">
+                  {frames.map((frame, frameIndex) => (
+                    <button
+                      className={`keyframe-diamond ${selectedFrameIndex === frameIndex ? "selected" : ""}`}
+                      style={{ left: markerPosition(frame.timestamp) }}
+                      aria-label={`Keyframe ${frameIndex + 1} for ${joint.name}`}
+                      key={`${joint.name}-${frameIndex}-${frame.timestamp}`}
+                      onClick={() => onSelectFrame(frameIndex)}
+                      type="button"
+                    >
+                      ◆
+                    </button>
+                  ))}
+                </div>
+              </div>
             ))}
           </div>
-          <div className="timeline-frame-list">
-            {frames.map((frame, frameIndex) => (
-              <article
-                className={`timeline-frame ${selectedFrameIndex === frameIndex ? "selected" : ""}`}
-                key={`frame-${frameIndex}-${frame.timestamp}`}
-              >
-                <div className="timeline-frame-header">
-                  <button
-                    className="button ghost small"
-                    onClick={() => onSelectFrame(frameIndex)}
-                  >
-                    Checkpoint {frameIndex + 1}
-                  </button>
-                  <label>
-                    <span>Time (ms)</span>
+          {selected ? (
+            <div className="keyframe-inspector">
+              <div className="timeline-frame-header">
+                <div>
+                  <PanelLabel>SELECTED KEYFRAME</PanelLabel>
+                  <strong>
+                    Frame {Math.round((selected.timestamp / 1000) * fps)}
+                  </strong>
+                </div>
+                <label>
+                  <span>Frame time (ms)</span>
+                  <input
+                    aria-label="Selected keyframe time"
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={Math.round(selected.timestamp)}
+                    onChange={(event) =>
+                      onUpdateTimestamp(
+                        selectedFrameIndex,
+                        Number(event.target.value),
+                      )
+                    }
+                  />
+                </label>
+                <Button
+                  variant="ghost"
+                  size="small"
+                  onClick={() => onDeleteFrame(selectedFrameIndex)}
+                  disabled={frames.length <= 1}
+                >
+                  Delete key
+                </Button>
+              </div>
+              <div className="timeline-joint-grid">
+                {joints.map((joint, jointIndex) => (
+                  <label key={joint.name}>
+                    <span>{joint.name}</span>
                     <input
-                      aria-label={`Timestamp for checkpoint ${frameIndex + 1}`}
+                      aria-label={`${joint.name} at selected keyframe`}
                       type="number"
-                      min="0"
-                      step="10"
-                      value={Math.round(frame.timestamp)}
+                      min={joint.lower}
+                      max={joint.upper}
+                      step="0.001"
+                      value={selected.positions[jointIndex] ?? 0}
                       onChange={(event) =>
-                        onUpdateTimestamp(
-                          frameIndex,
+                        onUpdateFrame(
+                          selectedFrameIndex,
+                          jointIndex,
                           Number(event.target.value),
                         )
                       }
                     />
                   </label>
-                  <button
-                    className="icon-button"
-                    aria-label={`Delete checkpoint ${frameIndex + 1}`}
-                    onClick={() => onDeleteFrame(frameIndex)}
-                    disabled={frames.length <= 1}
-                  >
-                    ×
-                  </button>
-                </div>
-                <div className="timeline-joint-grid">
-                  {joints.map((joint, jointIndex) => (
-                    <label key={`${frameIndex}-${joint.name}`}>
-                      <span>{joint.name}</span>
-                      <input
-                        aria-label={`${joint.name} at checkpoint ${frameIndex + 1}`}
-                        type="number"
-                        min={joint.lower}
-                        max={joint.upper}
-                        step="0.001"
-                        value={frame.positions[jointIndex] ?? 0}
-                        onChange={(event) =>
-                          onUpdateFrame(
-                            frameIndex,
-                            jointIndex,
-                            Number(event.target.value),
-                          )
-                        }
-                      />
-                    </label>
-                  ))}
-                </div>
-              </article>
-            ))}
-          </div>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="demo-empty">
+              <strong>No keyframes yet</strong>
+              <span>Insert a full-pose keyframe to start the animation.</span>
+            </div>
+          )}
         </>
       ) : (
         <div className="demo-empty">
-          <strong>No checkpoints yet</strong>
-          <span>Start a gesture or capture the current full-robot pose.</span>
+          <strong>No authored keyframes yet</strong>
+          <span>
+            Start capture, then insert full-pose keys at meaningful moments.
+          </span>
         </div>
       )}
     </div>

@@ -1,4 +1,41 @@
-import type { DemonstrationFrame } from "../types";
+import type { DemonstrationFrame, Keyframe } from "../types";
+
+export const DEFAULT_TIMELINE_FPS = 30;
+
+export function framesToKeyframes(
+  frames: DemonstrationFrame[],
+  fps = DEFAULT_TIMELINE_FPS,
+): Keyframe[] {
+  const millisecondsPerFrame = 1000 / fps;
+  let previousFrame = -1;
+  return normalizeFrames(frames).map((frame, index) => {
+    const timelineFrame = Math.max(
+      previousFrame + 1,
+      Math.round(frame.timestamp / millisecondsPerFrame),
+    );
+    previousFrame = timelineFrame;
+    return {
+      id: `keyframe-${index}-${timelineFrame}`,
+      frame: timelineFrame,
+      timestamp: frame.timestamp,
+      positions: [...frame.positions],
+      interpolation: "linear" as const,
+    };
+  });
+}
+
+export function keyframesToFrames(
+  keyframes: Keyframe[],
+  fps = DEFAULT_TIMELINE_FPS,
+) {
+  const millisecondsPerFrame = 1000 / fps;
+  return [...keyframes]
+    .sort((left, right) => left.frame - right.frame)
+    .map((keyframe) => ({
+      timestamp: keyframe.frame * millisecondsPerFrame,
+      positions: [...keyframe.positions],
+    }));
+}
 
 export type IncrementalSample = {
   current: number[];

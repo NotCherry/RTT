@@ -190,6 +190,69 @@
   .footer { @apply flex justify-between px-[3px] pt-[17px] font-mono text-[10px] text-text-700; }
 }
 
+  .brand-link { @apply no-underline text-inherit; }
+  .route-nav { @apply mt-5 flex gap-1 overflow-x-auto border-b border-line-700 pb-1; }
+  .route-nav-link { @apply whitespace-nowrap border-b-2 border-transparent px-3 py-2 font-mono text-[11px] text-text-600 no-underline transition hover:text-text-100; }
+  .route-nav-link.active { @apply border-accent-500 bg-accent-deep/50 text-blue-100; }
+  .route-context { @apply flex gap-2 pt-3 font-mono text-[10px] text-text-600; }
+  .route-page { @apply min-w-0; }
+  .route-heading { @apply flex items-end justify-between gap-8 py-12 pb-8; }
+  .route-heading-actions { @apply flex shrink-0 gap-2; }
+  .route-upload input { @apply hidden; }
+  .route-two-column { @apply grid items-stretch gap-[13px]; grid-template-columns: minmax(0, 1.15fr) minmax(420px, .85fr); }
+  .route-viewport-panel { @apply flex min-h-[650px] flex-col; }
+  .route-content-panel { @apply min-w-0; }
+  .route-archive-grid { @apply grid items-start gap-[13px]; grid-template-columns: minmax(360px, .8fr) minmax(0, 1.2fr); }
+  .archive-demo-panel { @apply min-h-[420px]; }
+  .archive-route-list { @apply grid gap-2 p-[18px]; }
+  .archive-route-card { @apply flex items-center justify-between gap-4 rounded border border-line-650 bg-ink-850 p-3; }
+  .archive-route-card strong { @apply block text-sm text-blue-100; }
+  .archive-route-card span { @apply mt-1 block font-mono text-[10px] text-text-600; }
+  .route-content-panel > .animation-editor, .route-content-panel > .datasets-panel { @apply p-[18px]; }
+  .route-joint-list { @apply p-[18px]; }
+  .route-joint-row { @apply grid items-center gap-3 border-b border-[#222d38] py-4; grid-template-columns: 150px minmax(150px, 1fr) 95px; }
+  .route-joint-row > span { @apply flex flex-col gap-1 text-xs text-text-300; }
+  .route-joint-row small { @apply font-mono text-[9px] uppercase text-text-600; }
+  .route-joint-row input[type='number'], .route-form-grid input, .route-form-grid select { @apply min-w-0 rounded border border-line-600 bg-ink-800 p-2 font-mono text-[11px] text-text-100 outline-none focus:border-accent-500; }
+  .route-actions { @apply flex flex-wrap gap-2 border-t border-[#26323e] p-[18px]; }
+  .route-actions .button { @apply no-underline; }
+  .route-selection-grid { @apply grid grid-cols-2 gap-4 border-b border-line-650 p-[22px]; }
+  .route-selection-grid label { @apply flex flex-col gap-2 font-mono text-[10px] uppercase tracking-[.08em] text-text-600; }
+  .route-selection-grid select { @apply rounded border border-line-600 bg-ink-800 p-2 font-mono text-[11px] normal-case tracking-normal text-text-100 outline-none focus:border-accent-500; }
+  .route-form-grid { @apply grid grid-cols-3 gap-4 p-[22px]; }
+  .route-form-grid label { @apply flex flex-col gap-2 font-mono text-[10px] uppercase tracking-[.08em] text-text-600; }
+  .route-form-grid input, .route-form-grid select { @apply normal-case tracking-normal; }
+  .route-metric-grid { @apply grid grid-cols-4 gap-px overflow-hidden border-y border-line-650 bg-line-650; }
+  .route-metric-grid > div { @apply bg-ink-850 p-4; }
+  .route-metric-grid strong { @apply mt-2 block font-mono text-lg text-blue-100; }
+  .evaluation-route-content { @apply grid gap-4 p-[18px]; }
+  .keyframe-results { @apply grid max-h-[430px] gap-2 overflow-auto; }
+  .keyframe-result { @apply flex items-center justify-between rounded border border-line-650 bg-ink-850 px-3 py-3 font-mono text-[10px] text-text-500; }
+  .keyframe-result span:last-child { @apply text-blue-200; }
+  .animation-editor { @apply min-w-0; }
+  .animation-toolbar { @apply flex items-center justify-between gap-4 border-b border-line-650 pb-4; }
+  .animation-toolbar strong { @apply mt-1 block text-sm text-blue-100; }
+  .animation-ruler { @apply relative mt-5 h-9 border-b border-line-600 bg-[#0d131b] font-mono text-[9px] text-text-600; }
+  .animation-ruler > span { @apply absolute bottom-1 -translate-x-1/2; }
+  .animation-ruler > span::before { content: ''; @apply absolute bottom-[-7px] left-1/2 h-2 w-px bg-line-600; }
+  .animation-playhead { @apply absolute bottom-0 top-0 z-10 w-px bg-danger-400 shadow-[0_0_9px_rgba(255,125,135,.65)]; }
+  .animation-channels { @apply overflow-x-auto border-x border-line-650; }
+  .channel-row { @apply grid min-w-[620px] border-b border-line-650; grid-template-columns: 150px minmax(470px, 1fr); }
+  .channel-row > span { @apply border-r border-line-650 px-3 py-3; }
+  .channel-header { @apply bg-[#0d131b] font-mono text-[9px] tracking-[.12em] text-text-600; }
+  .channel-name { @apply flex flex-col gap-1 font-mono text-[10px] text-text-300; }
+  .channel-name small { @apply text-[8px] uppercase text-text-600; }
+  .channel-track { @apply relative min-h-[43px] bg-[repeating-linear-gradient(90deg,transparent_0,transparent_39px,#202b37_40px)]; }
+  .keyframe-diamond { @apply absolute top-1/2 z-[2] -translate-x-1/2 -translate-y-1/2 cursor-pointer border-0 bg-transparent p-1 font-mono text-[15px] leading-none text-accent-500 hover:text-accent-300; }
+  .keyframe-diamond.selected { @apply text-danger-400 drop-shadow-[0_0_5px_rgba(255,125,135,.7)]; }
+  .keyframe-inspector { @apply mt-4 rounded border border-line-650 bg-ink-850 p-4; }
+  .keyframe-inspector .timeline-frame-header { @apply flex items-center gap-3; }
+  .keyframe-inspector .timeline-frame-header > div { @apply mr-auto; }
+  .keyframe-inspector .timeline-frame-header strong { @apply mt-1 block font-mono text-sm text-blue-100; }
+  .keyframe-inspector label { @apply flex flex-col gap-1 font-mono text-[9px] uppercase text-text-600; }
+  .keyframe-inspector input { @apply w-28 rounded border border-line-600 bg-ink-800 p-2 font-mono text-[11px] text-text-100; }
+  .route-shell .footer { @apply mt-7; }
+
 @media (max-width: 1120px) {
   .workbench-grid { @apply grid-cols-2; }
   .viewer-column { @apply col-span-full min-h-[600px]; }
@@ -209,4 +272,10 @@
   .viewer-footer { @apply flex-wrap; }
   .viewer-hint { @apply mt-[3px] w-full; }
   .footer { @apply flex-col gap-2; }
+  .route-heading { @apply flex-col items-start gap-5 py-8; }
+  .route-two-column, .route-archive-grid { @apply flex flex-col; }
+  .route-viewport-panel { @apply min-h-[460px]; }
+  .route-selection-grid, .route-form-grid { @apply grid-cols-1; }
+  .route-metric-grid { @apply grid-cols-2; }
+  .route-joint-row { @apply grid-cols-[110px_minmax(100px,1fr)_80px] gap-2; }
 }

@@ -47,11 +47,13 @@ The page retains a subtle radial blue glow from the upper-right corner. Gradient
 
 - App shell max width: approximately 1640px.
 - Desktop shell padding: `28px 38px 22px`.
-- Main workbench: three columns — live viewport, robot controls, training/archive tools.
+- The routed workspace uses page-specific layouts instead of squeezing every workflow into one three-column panel.
+- Teaching and evaluation pages may use two primary columns: a visually dominant viewport and a focused editor/inspection panel.
+- Archive and training pages use the full available content width for their information architecture.
 - Column gap: 13px.
 - Panels have a minimum 1px border, 9px radius, dark translucent surface, and a soft shadow.
-- At medium widths, the viewport spans the full row and the two tool panels sit beneath it.
-- At mobile widths, panels become a vertical stack and the workflow indicator can scroll horizontally.
+- At medium widths, the viewport spans the full row and the tool panels sit beneath it.
+- At mobile widths, pages become a vertical stack and route navigation can scroll horizontally.
 
 ## Component recipes
 
@@ -71,9 +73,13 @@ A panel is a bordered dark surface with clipped rounded corners. Its header has 
 
 Pills use full rounding, a 1px border, DM Mono text, and a 6px status dot. Connected/ready states use green; idle states stay blue-gray.
 
-### Tabs
+### Routed navigation
 
-Tabs sit in a dark inset track with a thin border. The selected tab uses a deep blue surface and pale blue text. Counts appear as small rounded blue badges.
+Primary workflow navigation uses real routes and page links, not an expanding tab strip inside a single panel. Active routes use a deep blue surface, pale blue text, and an accent border. Route changes preserve the shared robot session while giving each workflow its own layout and vertical space.
+
+### Animation timeline
+
+The gesture timeline uses an animation-editor surface: a horizontal time ruler, a playhead, per-joint channel rows, and diamond keyframe markers. Authored keyframes use the accent color; the selected keyframe uses the danger/attention color. Derived playback and training samples stay invisible to the authoring surface.
 
 ### Archive card
 

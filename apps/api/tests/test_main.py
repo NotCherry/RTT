@@ -92,6 +92,12 @@ def test_demonstrations_are_persisted_and_exported_as_frames():
             {"timestamp": 0, "positions": [0.0, 0.0]},
             {"timestamp": 120, "positions": [0.6, -0.4]},
         ],
+        "keyframes": [
+            {"id": "k0", "frame": 0, "timestamp": 0, "positions": [0.0, 0.0], "interpolation": "linear"},
+            {"id": "k1", "frame": 4, "timestamp": 120, "positions": [0.6, -0.4], "interpolation": "linear"},
+        ],
+        "timeline_fps": 30,
+        "duration_frames": 4,
     }
 
     save_response = client.put(
@@ -110,6 +116,8 @@ def test_demonstrations_are_persisted_and_exported_as_frames():
     assert exported["name"] == "reach forward"
     assert exported["kind"] == "gesture"
     assert len(exported["frames"]) == 2
+    assert len(exported["keyframes"]) == 2
+    assert exported["keyframes"][1]["frame"] == 4
 
 
 def test_incremental_samples_learn_small_next_state_deltas():

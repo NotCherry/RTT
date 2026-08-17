@@ -37,9 +37,9 @@ const sampleRobot = {
 };
 
 function stubSession() {
-  cy.intercept("GET", "/api/robots/demo", {
-    body: sampleRobot,
-  }).as("loadDemoRobot");
+  cy.intercept("GET", "/api/robots/demo", { body: sampleRobot }).as(
+    "loadDemoRobot",
+  );
   cy.intercept("POST", "/api/sessions", {
     body: {
       session_id: "session-under-test",
@@ -55,88 +55,79 @@ function stubSession() {
   }).as("saveDatasets");
 }
 
-describe("demonstration archive", () => {
+describe("routed teaching workspace", () => {
   beforeEach(() => {
     stubSession();
-    cy.visit("/");
+    cy.visit("/teach/pose");
   });
 
-  it("captures a pose and persists its archive record", () => {
-    cy.contains("button", "Load the 2-joint sample arm").click();
-    cy.wait("@createSession");
+  it("navigates between full workspace pages", () => {
+    cy.contains("Pose").should("have.attr", "href", "/teach/pose");
+    cy.contains("Timeline").click();
+    cy.location("pathname").should("eq", "/teach/timeline");
+    cy.contains("Author the robot motion.").should("be.visible");
+    cy.contains("Archive").click();
+    cy.location("pathname").should("eq", "/archive");
+    cy.contains("Organize expected behavior.").should("be.visible");
+    cy.contains("Train").click();
+    cy.location("pathname").should("eq", "/train");
+    cy.contains("Train from keyframe motion.").should("be.visible");
+    cy.contains("Evaluate").click();
+    cy.location("pathname").should("eq", "/evaluate");
+    cy.contains("Inspect the learned motion.").should("be.visible");
+  });
 
+  it("captures a full pose with an authored keyframe", () => {
+    cy.contains("button", "Open sample robot").click();
+    cy.wait("@createSession");
     cy.contains("button", "Capture pose").click();
     cy.wait("@saveDemonstrations")
       .its("request.body.demonstrations.0")
       .should((demonstration) => {
         expect(demonstration.kind).to.equal("pose");
-        expect(demonstration.frames).to.have.length(1);
-        expect(demonstration.target).to.deep.equal([0, 0]);
+        expect(demonstration.keyframes).to.have.length(1);
+        expect(demonstration.keyframes[0].frame).to.equal(0);
       });
-
-    cy.get('[role="tab"]').contains("Demonstrations").click();
-    cy.contains("1 captured item").should("be.visible");
-    cy.contains("Pose 01").should("be.visible");
-    cy.contains("Preview pose").click();
   });
 
-  it("authors full-robot checkpoints in the timeline", () => {
-    cy.contains("button", "Load the 2-joint sample arm").click();
+  it("authors multiple keyframes on animation channels", () => {
+    cy.contains("button", "Open sample robot").click();
     cy.wait("@createSession");
-
-    cy.contains("button", "Record gesture").click();
-    cy.get('[role="tab"]').contains("Timeline").should("be.visible");
-    cy.contains("button", "Capture checkpoint").click();
-    cy.contains("button", "Stop recording").click();
-
-    cy.get('[role="tab"]').contains("Timeline").click();
-    cy.contains("checkpoint", { matchCase: false }).should("be.visible");
-    cy.get('input[aria-label="shoulder_joint at checkpoint 1"]').should(
-      "have.value",
-      "0",
+    cy.contains("Timeline").click();
+    cy.contains("button", "Start capture").click();
+    cy.contains("button", "Insert full-pose key").click();
+    cy.get('input[aria-label="shoulder_joint at selected keyframe"]')
+      .clear()
+      .type("0.5");
+    cy.contains("button", "Stop capture").click();
+    cy.wait("@saveDemonstrations")
+      .its("request.body.demonstrations.0")
+      .should((demonstration) => {
+        expect(demonstration.kind).to.equal("gesture");
+        expect(demonstration.keyframes.length).to.be.greaterThan(1);
+        expect(demonstration.keyframes[0]).to.have.property(
+          "interpolation",
+          "linear",
+        );
+      });
+    cy.contains("authored keyframes", { matchCase: false }).should(
+      "be.visible",
     );
-    cy.get('input[aria-label="elbow_joint at checkpoint 1"]').type("0.5");
+    cy.get('[aria-label="Robot animation channels"]').should("be.visible");
   });
 
-  it("organizes captured work in named datasets", () => {
-    cy.contains("button", "Load the 2-joint sample arm").click();
+  it("organizes demonstrations in the archive datasets page", () => {
+    cy.contains("button", "Open sample robot").click();
     cy.wait("@createSession");
     cy.contains("button", "Capture pose").click();
     cy.wait("@saveDemonstrations");
     cy.wait("@saveDatasets");
-
-    cy.get('[role="tab"]').contains("Datasets").click();
+    cy.contains("Archive").click();
     cy.contains("Untitled dataset").should("be.visible");
     cy.contains("button", "New dataset").click();
     cy.get('input[aria-label="Rename Dataset 2"]')
       .clear()
       .type("reach training");
     cy.contains("reach training").should("be.visible");
-    cy.get('select[aria-label="Dataset for Pose 01"]')
-      .select("reach training")
-      .invoke("val")
-      .should("match", /^dataset-/);
-  });
-
-  it("records multiple frames for a gesture", () => {
-    cy.contains("button", "Load the 2-joint sample arm").click();
-    cy.wait("@createSession");
-
-    cy.contains("button", "Record gesture").click();
-    cy.contains("button", "Stop recording").should("be.visible");
-    cy.wait(300);
-    cy.contains("button", "Stop recording").click();
-
-    cy.wait("@saveDemonstrations")
-      .its("request.body.demonstrations.0")
-      .should((demonstration) => {
-        expect(demonstration.kind).to.equal("gesture");
-        expect(demonstration.frames.length).to.be.greaterThan(1);
-        expect(demonstration.current).to.deep.equal([0, 0]);
-      });
-
-    cy.get('[role="tab"]').contains("Demonstrations").click();
-    cy.contains("Gesture 01").should("be.visible");
-    cy.contains("Replay gesture").should("be.visible");
   });
 });

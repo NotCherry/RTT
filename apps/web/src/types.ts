@@ -35,6 +35,14 @@ export type DemonstrationFrame = {
   timestamp: number;
   positions: number[];
 };
+export type KeyframeInterpolation = "linear" | "step";
+export type Keyframe = {
+  id: string;
+  frame: number;
+  timestamp: number;
+  positions: number[];
+  interpolation: KeyframeInterpolation;
+};
 export type Demonstration = {
   id: string;
   name: string;
@@ -42,6 +50,9 @@ export type Demonstration = {
   current: number[];
   target: number[];
   frames: DemonstrationFrame[];
+  keyframes?: Keyframe[];
+  timeline_fps?: number;
+  duration_frames?: number;
   start_frame_index?: number;
   dataset_id?: string;
 };

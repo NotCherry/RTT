@@ -8,7 +8,7 @@ import threading
 import uuid
 import zipfile
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 import xml.etree.ElementTree as ET
 
 import numpy as np
@@ -209,6 +209,14 @@ class DemonstrationFrame(BaseModel):
     positions: list[float]
 
 
+class Keyframe(BaseModel):
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    frame: int = Field(ge=0)
+    timestamp: float = Field(ge=0)
+    positions: list[float]
+    interpolation: Literal["linear", "step"] = "linear"
+
+
 class Demonstration(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
     name: str = "Untitled pose"
@@ -216,6 +224,9 @@ class Demonstration(BaseModel):
     current: list[float]
     target: list[float]
     frames: list[DemonstrationFrame] = Field(default_factory=list)
+    keyframes: list[Keyframe] = Field(default_factory=list)
+    timeline_fps: int = Field(30, ge=1, le=240)
+    duration_frames: int = Field(0, ge=0, le=100000)
     start_frame_index: int = Field(0, ge=0)
     dataset_id: str | None = None
 
@@ -375,6 +386,15 @@ def _interpolate_frame_positions(frames: list[DemonstrationFrame], timestamp: fl
     return _lerp_positions(previous.positions, next_frame.positions, progress)
 
 
+def authored_frames(demonstration: Demonstration) -> list[DemonstrationFrame]:
+    if demonstration.keyframes:
+        return [
+            DemonstrationFrame(timestamp=keyframe.timestamp, positions=keyframe.positions)
+            for keyframe in sorted(demonstration.keyframes, key=lambda item: item.frame)
+        ]
+    return sorted(demonstration.frames, key=lambda frame: frame.timestamp)
+
+
 def build_incremental_samples(
     demonstrations: list[Demonstration],
     joints: list[dict[str, Any]],
@@ -390,7 +410,7 @@ def build_incremental_samples(
     step = max(1, timestep_ms)
 
     for demonstration in demonstrations:
-        frames = sorted(demonstration.frames, key=lambda frame: frame.timestamp)
+        frames = authored_frames(demonstration)
         if not frames:
             frames = [DemonstrationFrame(timestamp=0, positions=demonstration.target)]
         start_index = min(demonstration.start_frame_index, len(frames) - 1)
@@ -544,15 +564,24 @@ def save_demonstrations(session_id: str, request: DemonstrationsRequest) -> dict
     joint_count = len(session.joints)
     if any(len(item.current) != joint_count or len(item.target) != joint_count for item in request.demonstrations):
         raise HTTPException(422, "Each demonstration must contain one value per controllable joint.")
-    if any(
-        len(frame.positions) != joint_count
-        or any(left.timestamp > right.timestamp for left, right in zip(item.frames, item.frames[1:]))
-        for item in request.demonstrations
-        for frame in item.frames
-    ):
-        raise HTTPException(422, "Timeline frames must be ordered and match the controllable joints.")
-    if any(item.start_frame_index >= len(item.frames) for item in request.demonstrations if item.frames):
-        raise HTTPException(422, "The selected starting frame does not exist.")
+    for item in request.demonstrations:
+        if any(len(frame.positions) != joint_count for frame in item.frames):
+            raise HTTPException(422, "Timeline frames must match the controllable joints.")
+        if any(len(keyframe.positions) != joint_count for keyframe in item.keyframes):
+            raise HTTPException(422, "Keyframes must match the controllable joints.")
+        if any(
+            left.frame >= right.frame or left.timestamp >= right.timestamp
+            for left, right in zip(item.keyframes, item.keyframes[1:])
+        ):
+            raise HTTPException(422, "Keyframes must be ordered by increasing frame and time.")
+        if any(
+            left.timestamp > right.timestamp
+            for left, right in zip(item.frames, item.frames[1:])
+        ):
+            raise HTTPException(422, "Timeline frames must be ordered by timestamp.")
+        authored_count = len(item.keyframes) or len(item.frames)
+        if authored_count and item.start_frame_index >= authored_count:
+            raise HTTPException(422, "The selected starting frame does not exist.")
     session.demonstrations = [item.model_dump() for item in request.demonstrations]
     return {"status": "saved", "demonstrations": len(session.demonstrations)}
 

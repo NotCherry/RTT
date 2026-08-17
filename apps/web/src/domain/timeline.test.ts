@@ -1,11 +1,28 @@
 import { describe, expect, it } from "vitest";
 import {
   buildIncrementalSamples,
+  framesToKeyframes,
   interpolatePositions,
+  keyframesToFrames,
   normalizeFrames,
 } from "./timeline";
 
 describe("gesture timeline", () => {
+  it("keeps authored keyframes separate from derived playback frames", () => {
+    const keyframes = framesToKeyframes(
+      [
+        { timestamp: 0, positions: [0, 0] },
+        { timestamp: 800, positions: [1, -1] },
+      ],
+      20,
+    );
+    expect(keyframes.map((keyframe) => keyframe.frame)).toEqual([0, 16]);
+    expect(keyframesToFrames(keyframes, 20)[1]).toEqual({
+      timestamp: 800,
+      positions: [1, -1],
+    });
+  });
+
   const frames = [
     { timestamp: 200, positions: [1, 2] },
     { timestamp: 0, positions: [0, 0] },

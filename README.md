@@ -58,16 +58,15 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload
 ```
 
-Open `http://localhost:5173`. The sample arm works without an upload. The workbench now supports:
+Open `http://localhost:5173/teach/pose`. The sample arm works without an upload. The routed workspace now provides separate full-page workflows:
 
-- Multi-joint pose editing with precise numeric controls alongside sliders.
-- A `Timeline` tab for full-robot gesture checkpoints, timestamp editing, interpolation, checkpoint deletion, and replay.
-- A `Demonstrations` archive for naming, previewing, editing, replaying, and deleting captured behavior.
-- Robot-scoped `Datasets` for naming collections and moving demonstrations between training groups.
-- Temporal MLP training from incremental next-state deltas, configurable timestep size, seeded randomized starts, and rollout limits.
-- `Test` evaluation that can roll a trained model through every gesture checkpoint and replay the predicted trajectory.
+- `/teach/pose` — multi-joint pose editing with precise numeric controls alongside sliders.
+- `/teach/timeline` — a Blender-inspired animation editor with a time ruler, playhead, per-joint channels, diamond keyframes, interpolation, and replay.
+- `/archive` — demonstrations and robot-scoped dataset organization.
+- `/train` — temporal MLP training from authored keyframes and incremental next-state deltas.
+- `/evaluate` — expected-versus-predicted trajectory playback and per-keyframe diagnostics.
 
-Uploaded URDFs must use boxes, cylinders, or spheres; external mesh assets are rejected in this MVP. See [ADR 0002](./docs/adr/0002-timeline-based-teaching-and-curriculum-training.md) for the timeline and curriculum-training decision.
+Authored keyframes are the source of truth. Derived playback/training samples are not presented as editable timeline keys. Uploaded URDFs must use boxes, cylinders, or spheres; external mesh assets are rejected in this MVP. See [ADR 0002](./docs/adr/0002-timeline-based-teaching-and-curriculum-training.md) for the timeline and curriculum-training decision.
 
 ## Tests
 

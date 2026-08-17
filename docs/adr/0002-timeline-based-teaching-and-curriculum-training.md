@@ -10,7 +10,7 @@ The initial workbench captured static poses and passively sampled gestures. That
 
 ## Decision
 
-The workbench will use full-robot snapshots as gesture checkpoints. A checkpoint is persisted as a `Frame` with a timestamp and all controllable joint positions. The timeline editor allows checkpoint capture, editing, reordering through timestamp normalization, deletion, scrubbing, and interpolation-based preview.
+The workbench will use full-robot snapshots as authored gesture keyframes. A keyframe is persisted with an integer timeline frame, derived timestamp, interpolation mode, and all controllable joint positions. The timeline editor is a dedicated routed animation page with a time ruler, playhead, per-joint channels, diamond markers, keyframe insertion, selection, time movement, deletion, scrubbing, and interpolation-based preview. Existing timestamped frames remain a compatibility representation while demonstrations migrate to authored keyframes.
 
 The default temporal MLP will receive:
 
@@ -22,7 +22,7 @@ current normalized joint state
 
 It will predict a small normalized joint-position delta for the next timestep. Authored segments are expanded into incremental samples using a configurable timestep. Training can add seeded, bounded randomized starting poses. Evaluation rolls the model through the checkpoint sequence and reports intermediate and final errors.
 
-Named datasets are robot-scoped collections within the session archive. Demonstrations can be assigned to a dataset and exported together with the robot, demonstrations, dataset metadata, and model configuration.
+Named datasets are robot-scoped collections within the session archive. Demonstrations can be assigned to a dataset and exported together with the robot, demonstrations, keyframes, dataset metadata, and model configuration. Training, archive management, and evaluation are separate routed pages rather than content squeezed into a shared panel.
 
 ## Consequences
 
@@ -39,11 +39,12 @@ Named datasets are robot-scoped collections within the session archive. Demonstr
 - Temporal training and rollout add configuration and validation complexity.
 - The MLP remains a small controller rather than a general sequence model.
 - Session persistence is still local and archive-oriented; a future durable catalog may need a separate storage layer.
-- Interpolation is intentionally simpler than per-joint curve editing and does not represent every possible gesture shape.
+- Initial interpolation is intentionally limited to linear and hold/step modes; full Bezier/F-curve handles remain a future extension.
 
 ## Rejected alternatives
 
 - **Final-pose-only regression**: retained only as the compatibility path for static prediction; it cannot teach checkpoint-by-checkpoint motion.
-- **Continuous per-joint curves in the first timeline release**: deferred because snapshot checkpoints provide a smaller authoring surface with clearer training semantics.
+- **Fixed-rate recorder samples as the authoring model**: rejected because sampled telemetry does not communicate deliberate teaching intent.
+- **Full Bezier/F-curve editing in the first timeline release**: deferred; Blender-style channels and keyframes are included first, with linear and hold interpolation providing a smaller stable interface.
 - **Unseeded randomization**: rejected because evaluation must be repeatable and debuggable.
 - **Global cross-robot datasets**: deferred until robot compatibility and versioning rules are mature.

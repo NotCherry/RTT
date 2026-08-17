@@ -13,8 +13,12 @@ A timestamped robot state captured as one point in an expected behavior.
 _Avoid_: Prediction, training sample
 
 **Checkpoint**:
-An authored Frame in the gesture timeline. A checkpoint stores the complete controllable-joint state; motion between checkpoints is interpolated for preview, training, and evaluation.
-_Avoid_: Individual slider change, model prediction
+An authored Keyframe in the gesture timeline. A checkpoint stores the complete controllable-joint state at a deliberate timeline frame; motion between checkpoints is derived for preview, training, and evaluation.
+_Avoid_: Individual slider change, sampled playback frame, model prediction
+
+**Keyframe**:
+An authored time-position pair in a gesture animation. Keyframes appear as selectable channel markers and are the source of truth for the expected behavior; derived timestep samples are never promoted to keyframes.
+_Avoid_: Fixed-rate recorder sample, prediction
 
 **Gesture**:
 An ordered sequence of frames that describes a motion or behavior over time.
