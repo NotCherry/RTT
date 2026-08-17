@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-COMPOSE=(docker compose --project-directory "$ROOT_DIR" -f "$ROOT_DIR/docker-compose.yml")
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+COMPOSE=(docker compose --project-directory "$ROOT_DIR" -f "$ROOT_DIR/infra/docker-compose.yml")
 FORCE_BUILD=0
 FOLLOW_LOGS=0
 
 usage() {
     cat <<'EOF'
-Usage: ./scripts/start-local.sh [options]
+Usage: ./start-local.sh [options]
 
 Starts the local Robot Learning Workbench with Docker Compose. Docker Compose
 reuses existing images and containers by default; use --build when Dockerfiles
@@ -66,15 +66,21 @@ fi
 export DOCKER_BUILDKIT=1
 export COMPOSE_DOCKER_CLI_BUILD=1
 
-if ((FORCE_BUILD)); then
+images_missing=0
+while IFS= read -r image; do
+    if ! docker image inspect "$image" >/dev/null 2>&1; then
+        images_missing=1
+    fi
+done < <("${COMPOSE[@]}" config --images)
+
+if ((FORCE_BUILD || images_missing)); then
     echo "Building with the existing Docker cache (use --no-cache manually for a clean build)."
     "${COMPOSE[@]}" build
 fi
 
-# No --build here: unchanged images are started directly. Compose will still
-# build a missing image on the first run; pass --build explicitly after source
-# or dependency changes when using the production-style frontend image.
-"${COMPOSE[@]}" up -d --remove-orphans --wait
+# --no-build makes the default path a true start-only operation. Use --build
+# after source or dependency changes when using the production-style images.
+"${COMPOSE[@]}" up -d --no-build --remove-orphans --wait
 
 cat <<'EOF'
 

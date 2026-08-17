@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest  # type: ignore[import-not-found]
 from fastapi.testclient import TestClient  # type: ignore[import-not-found]
 
-from backend.app.main import (  # type: ignore[import-not-found]
+from app.main import (  # type: ignore[import-not-found]
     ROBOTS,
     SESSIONS,
     app,

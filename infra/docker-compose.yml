@@ -1,10 +1,10 @@
 services:
   backend:
-    build: ./backend
+    build: apps/api
     volumes:
       - robot-data:/app/data
-    expose:
-      - "8000"
+    ports:
+      - "8000:8000"
     healthcheck:
       test:
         [
@@ -17,9 +17,7 @@ services:
       timeout: 5s
       retries: 6
   frontend:
-    build:
-      context: .
-      dockerfile: frontend.Dockerfile
+    build: apps/web
     depends_on:
       backend:
         condition: service_healthy

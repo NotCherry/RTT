@@ -3,10 +3,10 @@ dist/
 .venv/
 __pycache__/
 *.py[cod]
-backend/data/
+apps/api/data/
 .pytest_cache/
 .cypress/
 coverage/
-cypress/screenshots/
-cypress/videos/
+apps/web/cypress/screenshots/
+apps/web/cypress/videos/
 .DS_Store
