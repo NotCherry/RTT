@@ -11,6 +11,10 @@ import {
 } from "./api";
 import { RobotScene } from "./RobotScene";
 import {
+  formatJointValue as formatJoint,
+  meanAbsoluteError as meanError,
+} from "./domain/metrics";
+import {
   Button,
   Panel,
   PanelHeader,
@@ -1164,23 +1168,6 @@ export default function App() {
         <span>Primitive URDF workbench / local session</span>
       </footer>
     </main>
-  );
-}
-
-function formatJoint(type: string, value: number) {
-  return type === "prismatic"
-    ? `${value.toFixed(3)} m`
-    : `${((value * 180) / Math.PI).toFixed(1)}°`;
-}
-
-function meanError(target: number[], positions: number[]) {
-  if (!target.length) return 0;
-  return (
-    target.reduce(
-      (total, value, index) =>
-        total + Math.abs(value - (positions[index] ?? 0)),
-      0,
-    ) / target.length
   );
 }
 

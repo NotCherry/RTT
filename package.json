@@ -6,7 +6,11 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:backend": "python -m pytest -q backend/tests",
+    "test:unit": "vitest run",
+    "test:e2e": "cypress run",
+    "test:e2e:open": "cypress open"
   },
   "dependencies": {
     "@vitejs/plugin-react": "latest",
@@ -22,6 +26,8 @@
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
     "@types/three": "^0.185.4",
-    "tailwindcss": "^4.3.3"
+    "cypress": "^15.20.1",
+    "tailwindcss": "^4.3.3",
+    "vitest": "^4.1.10"
   }
 }

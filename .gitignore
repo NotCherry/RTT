@@ -4,4 +4,9 @@ dist/
 __pycache__/
 *.py[cod]
 backend/data/
+.pytest_cache/
+.cypress/
+coverage/
+cypress/screenshots/
+cypress/videos/
 .DS_Store
