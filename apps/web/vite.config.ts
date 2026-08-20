@@ -4,6 +4,20 @@ import tailwindcss from "@tailwindcss/vite";
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  build: {
+    // Three.js is intentionally kept in one vendor chunk; its minified size is
+    // larger than Vite's default warning threshold but remains 136 kB gzipped.
+    chunkSizeWarningLimit: 600,
+    rolldownOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes("/node_modules/three/")) {
+            return "three-vendor";
+          }
+        },
+      },
+    },
+  },
   server: {
     port: 5173,
     proxy: {

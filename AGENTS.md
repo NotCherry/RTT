@@ -37,6 +37,10 @@ For an end-to-end user-flow check, start the stack with `./start-local.sh`, then
 
 Before finishing any change, run `git diff --check` and report any test that could not run because of an environment limitation.
 
+## Change confidence
+
+For every behavior change, assess whether a focused test would protect the user-visible or core behavior; add that test when it would be beneficial. Prefer a frontend journey or component test for interactive controls. Before finishing, exercise the changed flow and its adjacent core functionality, and report any verification that could not run because of an environment limitation.
+
 ## Product guardrails
 
 - Demonstrations are the primary product artifact; training metrics are secondary diagnostics.

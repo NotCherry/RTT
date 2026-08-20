@@ -68,7 +68,7 @@
   .training-indicator { @apply border-0 px-0 py-[5px] text-[10px]; }
   .step-badge { @apply border-[#35506f] px-2 py-[5px] text-blue-300; }
   .count-badge { @apply px-2 py-[5px] text-[10px]; }
-  .button { @apply inline-flex cursor-pointer items-center justify-center gap-2 rounded-[5px] border-0 font-semibold transition duration-150 ease-out; }
+  .button { @apply inline-flex cursor-pointer items-center justify-center gap-2 rounded-[5px] border-0 font-semibold text-xs transition duration-150 ease-out; }
   .button:hover:not(:disabled) { transform: translateY(-1px); }
   .button:disabled { @apply cursor-not-allowed opacity-40; }
   .button.small { @apply px-[11px] py-2 text-[11px]; }
@@ -246,11 +246,16 @@
   .keyframe-diamond { @apply absolute top-1/2 z-[2] -translate-x-1/2 -translate-y-1/2 cursor-pointer border-0 bg-transparent p-1 font-mono text-[15px] leading-none text-accent-500 hover:text-accent-300; }
   .keyframe-diamond.selected { @apply text-danger-400 drop-shadow-[0_0_5px_rgba(255,125,135,.7)]; }
   .keyframe-inspector { @apply mt-4 rounded border border-line-650 bg-ink-850 p-4; }
-  .keyframe-inspector .timeline-frame-header { @apply flex items-center gap-3; }
+  .keyframe-inspector .timeline-frame-header { @apply flex flex-wrap items-center gap-3; }
   .keyframe-inspector .timeline-frame-header > div { @apply mr-auto; }
   .keyframe-inspector .timeline-frame-header strong { @apply mt-1 block font-mono text-sm text-blue-100; }
   .keyframe-inspector label { @apply flex flex-col gap-1 font-mono text-[9px] uppercase text-text-600; }
-  .keyframe-inspector input { @apply w-28 rounded border border-line-600 bg-ink-800 p-2 font-mono text-[11px] text-text-100; }
+  .keyframe-inspector input:not([type='range']) { @apply w-28 rounded border border-line-600 bg-ink-800 p-2 font-mono text-[11px] text-text-100 outline-none focus:border-accent-500; }
+  .timeline-joint-grid { @apply mt-4 grid gap-3 border-t border-line-650 pt-4; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+  .timeline-joint-control { @apply min-w-0; }
+  .timeline-joint-inputs { @apply flex items-center gap-3; }
+  .timeline-joint-inputs input[type='range'] { @apply my-0 min-w-0 flex-1; }
+  .timeline-joint-inputs input[type='number'] { @apply w-24 shrink-0; }
   .route-shell .footer { @apply mt-7; }
 
 @media (max-width: 1120px) {

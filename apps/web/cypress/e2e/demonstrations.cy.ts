@@ -99,6 +99,10 @@ describe("routed teaching workspace", () => {
     cy.get('input[aria-label="shoulder_joint at selected keyframe"]')
       .clear()
       .type("0.5");
+    cy.get('input[aria-label="shoulder_joint slider at selected keyframe"]')
+      .should("have.attr", "min", "-1.57")
+      .and("have.attr", "max", "1.57")
+      .and("have.value", "0.5");
     cy.contains("button", "Stop capture").click();
     cy.wait("@saveDemonstrations")
       .its("request.body.demonstrations.0")

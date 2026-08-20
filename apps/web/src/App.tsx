@@ -362,18 +362,21 @@ function Workbench() {
     jointIndex: number,
     value: number,
   ) {
-    replaceTimelineFrames(
-      timelineFrames.map((frame, index) =>
-        index === frameIndex
-          ? {
-              ...frame,
-              positions: frame.positions.map((position, positionIndex) =>
-                positionIndex === jointIndex ? value : position,
-              ),
-            }
-          : frame,
-      ),
+    const nextFrames = timelineFrames.map((frame, index) =>
+      index === frameIndex
+        ? {
+            ...frame,
+            positions: frame.positions.map((position, positionIndex) =>
+              positionIndex === jointIndex ? value : position,
+            ),
+          }
+        : frame,
     );
+    replaceTimelineFrames(nextFrames);
+    const updatedFrame = nextFrames[frameIndex];
+    if (frameIndex === selectedFrameIndex && updatedFrame) {
+      applyPositions([...updatedFrame.positions]);
+    }
   }
 
   function updateTimelineTimestamp(frameIndex: number, value: number) {
@@ -2439,26 +2442,41 @@ function TimelinePanel({
                 </Button>
               </div>
               <div className="timeline-joint-grid">
-                {joints.map((joint, jointIndex) => (
-                  <label key={joint.name}>
-                    <span>{joint.name}</span>
-                    <input
-                      aria-label={`${joint.name} at selected keyframe`}
-                      type="number"
-                      min={joint.lower}
-                      max={joint.upper}
-                      step="0.001"
-                      value={selected.positions[jointIndex] ?? 0}
-                      onChange={(event) =>
-                        onUpdateFrame(
-                          selectedFrameIndex,
-                          jointIndex,
-                          Number(event.target.value),
-                        )
-                      }
-                    />
-                  </label>
-                ))}
+                {joints.map((joint, jointIndex) => {
+                  const value = selected.positions[jointIndex] ?? 0;
+                  const updateValue = (nextValue: string) =>
+                    onUpdateFrame(
+                      selectedFrameIndex,
+                      jointIndex,
+                      Number(nextValue),
+                    );
+
+                  return (
+                    <label className="timeline-joint-control" key={joint.name}>
+                      <span>{joint.name}</span>
+                      <div className="timeline-joint-inputs">
+                        <input
+                          aria-label={`${joint.name} slider at selected keyframe`}
+                          type="range"
+                          min={joint.lower}
+                          max={joint.upper}
+                          step="0.001"
+                          value={value}
+                          onChange={(event) => updateValue(event.target.value)}
+                        />
+                        <input
+                          aria-label={`${joint.name} at selected keyframe`}
+                          type="number"
+                          min={joint.lower}
+                          max={joint.upper}
+                          step="0.001"
+                          value={value}
+                          onChange={(event) => updateValue(event.target.value)}
+                        />
+                      </div>
+                    </label>
+                  );
+                })}
               </div>
             </div>
           ) : (
