@@ -6,7 +6,7 @@ name: Preview (self-hosted + Tailscale)
 #    Forks/other contributors can still run ./infra/scripts/preview.sh locally without this job.
 on:
   pull_request:
-    types: [opened, synchronize, reopened, labeled]
+    types: [opened, synchronize, reopened]
 
 permissions:
   contents: read
@@ -37,9 +37,8 @@ jobs:
         working-directory: apps/api
 
   deploy-preview:
-    # Only runs if you have a self-hosted runner. Safe to keep; skips on hosted.
-    # Trigger via label `preview` or push to branch `preview/*`.
-    if: contains(github.event.pull_request.labels.*.name, 'preview') || startsWith(github.head_ref, 'preview/')
+    # Runs on every PR on the laptop's self-hosted runner `preview` and exposes via Tailscale.
+    # Forks without a self-hosted runner will queue pending — keep this job non-required if needed.
     runs-on: [self-hosted, preview]
     needs: validate
     steps:
