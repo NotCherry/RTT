@@ -26,7 +26,7 @@ pipeline {
       }
     }
     stage('Docker build') {
-      steps { sh 'docker compose -f infra/docker-compose.yml build' }
+      steps { sh 'docker compose --project-directory . -f infra/docker-compose.yml build' }
     }
     stage('Preview deploy (local)') {
       when { anyOf { branch 'preview/*'; expression { return env.CHANGE_ID != null } } }
@@ -41,6 +41,6 @@ pipeline {
     }
   }
   post {
-    failure { sh 'docker compose -f infra/docker-compose.yml -f infra/docker-compose.preview.yml --profile preview logs || true' }
+    failure { sh 'docker compose --project-directory . -f infra/docker-compose.yml -f infra/docker-compose.preview.yml --profile preview logs || true' }
   }
 }

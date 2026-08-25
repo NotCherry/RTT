@@ -1,28 +1,37 @@
-# Preview overlay — same images as prod, isolated ports/volumes for PR checks on laptop/phone.
-# Usage: docker compose -f infra/docker-compose.yml -f infra/docker-compose.preview.yml --profile preview up -d
+# Preview overlay — isolated ports/volumes for PR checks on laptop/phone.
+# Usage: docker compose --project-directory . -f infra/docker-compose.yml -f infra/docker-compose.preview.yml --profile preview up -d
 # or ./infra/scripts/preview.sh --port 8100
 services:
   backend-preview:
-    extends:
-      file: docker-compose.yml
-      service: backend
+    build:
+      context: ./apps/api
+      dockerfile: Dockerfile
     container_name: robots-backend-preview
-    ports:
-      - "${PREVIEW_BACKEND_PORT:-8101}:8000"
-    profiles: ["preview"]
-    # ephemeral data so preview doesn't clobber your main robot-data volume
     volumes:
       - robot-data-preview:/app/data
+    ports:
+      - "${PREVIEW_BACKEND_PORT:-8101}:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    profiles: ["preview"]
   frontend-preview:
-    extends:
-      file: docker-compose.yml
-      service: frontend
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile
     container_name: robots-frontend-preview
     ports:
       - "${PREVIEW_FRONTEND_PORT:-8100}:80"
     depends_on:
       backend-preview:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
     profiles: ["preview"]
 
 volumes:
