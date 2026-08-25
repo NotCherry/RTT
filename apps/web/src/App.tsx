@@ -110,6 +110,12 @@ function Workbench() {
     [],
   );
   const [selectedFrameIndex, setSelectedFrameIndex] = useState(0);
+  const [timelineDraft, setTimelineDraft] = useState<DemonstrationFrame[] | null>(
+    null,
+  );
+  const [timelineDraftSourceId, setTimelineDraftSourceId] = useState<
+    string | null
+  >(null);
   const [datasets, setDatasets] = useState<Dataset[]>([]);
   const [activeDatasetId, setActiveDatasetId] = useState<string | null>(null);
   const [replayingDemoId, setReplayingDemoId] = useState<string | null>(null);
@@ -128,20 +134,44 @@ function Workbench() {
     (demonstration) =>
       demonstration.id === selectedDemoId && demonstration.kind === "gesture",
   );
-  const timelineFrames = normalizeFrames(
-    recording
-      ? recordingFrames
-      : timelineDemonstration?.keyframes?.length
-        ? keyframesToFrames(
-            timelineDemonstration.keyframes,
-            timelineDemonstration.timeline_fps ?? 30,
-          )
-        : (timelineDemonstration?.frames ?? []),
+  const timelineSourceFrames = useMemo(
+    () =>
+      normalizeFrames(
+        timelineDemonstration?.keyframes?.length
+          ? keyframesToFrames(
+              timelineDemonstration.keyframes,
+              timelineDemonstration.timeline_fps ?? 30,
+            )
+          : (timelineDemonstration?.frames ?? []),
+      ),
+    [timelineDemonstration],
   );
+  const timelineFrames = useMemo(() => {
+    if (recording) return normalizeFrames(recordingFrames);
+    if (timelineDraft !== null) return timelineDraft;
+    return timelineSourceFrames;
+  }, [recording, recordingFrames, timelineDraft, timelineSourceFrames]);
+  const timelineDirty =
+    timelineDraft !== null &&
+    JSON.stringify(timelineDraft) !== JSON.stringify(timelineSourceFrames);
 
   useEffect(() => {
     positionsRef.current = positions;
   }, [positions]);
+
+  useEffect(() => {
+    if (recording) return;
+    if (!timelineDemonstration) {
+      setTimelineDraft(null);
+      setTimelineDraftSourceId(null);
+      return;
+    }
+    if (timelineDraftSourceId !== timelineDemonstration.id) {
+      setTimelineDraft(timelineSourceFrames.map((f) => ({ ...f, positions: [...f.positions] })));
+      setTimelineDraftSourceId(timelineDemonstration.id);
+      setSelectedFrameIndex(0);
+    }
+  }, [timelineDemonstration, timelineSourceFrames, timelineDraftSourceId, recording]);
 
   useEffect(() => () => stopReplay(), []);
 
@@ -312,6 +342,13 @@ function Workbench() {
       return;
     }
     if (!timelineDemonstration) return;
+    // Isolated draft — pose tab live state stays independent until Save.
+    setTimelineDraft(next);
+  }
+
+  function saveTimelineDraft() {
+    if (!timelineDemonstration || timelineDraft === null) return;
+    const next = normalizeFrames(timelineDraft);
     const target = next[next.length - 1]?.positions ?? positions;
     persistDemonstrations(
       demonstrations.map((demonstration) =>
@@ -330,6 +367,15 @@ function Workbench() {
           : demonstration,
       ),
     );
+    setMessage(`Saved ${next.length} keyframes to ${timelineDemonstration.name}. Training will use the updated motion.`);
+    setTrained(false);
+  }
+
+  function discardTimelineDraft() {
+    if (!timelineDemonstration) return;
+    setTimelineDraft(timelineSourceFrames.map((f) => ({ ...f, positions: [...f.positions] })));
+    setSelectedFrameIndex(0);
+    setMessage("Discarded timeline edits.");
   }
 
   function captureCheckpoint() {
@@ -380,20 +426,43 @@ function Workbench() {
   }
 
   function updateTimelineTimestamp(frameIndex: number, value: number) {
-    replaceTimelineFrames(
-      timelineFrames.map((frame, index) =>
-        index === frameIndex
-          ? { ...frame, timestamp: Math.max(0, value) }
-          : frame,
-      ),
+    const clamped = Math.max(0, value);
+    // Avoid immediate resort flicker: update draft then normalize will sort.
+    const next = timelineFrames.map((frame, index) =>
+      index === frameIndex ? { ...frame, timestamp: clamped } : frame,
     );
+    replaceTimelineFrames(next);
+    // Keep selection on same logical keyframe after sort by finding nearest timestamp.
+    const sorted = normalizeFrames(next);
+    const moved = sorted.findIndex((f) => f.timestamp === clamped);
+    if (moved >= 0) setSelectedFrameIndex(moved);
   }
 
   function deleteTimelineFrame(frameIndex: number) {
     if (timelineFrames.length <= 1) return;
     const next = timelineFrames.filter((_, index) => index !== frameIndex);
     replaceTimelineFrames(next);
-    setSelectedFrameIndex(Math.min(frameIndex, next.length - 1));
+    setSelectedFrameIndex(Math.min(frameIndex, Math.max(0, next.length - 1)));
+    setMessage(`Removed keyframe ${frameIndex + 1}. Save to persist.`);
+  }
+
+  function duplicateTimelineFrame(frameIndex: number) {
+    const frame = timelineFrames[frameIndex];
+    if (!frame) return;
+    const copy: DemonstrationFrame = {
+      timestamp: frame.timestamp + 120,
+      positions: [...frame.positions],
+    };
+    const next = [...timelineFrames];
+    next.splice(frameIndex + 1, 0, copy);
+    replaceTimelineFrames(next);
+    setSelectedFrameIndex(frameIndex + 1);
+  }
+
+  function previewTimelineFrame(index: number) {
+    const frame = timelineFrames[index];
+    if (!frame) return;
+    applyPositions([...frame.positions]);
   }
 
   function startRecording() {
@@ -881,11 +950,17 @@ function Workbench() {
                 joints={controllableJoints}
                 recording={recording}
                 selectedFrameIndex={selectedFrameIndex}
+                dirty={timelineDirty}
+                hasSelection={Boolean(timelineDemonstration)}
                 onCapture={captureCheckpoint}
                 onSelectFrame={selectTimelineFrame}
                 onUpdateFrame={updateTimelineFrame}
                 onUpdateTimestamp={updateTimelineTimestamp}
                 onDeleteFrame={deleteTimelineFrame}
+                onDuplicateFrame={duplicateTimelineFrame}
+                onPreviewFrame={previewTimelineFrame}
+                onSave={saveTimelineDraft}
+                onDiscard={discardTimelineDraft}
                 onStartRecording={startRecording}
                 onStopRecording={stopRecording}
               />
@@ -1835,11 +1910,17 @@ function Workbench() {
               joints={controllableJoints}
               recording={recording}
               selectedFrameIndex={selectedFrameIndex}
+              dirty={timelineDirty}
+              hasSelection={Boolean(timelineDemonstration)}
               onCapture={captureCheckpoint}
               onSelectFrame={selectTimelineFrame}
               onUpdateFrame={updateTimelineFrame}
               onUpdateTimestamp={updateTimelineTimestamp}
               onDeleteFrame={deleteTimelineFrame}
+              onDuplicateFrame={duplicateTimelineFrame}
+              onPreviewFrame={previewTimelineFrame}
+              onSave={saveTimelineDraft}
+              onDiscard={discardTimelineDraft}
               onStopRecording={stopRecording}
               onStartRecording={startRecording}
             />
@@ -2284,6 +2365,8 @@ type TimelinePanelProps = {
   joints: Joint[];
   recording: boolean;
   selectedFrameIndex: number;
+  dirty: boolean;
+  hasSelection: boolean;
   onCapture: () => void;
   onSelectFrame: (index: number) => void;
   onUpdateFrame: (
@@ -2293,6 +2376,10 @@ type TimelinePanelProps = {
   ) => void;
   onUpdateTimestamp: (frameIndex: number, value: number) => void;
   onDeleteFrame: (index: number) => void;
+  onDuplicateFrame: (index: number) => void;
+  onPreviewFrame: (index: number) => void;
+  onSave: () => void;
+  onDiscard: () => void;
   onStartRecording: () => void;
   onStopRecording: () => void;
 };
@@ -2302,11 +2389,17 @@ function TimelinePanel({
   joints,
   recording,
   selectedFrameIndex,
+  dirty,
+  hasSelection,
   onCapture,
   onSelectFrame,
   onUpdateFrame,
   onUpdateTimestamp,
   onDeleteFrame,
+  onDuplicateFrame,
+  onPreviewFrame,
+  onSave,
+  onDiscard,
   onStartRecording,
   onStopRecording,
 }: TimelinePanelProps) {
@@ -2316,6 +2409,36 @@ function TimelinePanel({
   const selected = frames[selectedFrameIndex];
   const markerPosition = (timestamp: number) =>
     `${Math.min(100, Math.max(0, (timestamp / Math.max(lastFrame, 1)) * 100))}%`;
+  const [playing, setPlaying] = useState(false);
+  const playRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!playing || !frames.length) return;
+    let idx = selectedFrameIndex;
+    const tick = () => {
+      idx = (idx + 1) % frames.length;
+      onSelectFrame(idx);
+      onPreviewFrame(idx);
+      playRef.current = window.setTimeout(tick, 240);
+    };
+    playRef.current = window.setTimeout(tick, 240);
+    return () => {
+      if (playRef.current !== null) window.clearTimeout(playRef.current);
+    };
+  }, [playing, frames, selectedFrameIndex, onSelectFrame, onPreviewFrame]);
+
+  if (!hasSelection && !recording) {
+    return (
+      <div className="animation-editor">
+        <div className="demo-empty">
+          <strong>No gesture selected</strong>
+          <span>Select a gesture in Archive or start a new capture.</span>
+          <Button variant="secondary" size="small" onClick={onStartRecording} disabled={!joints.length}>
+            Start capture
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="animation-editor">
@@ -2324,6 +2447,7 @@ function TimelinePanel({
           <PanelLabel>KEYFRAME EDITOR · {fps} FPS</PanelLabel>
           <strong>
             {frames.length} authored keyframe{frames.length === 1 ? "" : "s"}
+            {dirty && <em className="draft-badge"> · unsaved</em>}
           </strong>
         </div>
         <div className="demo-card-actions">
@@ -2347,17 +2471,61 @@ function TimelinePanel({
         </div>
       </div>
       <p className="helper-text">
-        Keyframes are authored diamonds. Motion between them is derived for
-        preview and training; fixed-rate samples are never treated as editable
-        keys.
+        Isolated draft: pose sliders stay independent. Save publishes to archive
+        for training. Diamonds are authored keys — playback is derived.
       </p>
+      {dirty && !recording && (
+        <div className="edit-banner">
+          <span>Unsaved timeline edits — training uses last saved version.</span>
+          <div>
+            <Button variant="ghost" size="small" onClick={onDiscard}>Discard</Button>
+            <Button variant="primary" size="small" onClick={onSave}>Save keyframes</Button>
+          </div>
+        </div>
+      )}
       {frames.length ? (
         <>
+          <div className="timeline-scrub">
+            <input
+              type="range"
+              min={0}
+              max={Math.max(0, frames.length - 1)}
+              value={selectedFrameIndex}
+              aria-label="Scrub keyframes"
+              onChange={(e) => {
+                const idx = Number(e.target.value);
+                onSelectFrame(idx);
+                onPreviewFrame(idx);
+              }}
+            />
+            <Button
+              variant="secondary"
+              size="small"
+              onClick={() => setPlaying((v) => !v)}
+              disabled={frames.length < 2}
+            >
+              {playing ? "Pause" : "Play"}
+            </Button>
+            <span className="scrub-label">{selectedFrameIndex + 1} / {frames.length}</span>
+          </div>
           <div
             className="animation-ruler"
             style={
               { "--timeline-duration": durationFrames } as React.CSSProperties
             }
+            onClick={(e) => {
+              const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
+              const pct = (e.clientX - rect.left) / rect.width;
+              const targetTime = pct * Math.max(lastFrame, 1);
+              let nearest = 0;
+              let best = Infinity;
+              frames.forEach((f, i) => {
+                const d = Math.abs(f.timestamp - targetTime);
+                if (d < best) { best = d; nearest = i; }
+              });
+              onSelectFrame(nearest);
+              onPreviewFrame(nearest);
+            }}
           >
             {Array.from(
               { length: Math.ceil(durationFrames / 12) + 1 },
@@ -2382,7 +2550,7 @@ function TimelinePanel({
           >
             <div className="channel-row channel-header">
               <span>CHANNELS</span>
-              <span>AUTHORED KEYFRAMES</span>
+              <span>AUTHORED KEYFRAMES (click diamond to select)</span>
             </div>
             {joints.map((joint) => (
               <div className="channel-row" key={joint.name}>
@@ -2396,8 +2564,11 @@ function TimelinePanel({
                       className={`keyframe-diamond ${selectedFrameIndex === frameIndex ? "selected" : ""}`}
                       style={{ left: markerPosition(frame.timestamp) }}
                       aria-label={`Keyframe ${frameIndex + 1} for ${joint.name}`}
-                      key={`${joint.name}-${frameIndex}-${frame.timestamp}`}
-                      onClick={() => onSelectFrame(frameIndex)}
+                      key={`${frameIndex}-${frame.timestamp}`}
+                      onClick={() => {
+                        onSelectFrame(frameIndex);
+                        onPreviewFrame(frameIndex);
+                      }}
                       type="button"
                     >
                       ◆
@@ -2413,7 +2584,7 @@ function TimelinePanel({
                 <div>
                   <PanelLabel>SELECTED KEYFRAME</PanelLabel>
                   <strong>
-                    Frame {Math.round((selected.timestamp / 1000) * fps)}
+                    Frame {Math.round((selected.timestamp / 1000) * fps)} · {Math.round(selected.timestamp)} ms
                   </strong>
                 </div>
                 <label>
@@ -2422,7 +2593,7 @@ function TimelinePanel({
                     aria-label="Selected keyframe time"
                     type="number"
                     min="0"
-                    step="1"
+                    step="10"
                     value={Math.round(selected.timestamp)}
                     onChange={(event) =>
                       onUpdateTimestamp(
@@ -2432,6 +2603,13 @@ function TimelinePanel({
                     }
                   />
                 </label>
+                <Button
+                  variant="ghost"
+                  size="small"
+                  onClick={() => onDuplicateFrame(selectedFrameIndex)}
+                >
+                  Duplicate
+                </Button>
                 <Button
                   variant="ghost"
                   size="small"
@@ -2478,6 +2656,7 @@ function TimelinePanel({
                   );
                 })}
               </div>
+              <p className="helper-text" style={{ paddingLeft: 0 }}>Slider + number per joint — edits this keyframe only. Use Play/scrub to preview.</p>
             </div>
           ) : (
             <div className="demo-empty">
@@ -2490,7 +2669,7 @@ function TimelinePanel({
         <div className="demo-empty">
           <strong>No authored keyframes yet</strong>
           <span>
-            Start capture, then insert full-pose keys at meaningful moments.
+            Start capture, then insert full-pose keys at meaningful moments. Each key stores the full pose, not a delta.
           </span>
         </div>
       )}

@@ -1,0 +1,80 @@
+name: Preview (self-hosted + Tailscale)
+
+# 1) Cloud validation on every PR (build+test)
+# 2) Optional self-hosted deploy on your laptop for phone preview via Tailscale.
+#    Requires: a self-hosted runner labeled [self-hosted, preview] + Tailscale on that host.
+#    Forks/other contributors can still run ./infra/scripts/preview.sh locally without this job.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - run: npm ci
+        working-directory: apps/web
+      - run: npm run test:unit
+        working-directory: apps/web
+      - run: npm run build
+        working-directory: apps/web
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt -r requirements-dev.txt
+        working-directory: apps/api
+      - run: python -m pytest -q tests
+        working-directory: apps/api
+
+  deploy-preview:
+    # Runs on every PR on the laptop's self-hosted runner `preview` and exposes via Tailscale.
+    # Forks without a self-hosted runner will queue pending — keep this job non-required if needed.
+    runs-on: [self-hosted, preview]
+    needs: validate
+    steps:
+      - uses: actions/checkout@v4
+      - name: Start preview stack
+        run: |
+          export PREVIEW_FRONTEND_PORT=8100
+          export PREVIEW_BACKEND_PORT=8101
+          export COMPOSE_PROJECT_NAME=robots
+          ./infra/scripts/preview.sh --port 8100
+          curl --fail http://localhost:8101/api/health || (docker compose --project-directory . -p robots -f infra/docker-compose.yml -f infra/docker-compose.preview.yml --profile preview logs && exit 1)
+      - name: Tailscale serve (tailnet only)
+        if: vars.TAILSCALE_MODE == 'serve' || vars.TAILSCALE_MODE == ''
+        run: |
+          tailscale serve --bg http://127.0.0.1:8100 || true
+          tailscale serve status || true
+          echo "Preview on tailnet: https://$(tailscale status --json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("Self",{}).get("DNSName","your-tailnet"))')"
+      - name: Tailscale funnel (public)
+        if: vars.TAILSCALE_MODE == 'funnel'
+        run: |
+          tailscale funnel --bg http://127.0.0.1:8100 || true
+          tailscale funnel status || true
+      - name: Comment PR
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: preview
+          message: |
+            Preview deployed on self-hosted runner:
+            - Frontend: http://localhost:8100 (on runner)
+            - Tailscale: `tailscale serve status` on runner
+            - To reproduce locally: `./infra/scripts/preview.sh --port 8100`
+
+  cleanup-preview:
+    if: github.event.action == 'closed'
+    runs-on: [self-hosted, preview]
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./infra/scripts/preview.sh --down || true
+      - run: tailscale serve --https=443 --bg http://127.0.0.1:3000 2>/dev/null || true # reset
