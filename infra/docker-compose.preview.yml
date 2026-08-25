@@ -1,0 +1,29 @@
+# Preview overlay — same images as prod, isolated ports/volumes for PR checks on laptop/phone.
+# Usage: docker compose -f infra/docker-compose.yml -f infra/docker-compose.preview.yml --profile preview up -d
+# or ./infra/scripts/preview.sh --port 8100
+services:
+  backend-preview:
+    extends:
+      file: docker-compose.yml
+      service: backend
+    container_name: robots-backend-preview
+    ports:
+      - "${PREVIEW_BACKEND_PORT:-8101}:8000"
+    profiles: ["preview"]
+    # ephemeral data so preview doesn't clobber your main robot-data volume
+    volumes:
+      - robot-data-preview:/app/data
+  frontend-preview:
+    extends:
+      file: docker-compose.yml
+      service: frontend
+    container_name: robots-frontend-preview
+    ports:
+      - "${PREVIEW_FRONTEND_PORT:-8100}:80"
+    depends_on:
+      backend-preview:
+        condition: service_healthy
+    profiles: ["preview"]
+
+volumes:
+  robot-data-preview:
