@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-COMPOSE=(docker compose --project-directory "$ROOT_DIR" -f "$ROOT_DIR/infra/docker-compose.yml" -f "$ROOT_DIR/infra/docker-compose.preview.yml")
+# Force stable project name so GH runner (rtt) and local (robots) share same preview stack/ports
+export COMPOSE_PROJECT_NAME=robots
+COMPOSE=(docker compose --project-directory "$ROOT_DIR" -p robots -f "$ROOT_DIR/infra/docker-compose.yml" -f "$ROOT_DIR/infra/docker-compose.preview.yml")
 
 PORT="${1:-}"
 if [[ "$1" == "--port" ]]; then

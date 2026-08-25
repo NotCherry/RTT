@@ -47,8 +47,9 @@ jobs:
         run: |
           export PREVIEW_FRONTEND_PORT=8100
           export PREVIEW_BACKEND_PORT=8101
+          export COMPOSE_PROJECT_NAME=robots
           ./infra/scripts/preview.sh --port 8100
-          curl --fail http://localhost:8101/api/health || (docker compose --project-directory . -f infra/docker-compose.yml -f infra/docker-compose.preview.yml --profile preview logs && exit 1)
+          curl --fail http://localhost:8101/api/health || (docker compose --project-directory . -p robots -f infra/docker-compose.yml -f infra/docker-compose.preview.yml --profile preview logs && exit 1)
       - name: Tailscale serve (tailnet only)
         if: vars.TAILSCALE_MODE == 'serve' || vars.TAILSCALE_MODE == ''
         run: |

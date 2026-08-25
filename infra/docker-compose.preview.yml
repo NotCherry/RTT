@@ -6,7 +6,6 @@ services:
     build:
       context: ./apps/api
       dockerfile: Dockerfile
-    container_name: robots-backend-preview
     volumes:
       - robot-data-preview:/app/data
     ports:
@@ -21,7 +20,6 @@ services:
     build:
       context: ./apps/web
       dockerfile: Dockerfile
-    container_name: robots-frontend-preview
     ports:
       - "${PREVIEW_FRONTEND_PORT:-8100}:80"
     volumes:
