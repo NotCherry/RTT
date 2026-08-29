@@ -1,9 +1,15 @@
+import path from "path";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  resolve: {
+    alias: {
+      "@": path.resolve(import.meta.dirname, "./src"),
+    },
+  },
   build: {
     // Three.js is intentionally kept in one vendor chunk; its minified size is
     // larger than Vite's default warning threshold but remains 136 kB gzipped.
