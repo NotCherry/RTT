@@ -1,5 +1,12 @@
 import { Link } from "react-router-dom";
-import { Button, Panel, PanelHeader, PanelLabel, StatusPill } from "@/components/ui";
+import {
+  Button,
+  Panel,
+  PanelHeader,
+  PanelLabel,
+  StatusPill,
+} from "@/components/ui";
+import { H2, H3, IntroCopy, Kicker } from "@/components/ui/typography";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { NativeSelect } from "@/components/ui/native-select";
@@ -50,26 +57,32 @@ export function TrainingPage({
     <div className="route-page">
       <div className="route-heading">
         <div>
-          <p className="kicker">TRAIN / TEMPORAL MLP</p>
-          <h2>Train from keyframe motion.</h2>
-          <p className="intro-copy">
-            The model learns small joint deltas between authored keyframes, including seeded randomized starts.
-          </p>
+          <Kicker>TRAIN / TEMPORAL MLP</Kicker>
+          <H2>Train from keyframe motion.</H2>
+          <IntroCopy>
+            The model learns small joint deltas between authored keyframes,
+            including seeded randomized starts.
+          </IntroCopy>
         </div>
-        <StatusPill online={Boolean(training)}>{training ? "Training" : trained ? "Model ready" : "Idle"}</StatusPill>
+        <StatusPill online={Boolean(training)}>
+          {training ? "Training" : trained ? "Model ready" : "Idle"}
+        </StatusPill>
       </div>
       <Panel className="route-content-panel">
         <PanelHeader>
           <div>
             <PanelLabel>TRAINING RUN</PanelLabel>
-            <h3>Behavior cloning configuration</h3>
+            <H3>Behavior cloning configuration</H3>
           </div>
           <span className="count-badge">{demonstrations.length} demos</span>
         </PanelHeader>
         <div className="route-selection-grid">
           <Label className="flex flex-col gap-2">
             Dataset
-            <NativeSelect value={activeDatasetId ?? ""} onChange={(e) => onDatasetChange(e.target.value)}>
+            <NativeSelect
+              value={activeDatasetId ?? ""}
+              onChange={(e) => onDatasetChange(e.target.value)}
+            >
               <option value="">All datasets</option>
               {datasets.map((d) => (
                 <option value={d.id} key={d.id}>
@@ -80,7 +93,10 @@ export function TrainingPage({
           </Label>
           <Label className="flex flex-col gap-2">
             Demonstration
-            <NativeSelect value={selectedDemoId ?? ""} onChange={(e) => onDemoChange(e.target.value)}>
+            <NativeSelect
+              value={selectedDemoId ?? ""}
+              onChange={(e) => onDemoChange(e.target.value)}
+            >
               <option value="">All demonstrations</option>
               {demonstrations.map((d) => (
                 <option value={d.id} key={d.id}>
@@ -94,11 +110,17 @@ export function TrainingPage({
         <div className="route-form-grid">
           <Label>
             Hidden layers
-            <Input value={hiddenLayerText} onChange={(e) => onConfigChange("hidden_layers", e.target.value)} />
+            <Input
+              value={hiddenLayerText}
+              onChange={(e) => onConfigChange("hidden_layers", e.target.value)}
+            />
           </Label>
           <Label>
             Activation
-            <NativeSelect value={config.activation} onChange={(e) => onConfigChange("activation", e.target.value)}>
+            <NativeSelect
+              value={config.activation}
+              onChange={(e) => onConfigChange("activation", e.target.value)}
+            >
               <option value="relu">ReLU</option>
               <option value="tanh">Tanh</option>
               <option value="gelu">GELU</option>
@@ -153,21 +175,23 @@ export function TrainingPage({
           >
             Train temporal controller
           </Button>
-          <Link className="button secondary" to="/evaluate">
-            Open evaluation
-          </Link>
+          <Button variant="secondary" size="small" asChild>
+            <Link to="/evaluate">Open evaluation</Link>
+          </Button>
         </div>
         <div className="route-metric-grid">
           <Card className="rounded-none border-0 py-4 gap-0 bg-ink-850">
             <CardContent className="p-4">
               <PanelLabel>LATEST LOSS</PanelLabel>
-              <strong className="mt-2 block font-mono text-lg text-blue-100">{metric ? metric.loss.toFixed(5) : "—"}</strong>
+              <strong className="mt-2 block font-mono text-lg text-text-100">
+                {metric ? metric.loss.toFixed(5) : "—"}
+              </strong>
             </CardContent>
           </Card>
           <Card className="rounded-none border-0 py-4 gap-0 bg-ink-850">
             <CardContent className="p-4">
               <PanelLabel>PROGRESS</PanelLabel>
-              <strong className="mt-2 block font-mono text-lg text-blue-100">
+              <strong className="mt-2 block font-mono text-lg text-text-100">
                 {metric ? `${metric.epoch}/${metric.epochs}` : "—"}
               </strong>
             </CardContent>
@@ -175,13 +199,17 @@ export function TrainingPage({
           <Card className="rounded-none border-0 py-4 gap-0 bg-ink-850">
             <CardContent className="p-4">
               <PanelLabel>INPUTS</PanelLabel>
-              <strong className="mt-2 block font-mono text-lg text-blue-100">{controllableJoints.length * 2 + 1}</strong>
+              <strong className="mt-2 block font-mono text-lg text-text-100">
+                {controllableJoints.length * 2 + 1}
+              </strong>
             </CardContent>
           </Card>
           <Card className="rounded-none border-0 py-4 gap-0 bg-ink-850">
             <CardContent className="p-4">
               <PanelLabel>OUTPUTS</PanelLabel>
-              <strong className="mt-2 block font-mono text-lg text-blue-100">{controllableJoints.length}</strong>
+              <strong className="mt-2 block font-mono text-lg text-text-100">
+                {controllableJoints.length}
+              </strong>
             </CardContent>
           </Card>
         </div>

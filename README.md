@@ -38,9 +38,17 @@ The normal command does not force a rebuild. After changing a Dockerfile or depe
 ./start-local.sh --down
 ```
 
+For quick feedback while editing application code, use the Docker-backed development mode:
+
+```bash
+./start-local.sh --dev
+```
+
+This mode builds the development images on startup, bind-mounts `apps/web` and the backend source into their containers, runs Vite and Uvicorn with reload enabled, and keeps the `robot-data` volume separate. The frontend remains available at `http://localhost:8080`, so ordinary source edits do not require an image rebuild or stack restart. Run `./start-local.sh --dev --down` to stop this mode. Use the normal command when you want to inspect the production-style Nginx image instead.
+
 ## Optional direct development
 
-The direct workflow is useful when hot reload is needed, but it requires local Node and Python dependencies. Docker remains the default workflow.
+The direct workflow is useful when Docker is unavailable, but it requires local Node and Python dependencies. Docker-backed `--dev` mode is the recommended hot-reload workflow.
 
 ```bash
 cd apps/web

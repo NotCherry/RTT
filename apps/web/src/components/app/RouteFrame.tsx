@@ -1,9 +1,11 @@
 import type { ReactNode } from "react";
 import { Link, NavLink } from "react-router-dom";
+import { H1 } from "@/components/ui/typography";
 import { exportUrl } from "@/api";
 import { StatusPill } from "@/components/ui";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Button as AppButton } from "@/components/ui";
 import { Separator } from "@/components/ui/separator";
 import { useWorkbench } from "@/workbench/context";
 import type { Robot } from "@/types";
@@ -41,7 +43,7 @@ export function RouteFrame({
           <div className="brand-mark">⌁</div>
           <div>
             <div className="eyebrow">ROBOTICS LAB / 01</div>
-            <h1>Learning Workbench</h1>
+            <H1>Learning Workbench</H1>
           </div>
         </Link>
         <div className="topbar-actions">
@@ -49,9 +51,9 @@ export function RouteFrame({
             {sessionId ? "Session live" : "No session"}
           </StatusPill>
           {sessionId && (
-            <a className="button ghost small" href={exportUrl(sessionId)}>
-              Export session
-            </a>
+            <AppButton variant="ghost" size="small" asChild>
+              <a href={exportUrl(sessionId)}>Export session</a>
+            </AppButton>
           )}
         </div>
       </header>
@@ -76,12 +78,12 @@ export function RouteFrame({
       {error && (
         <Alert
           variant="destructive"
-          className="mt-3 flex items-center gap-2 border-[#6c4239] bg-[#331f1b] text-[#f2c2b4] py-2"
+          className="mt-3 flex items-center gap-2 border-alert-border bg-alert-bg text-alert-text py-2"
         >
-          <AlertTitle className="text-[#ff9d81] font-semibold text-xs m-0 col-start-1">
+          <AlertTitle className="text-alert-title font-semibold text-xs m-0 col-start-1">
             Attention
           </AlertTitle>
-          <AlertDescription className="col-start-1 text-[#f2c2b4] text-xs">
+          <AlertDescription className="col-start-1 text-alert-text text-xs">
             {error}
           </AlertDescription>
           <Button

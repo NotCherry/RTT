@@ -1,5 +1,6 @@
 import { Link } from "react-router-dom";
 import { Button, Panel, PanelHeader, PanelLabel } from "@/components/ui";
+import { H2, H3, IntroCopy, Kicker } from "@/components/ui/typography";
 import { DatasetPanel } from "@/components/workbench/DatasetPanel";
 import type { Dataset, Demonstration } from "@/types";
 
@@ -30,9 +31,12 @@ export function ArchivePage({
     <div className="route-page">
       <div className="route-heading">
         <div>
-          <p className="kicker">ARCHIVE / DATASETS</p>
-          <h2>Organize expected behavior.</h2>
-          <p className="intro-copy">Keep poses and authored gestures grouped by robot and training purpose.</p>
+          <Kicker>ARCHIVE / DATASETS</Kicker>
+          <H2>Organize expected behavior.</H2>
+          <IntroCopy>
+            Keep poses and authored gestures grouped by robot and training
+            purpose.
+          </IntroCopy>
         </div>
       </div>
       <div className="route-archive-grid">
@@ -51,11 +55,11 @@ export function ArchivePage({
           <PanelHeader>
             <div>
               <PanelLabel>DEMONSTRATIONS</PanelLabel>
-              <h3>{demonstrations.length} captured items</h3>
+              <H3>{demonstrations.length} captured items</H3>
             </div>
-            <Link className="button secondary small" to="/teach/pose">
-              New pose
-            </Link>
+            <Button variant="secondary" size="small" asChild>
+              <Link to="/teach/pose">New pose</Link>
+            </Button>
           </PanelHeader>
           <div className="archive-route-list">
             {demonstrations.length ? (
@@ -64,8 +68,10 @@ export function ArchivePage({
                   <div>
                     <strong>{demonstration.name}</strong>
                     <span>
-                      {demonstration.kind} · {demonstration.keyframes?.length ?? demonstration.frames.length} authored
-                      keyframes
+                      {demonstration.kind} ·{" "}
+                      {demonstration.keyframes?.length ??
+                        demonstration.frames.length}{" "}
+                      authored keyframes
                     </span>
                   </div>
                   <div className="demo-card-actions">
@@ -80,13 +86,14 @@ export function ArchivePage({
                       Preview
                     </Button>
                     {demonstration.kind === "gesture" && (
-                      <Link
-                        className="button secondary small"
-                        to="/teach/timeline"
-                        onClick={() => onSelectDemo(demonstration.id)}
-                      >
-                        Edit timeline
-                      </Link>
+                      <Button variant="secondary" size="small" asChild>
+                        <Link
+                          to="/teach/timeline"
+                          onClick={() => onSelectDemo(demonstration.id)}
+                        >
+                          Edit timeline
+                        </Link>
+                      </Button>
                     )}
                   </div>
                 </article>

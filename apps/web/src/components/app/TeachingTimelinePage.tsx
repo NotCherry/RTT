@@ -1,7 +1,13 @@
-import { Button, Panel, PanelHeader, PanelLabel, StatusPill } from "@/components/ui";
+import { Panel, PanelHeader, PanelLabel, StatusPill } from "@/components/ui";
+import { H2, H3, IntroCopy, Kicker } from "@/components/ui/typography";
 import { RobotViewport } from "@/components/workbench/RobotViewport";
 import { TimelinePanel } from "@/components/workbench/TimelinePanel";
-import type { DemonstrationFrame, Joint, Robot, SimulationState } from "@/types";
+import type {
+  DemonstrationFrame,
+  Joint,
+  Robot,
+  SimulationState,
+} from "@/types";
 
 type TeachingTimelinePageProps = {
   robot: Robot | null;
@@ -9,13 +15,22 @@ type TeachingTimelinePageProps = {
   timelineFrames: DemonstrationFrame[];
   controllableJoints: Joint[];
   recording: boolean;
+  timelineFps: number;
   selectedFrameIndex: number;
+  playheadFrame: number;
+  editorPositions: number[];
   timelineDirty: boolean;
   hasSelection: boolean;
   onReset: () => void;
-  onCapture: () => void;
+  onCapture: (targetFrame?: number) => void;
+  onTargetFrame: (frame: number) => void;
   onSelectFrame: (index: number) => void;
-  onUpdateFrame: (frameIndex: number, jointIndex: number, value: number) => void;
+  onScrubFrame: (frame: number) => void;
+  onUpdateFrame: (
+    frameIndex: number,
+    jointIndex: number,
+    value: number,
+  ) => void;
   onUpdateTimestamp: (frameIndex: number, value: number) => void;
   onDeleteFrame: (index: number) => void;
   onDuplicateFrame: (index: number) => void;
@@ -32,12 +47,17 @@ export function TeachingTimelinePage({
   timelineFrames,
   controllableJoints,
   recording,
+  timelineFps,
   selectedFrameIndex,
+  playheadFrame,
+  editorPositions,
   timelineDirty,
   hasSelection,
   onReset,
   onCapture,
+  onTargetFrame,
   onSelectFrame,
+  onScrubFrame,
   onUpdateFrame,
   onUpdateTimestamp,
   onDeleteFrame,
@@ -52,13 +72,16 @@ export function TeachingTimelinePage({
     <div className="route-page">
       <div className="route-heading">
         <div>
-          <p className="kicker">TEACH / KEYFRAME ANIMATION</p>
-          <h2>Author the robot motion.</h2>
-          <p className="intro-copy">
-            Insert full-pose keyframes on a Blender-style timeline, then preview the interpolated gesture.
-          </p>
+          <Kicker>TEACH / KEYFRAME ANIMATION</Kicker>
+          <H2>Author the robot motion.</H2>
+          <IntroCopy>
+            Insert full-pose keyframes on a Blender-style timeline, then preview
+            the interpolated gesture.
+          </IntroCopy>
         </div>
-        <StatusPill online={recording}>{recording ? "Keyframe capture" : "Timeline ready"}</StatusPill>
+        <StatusPill online={recording}>
+          {recording ? "Keyframe capture" : "Timeline ready"}
+        </StatusPill>
       </div>
       <div className="route-two-column">
         <RobotViewport robot={robot} state={state} onReset={onReset} />
@@ -66,7 +89,7 @@ export function TeachingTimelinePage({
           <PanelHeader>
             <div>
               <PanelLabel>ANIMATION EDITOR</PanelLabel>
-              <h3>Gesture keyframes</h3>
+              <H3>Gesture keyframes</H3>
             </div>
             <span className="count-badge">{timelineFrames.length} keys</span>
           </PanelHeader>
@@ -74,11 +97,16 @@ export function TeachingTimelinePage({
             frames={timelineFrames}
             joints={controllableJoints}
             recording={recording}
+            fps={timelineFps}
             selectedFrameIndex={selectedFrameIndex}
+            playheadFrame={playheadFrame}
+            editorPositions={editorPositions}
             dirty={timelineDirty}
             hasSelection={hasSelection}
             onCapture={onCapture}
+            onTargetFrame={onTargetFrame}
             onSelectFrame={onSelectFrame}
+            onScrubFrame={onScrubFrame}
             onUpdateFrame={onUpdateFrame}
             onUpdateTimestamp={onUpdateTimestamp}
             onDeleteFrame={onDeleteFrame}

@@ -14,10 +14,14 @@ type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
   variant?: ButtonVariant;
   size?: ButtonSize;
   full?: boolean;
+  asChild?: boolean;
   children: ReactNode;
 };
 
-const variantMap: Record<ButtonVariant, "default" | "secondary" | "ghost" | "destructive" | "outline"> = {
+const variantMap: Record<
+  ButtonVariant,
+  "default" | "secondary" | "ghost" | "destructive" | "outline"
+> = {
   primary: "default",
   secondary: "secondary",
   ghost: "ghost",
@@ -36,6 +40,7 @@ export function Button({
   variant = "secondary",
   size = "default",
   full = false,
+  asChild = false,
   className = "",
   children,
   ...props
@@ -45,6 +50,7 @@ export function Button({
   const isRecording = variant === "recording";
   return (
     <ShadcnButton
+      asChild={asChild}
       variant={isRecording ? "destructive" : shadcnVariant}
       size={shadcnSize}
       className={cn(
@@ -52,10 +58,14 @@ export function Button({
         // legacy size-mapping (shadcn default is h-9 px-4 vs legacy px-[13px] py-[11px])
         size === "default" && "px-[13px] py-[11px] text-xs",
         size === "small" && "px-[11px] py-2 text-[11px] h-auto",
-        isRecording && "bg-[#5b2d38] text-[#ffd6d7] hover:bg-[#773a48] border-0",
-        variant === "primary" && "bg-accent-500 text-[#07111e] hover:bg-accent-300",
-        variant === "secondary" && "bg-[#243346] text-blue-100 hover:bg-[#30445b] border-0",
-        variant === "ghost" && "border border-[#334252] bg-transparent text-slate-300 hover:border-[#5b82aa] hover:text-slate-100 hover:bg-transparent",
+        isRecording &&
+          "bg-surface-recording text-text-recording hover:bg-surface-recording-hover border-0",
+        variant === "primary" &&
+          "bg-accent-500 text-primary-foreground hover:bg-accent-300",
+        variant === "secondary" &&
+          "bg-surface-secondary text-text-300 hover:bg-surface-secondary-hover border-0",
+        variant === "ghost" &&
+          "border border-line-strong bg-transparent text-text-500 hover:border-accent-300 hover:text-text-100 hover:bg-transparent",
         full && "w-full",
         className,
       )}
@@ -96,7 +106,7 @@ export function PanelHeader({
   return (
     <div
       className={cn(
-        "flex items-center justify-between border-b border-[#25303b]",
+        "flex items-center justify-between border-b border-line-800",
         compact ? "px-[18px] pb-[14px] pt-[17px]" : "px-5 pb-[17px] pt-[19px]",
         className,
       )}
@@ -141,15 +151,17 @@ export function StatusPill({
       className={cn(
         "inline-flex items-center gap-[7px] rounded-full border px-[10px] py-[7px] font-mono text-[11px] font-normal",
         online
-          ? "border-[#315943] text-green-200 bg-transparent hover:bg-transparent"
-          : "border-[#303b49] text-slate-400 bg-transparent hover:bg-transparent",
+          ? "border-border-success text-success-400 bg-transparent hover:bg-transparent"
+          : "border-border-muted text-text-500 bg-transparent hover:bg-transparent",
         className,
       )}
     >
       <span
         className={cn(
           "h-[6px] w-[6px] rounded-full",
-          online ? "bg-success-400 shadow-[0_0_0_3px_rgba(105,214,150,0.12)]" : "bg-slate-500",
+          online
+            ? "bg-success-400 shadow-[0_0_0_3px_rgba(105,214,150,0.12)]"
+            : "bg-text-600",
         )}
       />
       {children}
@@ -166,10 +178,10 @@ export function TabButton({
   return (
     <button
       className={cn(
-        "cursor-pointer rounded-[4px] border-0 px-[7px] py-[9px] font-mono text-[11px] transition hover:text-slate-300",
+        "cursor-pointer rounded-[4px] border-0 px-[7px] py-[9px] font-mono text-[11px] transition hover:text-text-300",
         active
-          ? "bg-accent-deep text-blue-100 shadow-[0_2px_10px_rgba(0,0,0,0.2)]"
-          : "bg-transparent text-slate-500",
+          ? "bg-accent-deep text-text-100 shadow-[0_2px_10px_rgba(0,0,0,0.2)]"
+          : "bg-transparent text-text-600",
         className,
       )}
       {...props}

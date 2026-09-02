@@ -11,14 +11,14 @@ function Progress({
     <div
       data-slot="progress"
       className={cn(
-        "relative h-2 w-full overflow-hidden rounded-full bg-[#25303b]",
+        "relative h-2 w-full overflow-hidden rounded-full bg-line-800",
         className,
       )}
       {...props}
     >
       <div
         data-slot="progress-indicator"
-        className="bg-primary h-full transition-all bg-blue-400"
+        className="bg-primary h-full transition-all bg-accent-500"
         style={{ width: `${Math.max(0, Math.min(100, value ?? 0))}%` }}
       />
     </div>

@@ -20,7 +20,7 @@ function CardHeader({ className, ...props }: React.ComponentProps<"div">) {
     <div
       data-slot="card-header"
       className={cn(
-        "@container/card-header grid auto-rows-min grid-rows-[auto_auto] items-start gap-1.5 px-6 has-data-[slot=card-action]:grid-cols-[1fr_auto] [.border-b]:pb-6 flex flex-row items-center justify-between border-b border-[#25303b] px-5 pb-[17px] pt-[19px] py-0 gap-0",
+        "@container/card-header grid auto-rows-min grid-rows-[auto_auto] items-start gap-1.5 px-6 has-data-[slot=card-action]:grid-cols-[1fr_auto] [.border-b]:pb-6 flex flex-row items-center justify-between border-b border-line-800 px-5 pb-[17px] pt-[19px] py-0 gap-0",
         className,
       )}
       {...props}
@@ -32,7 +32,10 @@ function CardTitle({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       data-slot="card-title"
-      className={cn("leading-none font-semibold text-[17px] tracking-[-0.03em]", className)}
+      className={cn(
+        "leading-none font-semibold text-[17px] tracking-[-0.03em]",
+        className,
+      )}
       {...props}
     />
   );
@@ -42,7 +45,10 @@ function CardDescription({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       data-slot="card-description"
-      className={cn("text-muted-foreground text-sm font-mono text-[10px] tracking-[0.16em]", className)}
+      className={cn(
+        "text-muted-foreground text-sm font-mono text-[10px] tracking-[0.16em]",
+        className,
+      )}
       {...props}
     />
   );

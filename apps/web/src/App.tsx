@@ -1,11 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import {
-  BrowserRouter,
-  Link,
-  Navigate,
-  NavLink,
-  useLocation,
-} from "react-router-dom";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { BrowserRouter, Navigate, useLocation } from "react-router-dom";
 import {
   createSession,
   exportUrl,
@@ -24,20 +18,22 @@ import {
   meanAbsoluteError as meanError,
 } from "./domain/metrics";
 import {
+  DEFAULT_TIMELINE_FPS,
   framesToKeyframes,
   interpolatePositions,
   keyframesToFrames,
   normalizeFrames,
+  timestampToFrame,
+  upsertFrameAtFrame,
 } from "./domain/timeline";
 import {
   Button,
   Panel,
   PanelHeader,
-  PanelLabel,
   StatusPill,
   TabButton,
 } from "./components/ui";
-import { useWorkbench, WorkbenchProvider } from "./workbench/context";
+import { WorkbenchProvider } from "./workbench/context";
 import { RouteFrame } from "./components/app/RouteFrame";
 import { TeachingPosePage } from "./components/app/TeachingPosePage";
 import { TeachingTimelinePage } from "./components/app/TeachingTimelinePage";
@@ -51,7 +47,6 @@ import type {
   Dataset,
   Demonstration,
   DemonstrationFrame,
-  Joint,
   Robot,
   RolloutFrame,
   SimulationState,
@@ -119,9 +114,16 @@ function Workbench() {
     [],
   );
   const [selectedFrameIndex, setSelectedFrameIndex] = useState(0);
-  const [timelineDraft, setTimelineDraft] = useState<DemonstrationFrame[] | null>(
+  const [timelinePlayheadFrame, setTimelinePlayheadFrame] = useState(0);
+  const [timelineInsertFrame, setTimelineInsertFrame] = useState<number | null>(
     null,
   );
+  const [timelinePendingPositions, setTimelinePendingPositions] = useState<
+    number[] | null
+  >(null);
+  const [timelineDraft, setTimelineDraft] = useState<
+    DemonstrationFrame[] | null
+  >(null);
   const [timelineDraftSourceId, setTimelineDraftSourceId] = useState<
     string | null
   >(null);
@@ -143,17 +145,16 @@ function Workbench() {
     (demonstration) =>
       demonstration.id === selectedDemoId && demonstration.kind === "gesture",
   );
+  const timelineFps =
+    timelineDemonstration?.timeline_fps ?? DEFAULT_TIMELINE_FPS;
   const timelineSourceFrames = useMemo(
     () =>
       normalizeFrames(
         timelineDemonstration?.keyframes?.length
-          ? keyframesToFrames(
-              timelineDemonstration.keyframes,
-              timelineDemonstration.timeline_fps ?? 30,
-            )
+          ? keyframesToFrames(timelineDemonstration.keyframes, timelineFps)
           : (timelineDemonstration?.frames ?? []),
       ),
-    [timelineDemonstration],
+    [timelineDemonstration, timelineFps],
   );
   const timelineFrames = useMemo(() => {
     if (recording) return normalizeFrames(recordingFrames);
@@ -176,11 +177,26 @@ function Workbench() {
       return;
     }
     if (timelineDraftSourceId !== timelineDemonstration.id) {
-      setTimelineDraft(timelineSourceFrames.map((f) => ({ ...f, positions: [...f.positions] })));
+      setTimelineDraft(
+        timelineSourceFrames.map((f) => ({
+          ...f,
+          positions: [...f.positions],
+        })),
+      );
       setTimelineDraftSourceId(timelineDemonstration.id);
       setSelectedFrameIndex(0);
+      setTimelinePlayheadFrame(
+        timestampToFrame(timelineSourceFrames[0]?.timestamp ?? 0, timelineFps),
+      );
+      setTimelinePendingPositions(null);
+      setTimelineInsertFrame(null);
     }
-  }, [timelineDemonstration, timelineSourceFrames, timelineDraftSourceId, recording]);
+  }, [
+    timelineDemonstration,
+    timelineSourceFrames,
+    timelineDraftSourceId,
+    recording,
+  ]);
 
   useEffect(() => () => stopReplay(), []);
 
@@ -240,7 +256,7 @@ function Workbench() {
     };
   }, [sessionId]);
 
-  function send(payload: object) {
+  function send(payload: Record<string, unknown>) {
     if (socketRef.current?.readyState === WebSocket.OPEN)
       socketRef.current.send(JSON.stringify(payload));
   }
@@ -367,49 +383,131 @@ function Workbench() {
               current: next[0]?.positions ?? target,
               target,
               frames: next,
-              keyframes: framesToKeyframes(next),
-              timeline_fps: 30,
+              keyframes: framesToKeyframes(next, timelineFps),
+              timeline_fps: timelineFps,
               duration_frames: Math.round(
-                ((next[next.length - 1]?.timestamp ?? 0) * 30) / 1000,
+                ((next[next.length - 1]?.timestamp ?? 0) * timelineFps) / 1000,
               ),
             }
           : demonstration,
       ),
     );
-    setMessage(`Saved ${next.length} keyframes to ${timelineDemonstration.name}. Training will use the updated motion.`);
+    setMessage(
+      `Saved ${next.length} keyframes to ${timelineDemonstration.name}. Training will use the updated motion.`,
+    );
     setTrained(false);
   }
 
   function discardTimelineDraft() {
     if (!timelineDemonstration) return;
-    setTimelineDraft(timelineSourceFrames.map((f) => ({ ...f, positions: [...f.positions] })));
+    setTimelineDraft(
+      timelineSourceFrames.map((f) => ({ ...f, positions: [...f.positions] })),
+    );
     setSelectedFrameIndex(0);
+    setTimelinePlayheadFrame(
+      timestampToFrame(timelineSourceFrames[0]?.timestamp ?? 0, timelineFps),
+    );
+    setTimelinePendingPositions(null);
+    setTimelineInsertFrame(null);
     setMessage("Discarded timeline edits.");
   }
 
-  function captureCheckpoint() {
+  function stageInsertFrame(frame: number) {
+    if (!recording && !timelineDemonstration) return;
+    const selected = timelineFrames[selectedFrameIndex];
+    const selectedFrameNumber = selected
+      ? timestampToFrame(selected.timestamp, timelineFps)
+      : null;
+    if (selectedFrameNumber !== null && frame === selectedFrameNumber) {
+      setTimelineInsertFrame(null);
+      setTimelinePendingPositions(null);
+      return;
+    }
+    setTimelineInsertFrame(frame);
+    setTimelinePlayheadFrame(frame);
+    setTimelinePendingPositions(
+      (current) =>
+        current ??
+        (selected ? [...selected.positions] : [...positionsRef.current]),
+    );
+  }
+
+  function captureCheckpoint(targetFrame?: number) {
     if (!controllableJoints.length) return;
     if (!recording && !timelineDemonstration) {
       startRecording();
       return;
     }
-    const timestamp = recording
-      ? performance.now() -
-        (recordingRef.current?.startedAt ?? performance.now())
-      : (timelineFrames[timelineFrames.length - 1]?.timestamp ?? 0) + 500;
-    replaceTimelineFrames([
-      ...timelineFrames,
-      { timestamp, positions: [...positionsRef.current] },
-    ]);
-    setSelectedFrameIndex(Math.max(0, timelineFrames.length));
-    setMessage(`Captured checkpoint ${timelineFrames.length + 1}.`);
+    const selected = timelineFrames[selectedFrameIndex];
+    let currentPositions = [...positionsRef.current];
+    currentPositions = timelinePendingPositions
+      ? [...timelinePendingPositions]
+      : selected
+        ? [...selected.positions]
+        : currentPositions;
+    if (
+      currentPositions.length !== controllableJoints.length ||
+      currentPositions.some(
+        (value, index) =>
+          !Number.isFinite(value) ||
+          value < controllableJoints[index].lower ||
+          value > controllableJoints[index].upper,
+      )
+    ) {
+      setError(
+        "Enter a valid value for every joint before inserting a keypose.",
+      );
+      return;
+    }
+
+    const requestedFrame =
+      targetFrame ??
+      timelineInsertFrame ??
+      timelinePlayheadFrame ??
+      (selected ? timestampToFrame(selected.timestamp, timelineFps) : 0);
+    const insertFrame = Math.max(0, Math.round(requestedFrame));
+    const next = upsertFrameAtFrame(
+      timelineFrames,
+      insertFrame,
+      currentPositions,
+      timelineFps,
+    );
+    replaceTimelineFrames(next);
+    const newIndex = next.findIndex(
+      (frame) => timestampToFrame(frame.timestamp, timelineFps) === insertFrame,
+    );
+    setSelectedFrameIndex(
+      newIndex >= 0 ? newIndex : Math.max(0, next.length - 1),
+    );
+    setTimelinePlayheadFrame(insertFrame);
+    setTimelinePendingPositions(null);
+    setTimelineInsertFrame(null);
+    setError(null);
+    setMessage(`Captured keypose at frame ${insertFrame}.`);
   }
 
   function selectTimelineFrame(index: number) {
     const frame = timelineFrames[index];
     if (!frame) return;
     setSelectedFrameIndex(index);
+    setTimelinePlayheadFrame(timestampToFrame(frame.timestamp, timelineFps));
+    setTimelinePendingPositions(null);
+    setTimelineInsertFrame(null);
     applyPositions([...frame.positions]);
+  }
+
+  function scrubTimelineFrame(targetFrame: number) {
+    const frame = Math.max(0, Math.round(targetFrame));
+    setTimelineInsertFrame(null);
+    const occupiedIndex = timelineFrames.findIndex(
+      (item) => timestampToFrame(item.timestamp, timelineFps) === frame,
+    );
+    setTimelinePlayheadFrame(frame);
+    if (occupiedIndex >= 0) {
+      selectTimelineFrame(occupiedIndex);
+      return;
+    }
+    setTimelinePendingPositions([...positionsRef.current]);
   }
 
   function updateTimelineFrame(
@@ -417,6 +515,25 @@ function Workbench() {
     jointIndex: number,
     value: number,
   ) {
+    const joint = controllableJoints[jointIndex];
+    if (
+      !joint ||
+      !Number.isFinite(value) ||
+      value < joint.lower ||
+      value > joint.upper
+    ) {
+      setError("Enter a finite joint value within the allowed range.");
+      return;
+    }
+    setError(null);
+    if (timelinePendingPositions) {
+      const nextPositions = timelinePendingPositions.map((position, index) =>
+        index === jointIndex ? value : position,
+      );
+      setTimelinePendingPositions(nextPositions);
+      applyPositions(nextPositions);
+      return;
+    }
     const nextFrames = timelineFrames.map((frame, index) =>
       index === frameIndex
         ? {
@@ -435,16 +552,24 @@ function Workbench() {
   }
 
   function updateTimelineTimestamp(frameIndex: number, value: number) {
+    if (!Number.isFinite(value)) {
+      setError("Enter a finite timestamp before updating the keyframe.");
+      return;
+    }
+    setError(null);
     const clamped = Math.max(0, value);
-    // Avoid immediate resort flicker: update draft then normalize will sort.
     const next = timelineFrames.map((frame, index) =>
       index === frameIndex ? { ...frame, timestamp: clamped } : frame,
     );
-    replaceTimelineFrames(next);
-    // Keep selection on same logical keyframe after sort by finding nearest timestamp.
-    const sorted = normalizeFrames(next);
-    const moved = sorted.findIndex((f) => f.timestamp === clamped);
-    if (moved >= 0) setSelectedFrameIndex(moved);
+    const sanitized = normalizeFrames(next);
+    replaceTimelineFrames(sanitized);
+    // Keep selection on the moved keyframe after sorting.
+    const moved = sanitized.findIndex((f) => f.timestamp === clamped);
+    if (moved >= 0) {
+      setSelectedFrameIndex(moved);
+      setTimelinePlayheadFrame(timestampToFrame(clamped, timelineFps));
+      setTimelinePendingPositions(null);
+    }
   }
 
   function deleteTimelineFrame(frameIndex: number) {
@@ -499,10 +624,11 @@ function Workbench() {
     if (!draft) return;
     const finalPositions = [...positionsRef.current];
     const elapsed = performance.now() - draft.startedAt;
-    const frames = [
+    const rawFrames = [
       ...draft.frames,
       { timestamp: elapsed, positions: finalPositions },
     ];
+    const frames = rawFrames;
     const demonstration: Demonstration = {
       id: draft.id,
       name: draft.name,
@@ -510,10 +636,11 @@ function Workbench() {
       current: frames[0]?.positions ?? finalPositions,
       target: finalPositions,
       frames,
-      keyframes: framesToKeyframes(frames),
-      timeline_fps: 30,
+      keyframes: framesToKeyframes(frames, DEFAULT_TIMELINE_FPS),
+      timeline_fps: DEFAULT_TIMELINE_FPS,
       duration_frames: Math.round(
-        ((frames[frames.length - 1]?.timestamp ?? 0) * 30) / 1000,
+        ((frames[frames.length - 1]?.timestamp ?? 0) * DEFAULT_TIMELINE_FPS) /
+          1000,
       ),
       start_frame_index: 0,
       dataset_id: activeDatasetId ?? undefined,
@@ -918,12 +1045,21 @@ function Workbench() {
           timelineFrames={timelineFrames}
           controllableJoints={controllableJoints}
           recording={recording}
+          timelineFps={timelineFps}
           selectedFrameIndex={selectedFrameIndex}
+          playheadFrame={timelinePlayheadFrame}
+          editorPositions={
+            timelinePendingPositions ??
+            timelineFrames[selectedFrameIndex]?.positions ??
+            positions
+          }
           timelineDirty={timelineDirty}
           hasSelection={Boolean(timelineDemonstration)}
           onReset={resetPose}
           onCapture={captureCheckpoint}
+          onTargetFrame={stageInsertFrame}
           onSelectFrame={selectTimelineFrame}
+          onScrubFrame={scrubTimelineFrame}
           onUpdateFrame={updateTimelineFrame}
           onUpdateTimestamp={updateTimelineTimestamp}
           onDeleteFrame={deleteTimelineFrame}
@@ -1003,7 +1139,9 @@ function Workbench() {
           rolloutFrames={rolloutFrames}
           evaluation={evaluation}
           replaying={replayingDemoId === "evaluation"}
-          onReplay={() => replayFrames(rolloutFrames, "the evaluated trajectory")}
+          onReplay={() =>
+            replayFrames(rolloutFrames, "the evaluated trajectory")
+          }
           onEvaluate={testModel}
         />
       );
@@ -1069,9 +1207,9 @@ function Workbench() {
             {sessionId ? "Session live" : "No session"}
           </StatusPill>
           {sessionId && (
-            <a className="button ghost small" href={exportUrl(sessionId)}>
-              Export session
-            </a>
+            <Button variant="ghost" size="small" asChild>
+              <a href={exportUrl(sessionId)}>Export session</a>
+            </Button>
           )}
         </div>
       </header>
@@ -1113,20 +1251,22 @@ function Workbench() {
               <h3>{robot?.name ?? "Awaiting robot"}</h3>
             </div>
             <div className="viewer-actions">
-              <button
-                className="button ghost small"
+              <Button
+                variant="ghost"
+                size="small"
                 onClick={resetPose}
                 disabled={!robot}
               >
                 Reset pose
-              </button>
-              <button
-                className="button primary small"
+              </Button>
+              <Button
+                variant="primary"
+                size="small"
                 onClick={handleDemo}
                 disabled={busy}
               >
                 Open sample
-              </button>
+              </Button>
             </div>
           </PanelHeader>
           <RobotScene robot={robot} state={state} />
@@ -1162,13 +1302,9 @@ function Workbench() {
           <div className="or-divider">
             <span>or</span>
           </div>
-          <button
-            className="button secondary full"
-            onClick={handleDemo}
-            disabled={busy}
-          >
+          <Button variant="secondary" full onClick={handleDemo} disabled={busy}>
             Load the 2-joint sample arm
-          </button>
+          </Button>
           <div className="section-divider" />
           <div className="panel-header compact">
             <div>
@@ -1427,8 +1563,9 @@ function Workbench() {
                 </label>
               </div>
               <div className="training-actions">
-                <button
-                  className="button primary full"
+                <Button
+                  variant="primary"
+                  full
                   onClick={startTraining}
                   disabled={
                     !sessionId ||
@@ -1438,14 +1575,15 @@ function Workbench() {
                   }
                 >
                   Train network <span>↗</span>
-                </button>
-                <button
-                  className="button secondary full"
+                </Button>
+                <Button
+                  variant="secondary"
+                  full
                   onClick={testModel}
                   disabled={!trained || !demonstrations.length || busy}
                 >
                   Evaluate selected demonstration
-                </button>
+                </Button>
               </div>
               <div className="training-summary">
                 <div>
@@ -1481,10 +1619,19 @@ function Workbench() {
               joints={controllableJoints}
               recording={recording}
               selectedFrameIndex={selectedFrameIndex}
+              fps={timelineFps}
+              playheadFrame={timelinePlayheadFrame}
+              editorPositions={
+                timelinePendingPositions ??
+                timelineFrames[selectedFrameIndex]?.positions ??
+                positions
+              }
               dirty={timelineDirty}
               hasSelection={Boolean(timelineDemonstration)}
               onCapture={captureCheckpoint}
+              onTargetFrame={stageInsertFrame}
               onSelectFrame={selectTimelineFrame}
+              onScrubFrame={scrubTimelineFrame}
               onUpdateFrame={updateTimelineFrame}
               onUpdateTimestamp={updateTimelineTimestamp}
               onDeleteFrame={deleteTimelineFrame}
@@ -1505,13 +1652,14 @@ function Workbench() {
                     {demonstrations.length === 1 ? "" : "s"}
                   </strong>
                 </div>
-                <button
-                  className="button ghost small"
+                <Button
+                  variant="ghost"
+                  size="small"
                   onClick={clearDemonstrations}
                   disabled={!demonstrations.length}
                 >
                   Clear all
-                </button>
+                </Button>
               </div>
               {demonstrations.length ? (
                 <div className="demo-list">
@@ -1591,8 +1739,9 @@ function Workbench() {
                         })}
                       </div>
                       <div className="demo-card-actions">
-                        <button
-                          className="button ghost small"
+                        <Button
+                          variant="ghost"
+                          size="small"
                           onClick={(event) => {
                             event.stopPropagation();
                             if (replayingDemoId === demonstration.id) {
@@ -1607,9 +1756,10 @@ function Workbench() {
                             : demonstration.kind === "gesture"
                               ? "Replay gesture"
                               : "Preview pose"}
-                        </button>
-                        <button
-                          className="button secondary small"
+                        </Button>
+                        <Button
+                          variant="secondary"
+                          size="small"
                           onClick={(event) => {
                             event.stopPropagation();
                             beginEditing(demonstration);
@@ -1620,7 +1770,7 @@ function Workbench() {
                             : demonstration.kind === "gesture"
                               ? "Edit timeline"
                               : "Edit pose"}
-                        </button>
+                        </Button>
                       </div>
                     </article>
                   ))}
@@ -1633,30 +1783,33 @@ function Workbench() {
                     Move the sliders and capture a target pose to start a
                     dataset.
                   </span>
-                  <button
-                    className="button secondary small"
+                  <Button
+                    variant="secondary"
+                    size="small"
                     onClick={() => setActiveTab("training")}
                   >
                     Back to pose editor
-                  </button>
+                  </Button>
                 </div>
               )}
               {editingDemoId && (
                 <div className="edit-banner">
                   <span>Editing selected pose with the sliders.</span>
                   <div>
-                    <button
-                      className="button ghost small"
+                    <Button
+                      variant="ghost"
+                      size="small"
                       onClick={() => setEditingDemoId(null)}
                     >
                       Cancel
-                    </button>
-                    <button
-                      className="button primary small"
+                    </Button>
+                    <Button
+                      variant="primary"
+                      size="small"
                       onClick={saveEditedDemonstration}
                     >
                       Save changes
-                    </button>
+                    </Button>
                   </div>
                 </div>
               )}
@@ -1721,16 +1874,18 @@ function Workbench() {
                   {trained ? "Ready" : "Waiting"}
                 </span>
               </div>
-              <button
-                className="button primary full"
+              <Button
+                variant="primary"
+                full
                 onClick={testModel}
                 disabled={!trained || !demonstrations.length || busy}
               >
                 Evaluate selected demonstration
-              </button>
+              </Button>
               {rolloutFrames.length > 1 && (
-                <button
-                  className="button secondary full"
+                <Button
+                  variant="secondary"
+                  full
                   onClick={() =>
                     replayingDemoId === "evaluation"
                       ? stopReplay()
@@ -1741,7 +1896,7 @@ function Workbench() {
                   {replayingDemoId === "evaluation"
                     ? "Stop trajectory replay"
                     : "Play evaluated trajectory"}
-                </button>
+                </Button>
               )}
               <div className="chart-card">
                 <div className="chart-header">

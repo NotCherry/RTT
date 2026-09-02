@@ -1,5 +1,6 @@
 import { Link } from "react-router-dom";
 import { Button, Panel, PanelHeader, PanelLabel } from "@/components/ui";
+import { H2, H3, IntroCopy, Kicker } from "@/components/ui/typography";
 import { RobotViewport } from "@/components/workbench/RobotViewport";
 import type { Joint, Robot, SimulationState } from "@/types";
 
@@ -32,18 +33,25 @@ export function TeachingPosePage({
     <div className="route-page">
       <div className="route-heading">
         <div>
-          <p className="kicker">TEACH / POSE EDITOR</p>
-          <h2>Shape the robot pose.</h2>
-          <p className="intro-copy">
-            Edit every controllable joint together, then capture a full-pose keyframe or continue in the animation
-            timeline.
-          </p>
+          <Kicker>TEACH / POSE EDITOR</Kicker>
+          <H2>Shape the robot pose.</H2>
+          <IntroCopy>
+            Edit every controllable joint together, then capture a full-pose
+            keyframe or continue in the animation timeline.
+          </IntroCopy>
         </div>
         <div className="route-heading-actions">
-          <label className="button ghost route-upload">
-            <input type="file" accept=".urdf,application/xml,text/xml" onChange={onUpload} />
-            Upload URDF
-          </label>
+          <Button variant="ghost" size="small" asChild>
+            <label className="route-upload cursor-pointer">
+              <input
+                type="file"
+                accept=".urdf,application/xml,text/xml"
+                onChange={onUpload}
+                className="hidden"
+              />
+              Upload URDF
+            </label>
+          </Button>
           <Button variant="primary" onClick={onDemo} disabled={busy}>
             Open sample robot
           </Button>
@@ -55,9 +63,11 @@ export function TeachingPosePage({
           <PanelHeader>
             <div>
               <PanelLabel>FULL-ROBOT POSE</PanelLabel>
-              <h3>Joint editor</h3>
+              <H3>Joint editor</H3>
             </div>
-            <span className="count-badge">{controllableJoints.length} active</span>
+            <span className="count-badge">
+              {controllableJoints.length} active
+            </span>
           </PanelHeader>
           <div className="route-joint-list">
             {controllableJoints.map((joint, index) => (
@@ -72,7 +82,9 @@ export function TeachingPosePage({
                   max={joint.upper}
                   step="0.001"
                   value={positions[index] ?? 0}
-                  onChange={(event) => onUpdateJoint(index, Number(event.target.value))}
+                  onChange={(event) =>
+                    onUpdateJoint(index, Number(event.target.value))
+                  }
                 />
                 <input
                   type="number"
@@ -81,18 +93,24 @@ export function TeachingPosePage({
                   step="0.001"
                   value={positions[index] ?? 0}
                   aria-label={`${joint.name} route position`}
-                  onChange={(event) => onUpdateJoint(index, Number(event.target.value))}
+                  onChange={(event) =>
+                    onUpdateJoint(index, Number(event.target.value))
+                  }
                 />
               </label>
             ))}
           </div>
           <div className="route-actions">
-            <Button variant="primary" onClick={onCapture} disabled={!robot || !controllableJoints.length}>
+            <Button
+              variant="primary"
+              onClick={onCapture}
+              disabled={!robot || !controllableJoints.length}
+            >
               Capture pose
             </Button>
-            <Link className="button secondary" to="/teach/timeline">
-              Open keyframe editor
-            </Link>
+            <Button variant="secondary" size="small" asChild>
+              <Link to="/teach/timeline">Open keyframe editor</Link>
+            </Button>
           </div>
         </Panel>
       </div>
