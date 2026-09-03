@@ -54,16 +54,24 @@ limits and `timestep_ms`.
 
 ## Deployment composition (selected)
 
-- **Stage 1 — initialization (scripted default):** `build_approach_plan(start, first_checkpoint, joints, timestep_ms)`
-  in `apps/api/app/main.py`. Bounded linear interpolation honoring URDF velocity limits;
-  use it to drive the robot from any start to the gesture's first frame before engaging
-  the learned policy. It is predictable, needs no training, and cannot teleport.
+- **Stage 1 — initialization (scripted default, enforced at inference):** `build_approach_plan(start, first_checkpoint, joints, timestep_ms)`
+  in `apps/api/app/main.py`. Bounded linear interpolation honoring URDF velocity limits.
+  `POST /rollout` takes `approach_mode: "scripted" | "learned"` (default `"scripted"`);
+  scripted approach waypoints are executed exactly, so approach error is ~0 (gated by test
+  `test_scripted_approach_meets_accuracy_and_reports_collisions`, bound `0.05`).
+  The web caller (`testModel` in `apps/web/src/App.tsx`) passes `"scripted"` explicitly.
 - **Stage 2 — gesture following (learned):** temporal MLP trained by `build_incremental_samples`
-  on authored checkpoints, executed via `POST /rollout`, which now stages
-  approach frames before checkpoint following and returns per-frame `expected` values.
-- **Learned stage 1 only by exception:** when scripted approach cannot satisfy safety
-  (self-collision risk, obstacles, complex dynamics), train a stage-1 model on the same
-  bounded approach samples and gate it behind the identical metrics above.
+  on authored checkpoints, executed via `POST /rollout`, which stages
+  approach frames before checkpoint following and returns per-frame `expected` values
+  labeled `phase: "approach" | "gesture"`, plus a `collisions` count.
+- **Collision probe:** URDFs load with `URDF_USE_SELF_COLLISION`; `count_contacts_at` poses
+  the simulated body along each expected waypoint and counts PyBullet contact points.
+  The rollout response reports the total; `0` is expected for the sample arm. This detects
+  contact along the planned path but does not steer around obstacles — full avoidance
+  remains future work.
+- **Learned stage 1 only by exception:** `"learned"` approach runs the behavior model for
+  the approach stage (kept for experiments). Choosing it for deployment requires a failing
+  scripted baseline plus a learned candidate passing the same `0.05` approach metric.
 - **Two-model merge:** keep the interface `pose[] -> stage1 -> first_frame -> stage2(goal, progress) -> delta`;
   the two stages may be two networks or scripted+network, but callers see one deployment
   that always passes through the first frame.
