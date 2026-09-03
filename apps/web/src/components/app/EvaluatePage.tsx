@@ -23,6 +23,9 @@ type EvaluatePageProps = {
         trained: boolean;
         busy: boolean;
         demonstrationsLength: number;
+        demonstrationName: string | null;
+        demonstrationKind: string | null;
+        checkpointCount: number;
         rolloutFrames: RolloutFrame[];
         evaluation: EvaluationResult | null;
         replaying: boolean;
@@ -36,6 +39,9 @@ export function EvaluatePage({
         trained,
         busy,
         demonstrationsLength,
+        demonstrationName,
+        demonstrationKind,
+        checkpointCount,
         rolloutFrames,
         evaluation,
         replaying,
@@ -90,11 +96,22 @@ export function EvaluatePage({
                                                                 CHECKPOINT
                                                                 COMPARISON
                                                         </PanelLabel>
-                                                        <H3>
-                                                                {rolloutFrames.length
-                                                                        ? `${rolloutFrames.length} predicted frames`
-                                                                        : "No rollout yet"}
+                                                                <H3>
+                                                                {demonstrationName
+                                                                        ? `Evaluating “${demonstrationName}”`
+                                                                        : rolloutFrames.length
+                                                                                ? `${rolloutFrames.length} predicted frames`
+                                                                                : "No rollout yet"}
                                                         </H3>
+                                                        {demonstrationName && (
+                                                                <p className="helper-text" role="status">
+                                                                        {demonstrationKind ?? "demonstration"} ·{" "}
+                                                                        {checkpointCount} authored{" "}
+                                                                        checkpoint{checkpointCount === 1 ? "" : "s"}
+                                                                        {rolloutFrames.length > 0 &&
+                                                                                ` · ${rolloutFrames.length} predicted frames`}
+                                                                </p>
+                                                        )}
                                                 </div>
                                         </PanelHeader>
                                         <div className="evaluation-route-content">

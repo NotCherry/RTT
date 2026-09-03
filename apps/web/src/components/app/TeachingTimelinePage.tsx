@@ -1,4 +1,4 @@
-import { Panel, PanelHeader, PanelLabel, StatusPill } from "@/components/ui";
+import { Button, Panel, PanelHeader, PanelLabel, StatusPill } from "@/components/ui";
 import { H2, H3, IntroCopy, Kicker } from "@/components/ui/typography";
 import { RobotViewport } from "@/components/workbench/RobotViewport";
 import { TimelinePanel } from "@/components/workbench/TimelinePanel";
@@ -34,6 +34,9 @@ type TeachingTimelinePageProps = {
   onDeleteFrame: (index: number) => void;
   onDuplicateFrame: (index: number) => void;
   onPreviewFrame: (index: number) => void;
+  gestureName: string;
+  onRenameGesture: (name: string) => void;
+  saveConfirmation: string | null;
   onSave: () => void;
   onDiscard: () => void;
   onFpsChange: (fps: number) => void;
@@ -61,6 +64,9 @@ export function TeachingTimelinePage({
   onDeleteFrame,
   onDuplicateFrame,
   onPreviewFrame,
+  gestureName,
+  onRenameGesture,
+  saveConfirmation,
   onSave,
   onDiscard,
   onFpsChange,
@@ -91,6 +97,43 @@ export function TeachingTimelinePage({
             </div>
             <span className="count-badge">{timelineFrames.length} keys</span>
           </PanelHeader>
+          <div className="mb-3 grid grid-cols-1 gap-3">
+            <label className="flex flex-col gap-1 text-[10px] text-text-500">
+              Gesture name
+              <input
+                aria-label="Gesture name"
+                type="text"
+                value={gestureName}
+                onChange={(event) => onRenameGesture(event.target.value)}
+                placeholder="e.g. Wave hello"
+                disabled={!hasSelection}
+                className="rounded border border-line-600 bg-ink-800 p-2 font-mono text-[11px] text-text-100 outline-none focus:border-accent-500"
+              />
+            </label>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="primary"
+                size="small"
+                onClick={onSave}
+                disabled={!hasSelection || !timelineDirty}
+              >
+                Save gesture
+              </Button>
+              <Button
+                variant="ghost"
+                size="small"
+                onClick={onDiscard}
+                disabled={!hasSelection || !timelineDirty}
+              >
+                Discard
+              </Button>
+            </div>
+            {saveConfirmation && (
+              <p className="helper-text" role="status">
+                {saveConfirmation}
+              </p>
+            )}
+          </div>
           <TimelinePanel
             frames={timelineFrames}
             joints={controllableJoints}

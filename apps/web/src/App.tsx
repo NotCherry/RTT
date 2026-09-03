@@ -102,6 +102,13 @@ function Workbench() {
   >("training");
   const [selectedDemoId, setSelectedDemoId] = useState<string | null>(null);
   const [editingDemoId, setEditingDemoId] = useState<string | null>(null);
+  const [lastSavedPoseName, setLastSavedPoseName] = useState<string | null>(
+    null,
+  );
+  const [timelineSaveConfirmation, setTimelineSaveConfirmation] = useState<
+    string | null
+  >(null);
+  const [evaluatedDemoId, setEvaluatedDemoId] = useState<string | null>(null);
   const [timelineFps, setTimelineFps] = useState<number>(DEFAULT_TIMELINE_FPS);
   const [timelineDurationFrames, setTimelineDurationFrames] =
     useState<number>(120);
@@ -369,6 +376,7 @@ function Workbench() {
   }
 
   function replaceTimelineFrames(nextFrames: DemonstrationFrame[]) {
+    setTimelineSaveConfirmation(null);
     const next = normalizeFrames(nextFrames);
     if (!timelineDemonstration) {
       // No gesture yet — create one from the current draft frames.
@@ -418,6 +426,9 @@ function Workbench() {
     );
     setMessage(
       `Saved ${next.length} keyframes to ${timelineDemonstration.name}. Training will use the updated motion.`,
+    );
+    setTimelineSaveConfirmation(
+      `Saved ${next.length} keyframes to “${timelineDemonstration.name}”.`,
     );
     setTrained(false);
   }
@@ -765,13 +776,16 @@ function Workbench() {
     send({ type: "reset" });
   }
 
-  function captureDemonstration() {
+  function captureDemonstration(name?: string) {
     if (!controllableJoints.length) return;
     const target = [...positions];
     const id = `demo-${Date.now()}`;
+    const trimmed = name?.trim();
     const demonstration: Demonstration = {
       id,
-      name: `Pose ${String(demonstrations.length + 1).padStart(2, "0")}`,
+      name:
+        trimmed ||
+        `Pose ${String(demonstrations.length + 1).padStart(2, "0")}`,
       kind: "pose",
       current: target.map(() => 0),
       target,
@@ -784,6 +798,7 @@ function Workbench() {
     };
     persistDemonstrations([...demonstrations, demonstration]);
     setSelectedDemoId(id);
+    setLastSavedPoseName(demonstration.name);
     setTrained(false);
     setActiveTab("demonstrations");
     setMessage(`Captured ${demonstration.name}. Review it before training.`);
@@ -842,7 +857,7 @@ function Workbench() {
     persistDemonstrations(
       demonstrations.map((demonstration) =>
         demonstration.id === id
-          ? { ...demonstration, name: name || "Untitled pose" }
+          ? { ...demonstration, name: name.trim() || "Untitled" }
           : demonstration,
       ),
     );
@@ -873,7 +888,13 @@ function Workbench() {
   }
 
   async function startTraining() {
-    if (!sessionId || demonstrations.length === 0) return;
+    if (!sessionId) return;
+    const target =
+      demonstrations.find((item) => item.id === selectedDemoId) ?? null;
+    if (!target) {
+      setError("Select one archived pose or gesture to train.");
+      return;
+    }
     setBusy(true);
     setError(null);
     setMetric(null);
@@ -881,8 +902,8 @@ function Workbench() {
     setEvaluation(null);
     setRolloutFrames([]);
     try {
-      await trainSession(sessionId, demonstrations, config);
-      setMessage("Training started in the backend worker.");
+      await trainSession(sessionId, [target], config);
+      setMessage(`Training started on “${target.name}” (${target.kind}).`);
     } catch (cause) {
       setError(
         cause instanceof Error ? cause.message : "Unable to start training.",
@@ -897,6 +918,8 @@ function Workbench() {
     const demonstration =
       demonstrations.find((item) => item.id === selectedDemoId) ??
       demonstrations[0];
+    if (!demonstration) return;
+    setEvaluatedDemoId(demonstration.id);
     setBusy(true);
     setError(null);
     try {
@@ -999,6 +1022,11 @@ function Workbench() {
           }
           timelineDirty={timelineDirty}
           hasSelection={Boolean(timelineDemonstration)}
+          gestureName={timelineDemonstration?.name ?? ""}
+          onRenameGesture={(name: string) => {
+            if (timelineDemonstration) renameDemonstration(timelineDemonstration.id, name);
+          }}
+          saveConfirmation={timelineSaveConfirmation}
           onReset={resetPose}
           onCapture={captureCheckpoint}
           onTargetFrame={stageInsertFrame}
@@ -1079,6 +1107,25 @@ function Workbench() {
           trained={trained}
           busy={busy}
           demonstrationsLength={demonstrations.length}
+          demonstrationName={
+            demonstrations.find((item) => item.id === evaluatedDemoId)?.name ??
+            demonstrations.find((item) => item.id === selectedDemoId)?.name ??
+            null
+          }
+          demonstrationKind={
+            demonstrations.find((item) => item.id === evaluatedDemoId)?.kind ??
+            demonstrations.find((item) => item.id === selectedDemoId)?.kind ??
+            null
+          }
+          checkpointCount={
+            (demonstrations.find((item) => item.id === evaluatedDemoId) ??
+              demonstrations.find((item) => item.id === selectedDemoId))
+              ?.keyframes?.length ??
+            (demonstrations.find((item) => item.id === evaluatedDemoId) ??
+              demonstrations.find((item) => item.id === selectedDemoId))
+              ?.frames.length ??
+            0
+          }
           rolloutFrames={rolloutFrames}
           evaluation={evaluation}
           replaying={replayingDemoId === "evaluation"}
@@ -1101,6 +1148,7 @@ function Workbench() {
         onReset={resetPose}
         onUpdateJoint={updateJoint}
         onCapture={captureDemonstration}
+        savedPoseName={lastSavedPoseName}
       />
     );
   })();
@@ -1308,7 +1356,7 @@ function Workbench() {
               variant="primary"
               full
               className="capture-button"
-              onClick={captureDemonstration}
+              onClick={() => captureDemonstration()}
               disabled={!robot || !controllableJoints.length}
               type="button"
             >
