@@ -1,6 +1,89 @@
-import type { DemonstrationFrame, Keyframe } from "../types";
+import type { DemonstrationFrame, Joint, Keyframe } from "../types";
 
-export const DEFAULT_TIMELINE_FPS = 30;
+export const DEFAULT_TIMELINE_FPS = 60;
+export const DEFAULT_TIMELINE_GAP_FRAMES = 10;
+
+export function frameToTimestamp(
+  frame: number,
+  fps = DEFAULT_TIMELINE_FPS,
+): number {
+  return frame * (1000 / fps);
+}
+
+export function timestampToFrame(
+  timestamp: number,
+  fps = DEFAULT_TIMELINE_FPS,
+): number {
+  return Math.round(timestamp / (1000 / fps));
+}
+
+export function quantizeTimestamp(
+  timestamp: number,
+  fps = DEFAULT_TIMELINE_FPS,
+): number {
+  return frameToTimestamp(timestampToFrame(timestamp, fps), fps);
+}
+
+export function nextFreeFrame(
+  frames: DemonstrationFrame[],
+  desiredFrame: number,
+  fps = DEFAULT_TIMELINE_FPS,
+): number {
+  const occupied = new Set(
+    frames.map((f) => timestampToFrame(f.timestamp, fps)),
+  );
+  let candidate = desiredFrame;
+  while (occupied.has(candidate)) candidate += 1;
+  return candidate;
+}
+
+export function parseJointInput(rawValue: string, joint: Joint): number | null {
+  const value = Number(rawValue);
+  if (
+    !rawValue.trim() ||
+    !Number.isFinite(value) ||
+    value < joint.lower ||
+    value > joint.upper
+  ) {
+    return null;
+  }
+  return value;
+}
+
+export function upsertFrameAtFrame(
+  frames: DemonstrationFrame[],
+  targetFrame: number,
+  positions: number[],
+  fps = DEFAULT_TIMELINE_FPS,
+): DemonstrationFrame[] {
+  const frame = Math.max(0, Math.round(targetFrame));
+  const timestamp = frameToTimestamp(frame, fps);
+  const existingIndex = frames.findIndex(
+    (item) => timestampToFrame(item.timestamp, fps) === frame,
+  );
+  let next: DemonstrationFrame[];
+  if (existingIndex >= 0) {
+    next = frames.map((item, index) => {
+      if (index !== existingIndex) return item;
+      return { timestamp, positions: [...positions] };
+    });
+  } else {
+    next = [...frames, { timestamp, positions: [...positions] }];
+  }
+  return sanitizeFrames(next, fps);
+}
+
+export function sanitizeFrames(
+  frames: DemonstrationFrame[],
+  _fps = DEFAULT_TIMELINE_FPS,
+) {
+  return [...frames]
+    .map((frame) => ({
+      timestamp: Math.max(0, frame.timestamp),
+      positions: [...frame.positions],
+    }))
+    .sort((left, right) => left.timestamp - right.timestamp);
+}
 
 export function framesToKeyframes(
   frames: DemonstrationFrame[],

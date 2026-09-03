@@ -41,6 +41,12 @@ Before finishing any change, run `git diff --check` and report any test that cou
 
 For every behavior change, assess whether a focused test would protect the user-visible or core behavior; add that test when it would be beneficial. Prefer a frontend journey or component test for interactive controls. Before finishing, exercise the changed flow and its adjacent core functionality, and report any verification that could not run because of an environment limitation.
 
+## Commits
+
+Commit after each completed goal or task, once the Verification loop passes.
+Use Conventional Commits extended syntax: `type(scope): subject`, blank line, meaningful body stating what changed and why, `Refs:` footer with the goal/task id when one exists.
+Allowed types: feat, fix, refactor, test, docs, chore. Scopes: web, api, infra, docs. Keep one logical change per commit.
+
 ## Product guardrails
 
 - Demonstrations are the primary product artifact; training metrics are secondary diagnostics.

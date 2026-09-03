@@ -1,11 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import {
-  BrowserRouter,
-  Link,
-  Navigate,
-  NavLink,
-  useLocation,
-} from "react-router-dom";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { BrowserRouter, Navigate, useLocation } from "react-router-dom";
 import {
   createSession,
   exportUrl,
@@ -24,25 +18,35 @@ import {
   meanAbsoluteError as meanError,
 } from "./domain/metrics";
 import {
+  DEFAULT_TIMELINE_FPS,
   framesToKeyframes,
   interpolatePositions,
   keyframesToFrames,
   normalizeFrames,
+  timestampToFrame,
+  upsertFrameAtFrame,
 } from "./domain/timeline";
 import {
   Button,
   Panel,
   PanelHeader,
-  PanelLabel,
   StatusPill,
   TabButton,
 } from "./components/ui";
-import { useWorkbench, WorkbenchProvider } from "./workbench/context";
+import { WorkbenchProvider } from "./workbench/context";
+import { RouteFrame } from "./components/app/RouteFrame";
+import { TeachingPosePage } from "./components/app/TeachingPosePage";
+import { TeachingTimelinePage } from "./components/app/TeachingTimelinePage";
+import { ArchivePage } from "./components/app/ArchivePage";
+import { TrainingPage } from "./components/app/TrainingPage";
+import { EvaluatePage } from "./components/app/EvaluatePage";
+import { TimelinePanel } from "./components/workbench/TimelinePanel";
+import { DatasetPanel } from "./components/workbench/DatasetPanel";
+import { PoseSketch } from "./components/workbench/PoseSketch";
 import type {
   Dataset,
   Demonstration,
   DemonstrationFrame,
-  Joint,
   Robot,
   RolloutFrame,
   SimulationState,
@@ -66,12 +70,6 @@ type EvaluationResult = {
   target: number[];
   positions: number[];
   error: number;
-};
-type RecordingDraft = {
-  id: string;
-  name: string;
-  startedAt: number;
-  frames: DemonstrationFrame[];
 };
 
 export default function App() {
@@ -104,15 +102,20 @@ function Workbench() {
   >("training");
   const [selectedDemoId, setSelectedDemoId] = useState<string | null>(null);
   const [editingDemoId, setEditingDemoId] = useState<string | null>(null);
-  const [recording, setRecording] = useState(false);
-  const [recordingFrameCount, setRecordingFrameCount] = useState(0);
-  const [recordingFrames, setRecordingFrames] = useState<DemonstrationFrame[]>(
-    [],
-  );
+  const [timelineFps, setTimelineFps] = useState<number>(DEFAULT_TIMELINE_FPS);
+  const [timelineDurationFrames, setTimelineDurationFrames] =
+    useState<number>(120);
   const [selectedFrameIndex, setSelectedFrameIndex] = useState(0);
-  const [timelineDraft, setTimelineDraft] = useState<DemonstrationFrame[] | null>(
+  const [timelinePlayheadFrame, setTimelinePlayheadFrame] = useState(0);
+  const [timelineInsertFrame, setTimelineInsertFrame] = useState<number | null>(
     null,
   );
+  const [timelinePendingPositions, setTimelinePendingPositions] = useState<
+    number[] | null
+  >(null);
+  const [timelineDraft, setTimelineDraft] = useState<
+    DemonstrationFrame[] | null
+  >(null);
   const [timelineDraftSourceId, setTimelineDraftSourceId] = useState<
     string | null
   >(null);
@@ -120,8 +123,6 @@ function Workbench() {
   const [activeDatasetId, setActiveDatasetId] = useState<string | null>(null);
   const [replayingDemoId, setReplayingDemoId] = useState<string | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
-  const positionsRef = useRef<number[]>([]);
-  const recordingRef = useRef<RecordingDraft | null>(null);
   const replayTimerRef = useRef<number | null>(null);
 
   const controllableJoints = useMemo(
@@ -138,42 +139,76 @@ function Workbench() {
     () =>
       normalizeFrames(
         timelineDemonstration?.keyframes?.length
-          ? keyframesToFrames(
-              timelineDemonstration.keyframes,
-              timelineDemonstration.timeline_fps ?? 30,
-            )
+          ? keyframesToFrames(timelineDemonstration.keyframes, timelineFps)
           : (timelineDemonstration?.frames ?? []),
       ),
-    [timelineDemonstration],
+    [timelineDemonstration, timelineFps],
   );
   const timelineFrames = useMemo(() => {
-    if (recording) return normalizeFrames(recordingFrames);
     if (timelineDraft !== null) return timelineDraft;
     return timelineSourceFrames;
-  }, [recording, recordingFrames, timelineDraft, timelineSourceFrames]);
+  }, [timelineDraft, timelineSourceFrames]);
   const timelineDirty =
     timelineDraft !== null &&
     JSON.stringify(timelineDraft) !== JSON.stringify(timelineSourceFrames);
 
   useEffect(() => {
-    positionsRef.current = positions;
-  }, [positions]);
-
-  useEffect(() => {
-    if (recording) return;
     if (!timelineDemonstration) {
       setTimelineDraft(null);
       setTimelineDraftSourceId(null);
+      // keep current fps/duration for new gesture creation
       return;
     }
     if (timelineDraftSourceId !== timelineDemonstration.id) {
-      setTimelineDraft(timelineSourceFrames.map((f) => ({ ...f, positions: [...f.positions] })));
+      setTimelineDraft(
+        timelineSourceFrames.map((f) => ({
+          ...f,
+          positions: [...f.positions],
+        })),
+      );
       setTimelineDraftSourceId(timelineDemonstration.id);
       setSelectedFrameIndex(0);
+      const demoFps =
+        timelineDemonstration.timeline_fps ?? DEFAULT_TIMELINE_FPS;
+      setTimelineFps(demoFps);
+      const demoDuration =
+        timelineDemonstration.duration_frames ??
+        Math.max(
+          60,
+          timestampToFrame(
+            timelineSourceFrames[timelineSourceFrames.length - 1]?.timestamp ??
+              0,
+            demoFps,
+          ) + 12,
+        );
+      setTimelineDurationFrames(demoDuration);
+      setTimelinePlayheadFrame(
+        timestampToFrame(timelineSourceFrames[0]?.timestamp ?? 0, demoFps),
+      );
+      setTimelinePendingPositions(null);
+      setTimelineInsertFrame(null);
     }
-  }, [timelineDemonstration, timelineSourceFrames, timelineDraftSourceId, recording]);
+  }, [timelineDemonstration, timelineSourceFrames, timelineDraftSourceId]);
 
   useEffect(() => () => stopReplay(), []);
+
+  // Auto-load sample robot on first mount if none present (vertical stance pre-configured)
+  useEffect(() => {
+    if (robot || busy) return;
+    let cancelled = false;
+    void loadDemoRobot()
+      .then((demo) => {
+        if (cancelled) return;
+        return openRobot(demo);
+      })
+      .catch(() => {
+        // keep error handling in openRobot; swallow here for auto-load
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (!sessionId) return;
@@ -231,7 +266,7 @@ function Workbench() {
     };
   }, [sessionId]);
 
-  function send(payload: object) {
+  function send(payload: Record<string, unknown>) {
     if (socketRef.current?.readyState === WebSocket.OPEN)
       socketRef.current.send(JSON.stringify(payload));
   }
@@ -335,13 +370,29 @@ function Workbench() {
 
   function replaceTimelineFrames(nextFrames: DemonstrationFrame[]) {
     const next = normalizeFrames(nextFrames);
-    if (recording && recordingRef.current) {
-      recordingRef.current.frames = next;
-      setRecordingFrames(next);
-      setRecordingFrameCount(next.length);
+    if (!timelineDemonstration) {
+      // No gesture yet — create one from the current draft frames.
+      const id = `gesture-${Date.now()}`;
+      const demonstration: Demonstration = {
+        id,
+        name: `Gesture ${String(demonstrations.length + 1).padStart(2, "0")}`,
+        kind: "gesture",
+        current: next[0]?.positions ?? positions,
+        target: next[next.length - 1]?.positions ?? positions,
+        frames: next,
+        keyframes: framesToKeyframes(next, timelineFps),
+        timeline_fps: timelineFps,
+        duration_frames: timelineDurationFrames,
+        start_frame_index: 0,
+        dataset_id: activeDatasetId ?? undefined,
+      };
+      const newDemos = [...demonstrations, demonstration];
+      persistDemonstrations(newDemos);
+      setSelectedDemoId(id);
+      setTimelineDraft(next);
+      setTimelineDraftSourceId(id);
       return;
     }
-    if (!timelineDemonstration) return;
     // Isolated draft — pose tab live state stays independent until Save.
     setTimelineDraft(next);
   }
@@ -358,49 +409,130 @@ function Workbench() {
               current: next[0]?.positions ?? target,
               target,
               frames: next,
-              keyframes: framesToKeyframes(next),
-              timeline_fps: 30,
-              duration_frames: Math.round(
-                ((next[next.length - 1]?.timestamp ?? 0) * 30) / 1000,
-              ),
+              keyframes: framesToKeyframes(next, timelineFps),
+              timeline_fps: timelineFps,
+              duration_frames: timelineDurationFrames,
             }
           : demonstration,
       ),
     );
-    setMessage(`Saved ${next.length} keyframes to ${timelineDemonstration.name}. Training will use the updated motion.`);
+    setMessage(
+      `Saved ${next.length} keyframes to ${timelineDemonstration.name}. Training will use the updated motion.`,
+    );
     setTrained(false);
   }
 
   function discardTimelineDraft() {
     if (!timelineDemonstration) return;
-    setTimelineDraft(timelineSourceFrames.map((f) => ({ ...f, positions: [...f.positions] })));
+    setTimelineDraft(
+      timelineSourceFrames.map((f) => ({ ...f, positions: [...f.positions] })),
+    );
     setSelectedFrameIndex(0);
+    setTimelinePlayheadFrame(
+      timestampToFrame(timelineSourceFrames[0]?.timestamp ?? 0, timelineFps),
+    );
+    setTimelinePendingPositions(null);
+    setTimelineInsertFrame(null);
     setMessage("Discarded timeline edits.");
   }
 
-  function captureCheckpoint() {
+  function stageInsertFrame(frame: number) {
+    // Allow staging even before a gesture exists — creates draft on next insert.
+    setTimelineInsertFrame(frame);
+    if (frame === timelinePlayheadFrame) return;
+    setTimelinePlayheadFrame(frame);
+    setTimelinePendingPositions(
+      (current) =>
+        current ??
+        (timelineFrames[selectedFrameIndex]
+          ? [...timelineFrames[selectedFrameIndex].positions]
+          : [...positions]),
+    );
+  }
+
+  function captureCheckpoint(targetFrame?: number) {
     if (!controllableJoints.length) return;
-    if (!recording && !timelineDemonstration) {
-      startRecording();
+    const selected = timelineFrames[selectedFrameIndex];
+    let currentPositions = [...positions];
+    currentPositions = timelinePendingPositions
+      ? [...timelinePendingPositions]
+      : selected
+        ? [...selected.positions]
+        : currentPositions;
+    if (
+      currentPositions.length !== controllableJoints.length ||
+      currentPositions.some(
+        (value, index) =>
+          !Number.isFinite(value) ||
+          value < controllableJoints[index].lower ||
+          value > controllableJoints[index].upper,
+      )
+    ) {
+      setError(
+        "Enter a valid value for every joint before inserting a keypose.",
+      );
       return;
     }
-    const timestamp = recording
-      ? performance.now() -
-        (recordingRef.current?.startedAt ?? performance.now())
-      : (timelineFrames[timelineFrames.length - 1]?.timestamp ?? 0) + 500;
-    replaceTimelineFrames([
-      ...timelineFrames,
-      { timestamp, positions: [...positionsRef.current] },
-    ]);
-    setSelectedFrameIndex(Math.max(0, timelineFrames.length));
-    setMessage(`Captured checkpoint ${timelineFrames.length + 1}.`);
+
+    const requestedFrame =
+      timelineInsertFrame ??
+      targetFrame ??
+      timelinePlayheadFrame ??
+      (selected ? timestampToFrame(selected.timestamp, timelineFps) : 0);
+    const insertFrame = Math.max(0, Math.round(requestedFrame));
+    const next = upsertFrameAtFrame(
+      timelineFrames,
+      insertFrame,
+      currentPositions,
+      timelineFps,
+    );
+    replaceTimelineFrames(next);
+    const newIndex = next.findIndex(
+      (frame) => timestampToFrame(frame.timestamp, timelineFps) === insertFrame,
+    );
+    setSelectedFrameIndex(
+      newIndex >= 0 ? newIndex : Math.max(0, next.length - 1),
+    );
+    setTimelinePlayheadFrame(insertFrame);
+    setTimelinePendingPositions(null);
+    setTimelineInsertFrame(null);
+    setError(null);
+    setMessage(`Captured keypose at frame ${insertFrame}.`);
   }
 
   function selectTimelineFrame(index: number) {
     const frame = timelineFrames[index];
     if (!frame) return;
     setSelectedFrameIndex(index);
+    setTimelinePlayheadFrame(timestampToFrame(frame.timestamp, timelineFps));
+    setTimelinePendingPositions(null);
+    setTimelineInsertFrame(null);
     applyPositions([...frame.positions]);
+  }
+
+  function scrubTimelineFrame(targetFrame: number) {
+    const frame = Math.max(0, Math.round(targetFrame));
+    setTimelineInsertFrame(null);
+    const clamped = Math.min(frame, timelineDurationFrames);
+    const occupiedIndex = timelineFrames.findIndex(
+      (item) => timestampToFrame(item.timestamp, timelineFps) === clamped,
+    );
+    setTimelinePlayheadFrame(clamped);
+    if (occupiedIndex >= 0) {
+      selectTimelineFrame(occupiedIndex);
+      return;
+    }
+    // Smooth transient preview: interpolate between authored keys
+    const preview = interpolatePositions(
+      timelineFrames,
+      frame * (1000 / timelineFps),
+    );
+    if (preview.length) {
+      setTimelinePendingPositions(preview);
+      applyPositions(preview);
+    } else {
+      setTimelinePendingPositions([...positions]);
+    }
   }
 
   function updateTimelineFrame(
@@ -408,6 +540,25 @@ function Workbench() {
     jointIndex: number,
     value: number,
   ) {
+    const joint = controllableJoints[jointIndex];
+    if (
+      !joint ||
+      !Number.isFinite(value) ||
+      value < joint.lower ||
+      value > joint.upper
+    ) {
+      setError("Enter a finite joint value within the allowed range.");
+      return;
+    }
+    setError(null);
+    if (timelinePendingPositions) {
+      const nextPositions = timelinePendingPositions.map((position, index) =>
+        index === jointIndex ? value : position,
+      );
+      setTimelinePendingPositions(nextPositions);
+      applyPositions(nextPositions);
+      return;
+    }
     const nextFrames = timelineFrames.map((frame, index) =>
       index === frameIndex
         ? {
@@ -423,19 +574,6 @@ function Workbench() {
     if (frameIndex === selectedFrameIndex && updatedFrame) {
       applyPositions([...updatedFrame.positions]);
     }
-  }
-
-  function updateTimelineTimestamp(frameIndex: number, value: number) {
-    const clamped = Math.max(0, value);
-    // Avoid immediate resort flicker: update draft then normalize will sort.
-    const next = timelineFrames.map((frame, index) =>
-      index === frameIndex ? { ...frame, timestamp: clamped } : frame,
-    );
-    replaceTimelineFrames(next);
-    // Keep selection on same logical keyframe after sort by finding nearest timestamp.
-    const sorted = normalizeFrames(next);
-    const moved = sorted.findIndex((f) => f.timestamp === clamped);
-    if (moved >= 0) setSelectedFrameIndex(moved);
   }
 
   function deleteTimelineFrame(frameIndex: number) {
@@ -463,61 +601,6 @@ function Workbench() {
     const frame = timelineFrames[index];
     if (!frame) return;
     applyPositions([...frame.positions]);
-  }
-
-  function startRecording() {
-    if (!controllableJoints.length || recording) return;
-    stopReplay();
-    const id = `gesture-${Date.now()}`;
-    const startedAt = performance.now();
-    recordingRef.current = {
-      id,
-      name: `Gesture ${String(demonstrations.length + 1).padStart(2, "0")}`,
-      startedAt,
-      frames: [{ timestamp: 0, positions: [...positionsRef.current] }],
-    };
-    setRecordingFrames(recordingRef.current.frames);
-    setRecordingFrameCount(1);
-    setRecording(true);
-    setActiveTab("timeline");
-    setMessage(
-      "Recording gesture. Move the joints, then stop recording to archive it.",
-    );
-  }
-
-  function stopRecording() {
-    const draft = recordingRef.current;
-    if (!draft) return;
-    const finalPositions = [...positionsRef.current];
-    const elapsed = performance.now() - draft.startedAt;
-    const frames = [
-      ...draft.frames,
-      { timestamp: elapsed, positions: finalPositions },
-    ];
-    const demonstration: Demonstration = {
-      id: draft.id,
-      name: draft.name,
-      kind: "gesture",
-      current: frames[0]?.positions ?? finalPositions,
-      target: finalPositions,
-      frames,
-      keyframes: framesToKeyframes(frames),
-      timeline_fps: 30,
-      duration_frames: Math.round(
-        ((frames[frames.length - 1]?.timestamp ?? 0) * 30) / 1000,
-      ),
-      start_frame_index: 0,
-      dataset_id: activeDatasetId ?? undefined,
-    };
-    const next = [...demonstrations, demonstration];
-    recordingRef.current = null;
-    setRecording(false);
-    setRecordingFrames([]);
-    setRecordingFrameCount(0);
-    persistDemonstrations(next);
-    setSelectedDemoId(demonstration.id);
-    setTrained(false);
-    setMessage(`Archived ${demonstration.name} with ${frames.length} frames.`);
   }
 
   function replayFrames(frames: RolloutFrame[], label: string) {
@@ -596,8 +679,6 @@ function Workbench() {
       setSessionId(session.session_id);
       setState(session.state);
       stopReplay();
-      recordingRef.current = null;
-      setRecording(false);
       setDemonstrations([]);
       const datasetId = `dataset-${Date.now()}`;
       const now = new Date().toISOString();
@@ -613,7 +694,6 @@ function Workbench() {
       setActiveDatasetId(datasetId);
       setSelectedDemoId(null);
       setSelectedFrameIndex(0);
-      setRecordingFrames([]);
       setEditingDemoId(null);
       setActiveTab("training");
       setMetric(null);
@@ -697,7 +777,7 @@ function Workbench() {
       target,
       frames: [{ timestamp: 0, positions: target }],
       keyframes: framesToKeyframes([{ timestamp: 0, positions: target }]),
-      timeline_fps: 30,
+      timeline_fps: timelineFps,
       duration_frames: 0,
       start_frame_index: 0,
       dataset_id: activeDatasetId ?? undefined,
@@ -903,553 +983,125 @@ function Workbench() {
     }
     if (location.pathname === "/teach/timeline") {
       return (
-        <div className="route-page">
-          <div className="route-heading">
-            <div>
-              <p className="kicker">TEACH / KEYFRAME ANIMATION</p>
-              <h2>Author the robot motion.</h2>
-              <p className="intro-copy">
-                Insert full-pose keyframes on a Blender-style timeline, then
-                preview the interpolated gesture.
-              </p>
-            </div>
-            <StatusPill online={recording}>
-              {recording ? "Keyframe capture" : "Timeline ready"}
-            </StatusPill>
-          </div>
-          <div className="route-two-column">
-            <Panel className="route-viewport-panel">
-              <PanelHeader>
-                <div>
-                  <PanelLabel>LIVE VIEWPORT</PanelLabel>
-                  <h3>{robot?.name ?? "Awaiting robot"}</h3>
-                </div>
-                <Button
-                  size="small"
-                  variant="secondary"
-                  onClick={resetPose}
-                  disabled={!robot}
-                >
-                  Reset pose
-                </Button>
-              </PanelHeader>
-              <RobotScene robot={robot} state={state} />
-            </Panel>
-            <Panel className="route-content-panel">
-              <PanelHeader>
-                <div>
-                  <PanelLabel>ANIMATION EDITOR</PanelLabel>
-                  <h3>Gesture keyframes</h3>
-                </div>
-                <span className="count-badge">
-                  {timelineFrames.length} keys
-                </span>
-              </PanelHeader>
-              <TimelinePanel
-                frames={timelineFrames}
-                joints={controllableJoints}
-                recording={recording}
-                selectedFrameIndex={selectedFrameIndex}
-                dirty={timelineDirty}
-                hasSelection={Boolean(timelineDemonstration)}
-                onCapture={captureCheckpoint}
-                onSelectFrame={selectTimelineFrame}
-                onUpdateFrame={updateTimelineFrame}
-                onUpdateTimestamp={updateTimelineTimestamp}
-                onDeleteFrame={deleteTimelineFrame}
-                onDuplicateFrame={duplicateTimelineFrame}
-                onPreviewFrame={previewTimelineFrame}
-                onSave={saveTimelineDraft}
-                onDiscard={discardTimelineDraft}
-                onStartRecording={startRecording}
-                onStopRecording={stopRecording}
-              />
-            </Panel>
-          </div>
-        </div>
+        <TeachingTimelinePage
+          robot={robot}
+          state={state}
+          timelineFrames={timelineFrames}
+          controllableJoints={controllableJoints}
+          timelineFps={timelineFps}
+          selectedFrameIndex={selectedFrameIndex}
+          playheadFrame={timelinePlayheadFrame}
+          durationFrames={timelineDurationFrames}
+          editorPositions={
+            timelinePendingPositions ??
+            timelineFrames[selectedFrameIndex]?.positions ??
+            positions
+          }
+          timelineDirty={timelineDirty}
+          hasSelection={Boolean(timelineDemonstration)}
+          onReset={resetPose}
+          onCapture={captureCheckpoint}
+          onTargetFrame={stageInsertFrame}
+          onSelectFrame={selectTimelineFrame}
+          onScrubFrame={scrubTimelineFrame}
+          onUpdateFrame={updateTimelineFrame}
+          onDeleteFrame={deleteTimelineFrame}
+          onDuplicateFrame={duplicateTimelineFrame}
+          onPreviewFrame={previewTimelineFrame}
+          onSave={saveTimelineDraft}
+          onDiscard={discardTimelineDraft}
+          onFpsChange={setTimelineFps}
+          onDurationChange={setTimelineDurationFrames}
+        />
       );
     }
     if (location.pathname === "/archive") {
       return (
-        <div className="route-page">
-          <div className="route-heading">
-            <div>
-              <p className="kicker">ARCHIVE / DATASETS</p>
-              <h2>Organize expected behavior.</h2>
-              <p className="intro-copy">
-                Keep poses and authored gestures grouped by robot and training
-                purpose.
-              </p>
-            </div>
-          </div>
-          <div className="route-archive-grid">
-            <Panel className="route-content-panel">
-              <DatasetPanel
-                datasets={datasets}
-                activeDatasetId={activeDatasetId}
-                demonstrations={demonstrations}
-                onSelect={setActiveDatasetId}
-                onCreate={() => {
-                  const now = new Date().toISOString();
-                  const dataset = {
-                    id: `dataset-${Date.now()}`,
-                    name: `Dataset ${datasets.length + 1}`,
-                    demonstration_ids: demonstrations.map((item) => item.id),
-                    created_at: now,
-                    updated_at: now,
-                  };
-                  persistDatasets([...datasets, dataset]);
-                  setActiveDatasetId(dataset.id);
-                }}
-                onRename={(datasetId, name) =>
-                  persistDatasets(
-                    datasets.map((dataset) =>
-                      dataset.id === datasetId
-                        ? {
-                            ...dataset,
-                            name,
-                            updated_at: new Date().toISOString(),
-                          }
-                        : dataset,
-                    ),
-                  )
-                }
-                onMoveDemonstration={moveDemonstration}
-              />
-            </Panel>
-            <Panel className="route-content-panel archive-demo-panel">
-              <PanelHeader>
-                <div>
-                  <PanelLabel>DEMONSTRATIONS</PanelLabel>
-                  <h3>{demonstrations.length} captured items</h3>
-                </div>
-                <Link className="button secondary small" to="/teach/pose">
-                  New pose
-                </Link>
-              </PanelHeader>
-              <div className="archive-route-list">
-                {demonstrations.length ? (
-                  demonstrations.map((demonstration) => (
-                    <article
-                      className="archive-route-card"
-                      key={demonstration.id}
-                    >
-                      <div>
-                        <strong>{demonstration.name}</strong>
-                        <span>
-                          {demonstration.kind} ·{" "}
-                          {demonstration.keyframes?.length ??
-                            demonstration.frames.length}{" "}
-                          authored keyframes
-                        </span>
-                      </div>
-                      <div className="demo-card-actions">
-                        <Button
-                          size="small"
-                          variant="ghost"
-                          onClick={() => {
-                            setSelectedDemoId(demonstration.id);
-                            selectDemonstration(demonstration);
-                          }}
-                        >
-                          Preview
-                        </Button>
-                        {demonstration.kind === "gesture" && (
-                          <Link
-                            className="button secondary small"
-                            to="/teach/timeline"
-                            onClick={() => {
-                              setSelectedDemoId(demonstration.id);
-                            }}
-                          >
-                            Edit timeline
-                          </Link>
-                        )}
-                      </div>
-                    </article>
-                  ))
-                ) : (
-                  <div className="demo-empty">
-                    <strong>No demonstrations yet</strong>
-                    <span>Capture a pose or author a gesture timeline.</span>
-                  </div>
-                )}
-              </div>
-            </Panel>
-          </div>
-        </div>
+        <ArchivePage
+          demonstrations={demonstrations}
+          datasets={datasets}
+          activeDatasetId={activeDatasetId}
+          onSelectDataset={setActiveDatasetId}
+          onCreateDataset={() => {
+            const now = new Date().toISOString();
+            const dataset = {
+              id: `dataset-${Date.now()}`,
+              name: `Dataset ${datasets.length + 1}`,
+              demonstration_ids: demonstrations.map((item) => item.id),
+              created_at: now,
+              updated_at: now,
+            };
+            persistDatasets([...datasets, dataset]);
+            setActiveDatasetId(dataset.id);
+          }}
+          onRenameDataset={(datasetId, name) =>
+            persistDatasets(
+              datasets.map((dataset) =>
+                dataset.id === datasetId
+                  ? { ...dataset, name, updated_at: new Date().toISOString() }
+                  : dataset,
+              ),
+            )
+          }
+          onMoveDemonstration={moveDemonstration}
+          onPreview={selectDemonstration}
+          onSelectDemo={setSelectedDemoId}
+        />
       );
     }
     if (location.pathname === "/train") {
       return (
-        <div className="route-page">
-          <div className="route-heading">
-            <div>
-              <p className="kicker">TRAIN / TEMPORAL MLP</p>
-              <h2>Train from keyframe motion.</h2>
-              <p className="intro-copy">
-                The model learns small joint deltas between authored keyframes,
-                including seeded randomized starts.
-              </p>
-            </div>
-            <StatusPill online={Boolean(state?.training)}>
-              {state?.training ? "Training" : trained ? "Model ready" : "Idle"}
-            </StatusPill>
-          </div>
-          <Panel className="route-content-panel">
-            <PanelHeader>
-              <div>
-                <PanelLabel>TRAINING RUN</PanelLabel>
-                <h3>Behavior cloning configuration</h3>
-              </div>
-              <span className="count-badge">{demonstrations.length} demos</span>
-            </PanelHeader>
-            <div className="route-selection-grid">
-              <label>
-                Dataset
-                <select
-                  value={activeDatasetId ?? ""}
-                  onChange={(event) => setActiveDatasetId(event.target.value)}
-                >
-                  <option value="">All datasets</option>
-                  {datasets.map((dataset) => (
-                    <option value={dataset.id} key={dataset.id}>
-                      {dataset.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Demonstration
-                <select
-                  value={selectedDemoId ?? ""}
-                  onChange={(event) => setSelectedDemoId(event.target.value)}
-                >
-                  <option value="">All demonstrations</option>
-                  {demonstrations.map((demonstration) => (
-                    <option value={demonstration.id} key={demonstration.id}>
-                      {demonstration.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-            <div className="route-form-grid">
-              <label>
-                Hidden layers
-                <input
-                  value={hiddenLayerText}
-                  onChange={(event) =>
-                    updateConfig("hidden_layers", event.target.value)
-                  }
-                />
-              </label>
-              <label>
-                Activation
-                <select
-                  value={config.activation}
-                  onChange={(event) =>
-                    updateConfig("activation", event.target.value)
-                  }
-                >
-                  <option value="relu">ReLU</option>
-                  <option value="tanh">Tanh</option>
-                  <option value="gelu">GELU</option>
-                </select>
-              </label>
-              <label>
-                Increment (ms)
-                <input
-                  type="number"
-                  min="10"
-                  max="2000"
-                  value={config.timestep_ms}
-                  onChange={(event) =>
-                    updateConfig("timestep_ms", event.target.value)
-                  }
-                />
-              </label>
-              <label>
-                Random starts
-                <input
-                  type="number"
-                  min="0"
-                  max="64"
-                  value={config.random_starts}
-                  onChange={(event) =>
-                    updateConfig("random_starts", event.target.value)
-                  }
-                />
-              </label>
-              <label>
-                Rollout steps
-                <input
-                  type="number"
-                  min="1"
-                  max="2000"
-                  value={config.rollout_steps}
-                  onChange={(event) =>
-                    updateConfig("rollout_steps", event.target.value)
-                  }
-                />
-              </label>
-              <label>
-                Epochs
-                <input
-                  type="number"
-                  min="1"
-                  max="5000"
-                  value={config.epochs}
-                  onChange={(event) =>
-                    updateConfig("epochs", event.target.value)
-                  }
-                />
-              </label>
-            </div>
-            <div className="route-actions">
-              <Button
-                variant="primary"
-                onClick={startTraining}
-                disabled={
-                  !sessionId ||
-                  !demonstrations.length ||
-                  busy ||
-                  state?.training
-                }
-              >
-                Train temporal controller
-              </Button>
-              <Link className="button secondary" to="/evaluate">
-                Open evaluation
-              </Link>
-            </div>
-            <div className="route-metric-grid">
-              <div>
-                <PanelLabel>LATEST LOSS</PanelLabel>
-                <strong>{metric ? metric.loss.toFixed(5) : "—"}</strong>
-              </div>
-              <div>
-                <PanelLabel>PROGRESS</PanelLabel>
-                <strong>
-                  {metric ? `${metric.epoch}/${metric.epochs}` : "—"}
-                </strong>
-              </div>
-              <div>
-                <PanelLabel>INPUTS</PanelLabel>
-                <strong>{controllableJoints.length * 2 + 1}</strong>
-              </div>
-              <div>
-                <PanelLabel>OUTPUTS</PanelLabel>
-                <strong>{controllableJoints.length}</strong>
-              </div>
-            </div>
-          </Panel>
-        </div>
+        <TrainingPage
+          demonstrations={demonstrations}
+          datasets={datasets}
+          activeDatasetId={activeDatasetId}
+          selectedDemoId={selectedDemoId}
+          controllableJoints={controllableJoints}
+          config={config}
+          hiddenLayerText={hiddenLayerText}
+          metric={metric}
+          busy={busy}
+          training={Boolean(state?.training)}
+          trained={trained}
+          sessionId={sessionId}
+          onDatasetChange={setActiveDatasetId}
+          onDemoChange={setSelectedDemoId}
+          onConfigChange={updateConfig}
+          onTrain={startTraining}
+        />
       );
     }
     if (location.pathname === "/evaluate") {
       return (
-        <div className="route-page">
-          <div className="route-heading">
-            <div>
-              <p className="kicker">EVALUATE / TRAJECTORY</p>
-              <h2>Inspect the learned motion.</h2>
-              <p className="intro-copy">
-                Compare the predicted rollout against every authored keyframe
-                instead of only checking the final pose.
-              </p>
-            </div>
-            <StatusPill online={trained}>
-              {trained ? "Evaluation ready" : "Train a model first"}
-            </StatusPill>
-          </div>
-          <div className="route-two-column">
-            <Panel className="route-viewport-panel">
-              <PanelHeader>
-                <div>
-                  <PanelLabel>PREDICTED VIEWPORT</PanelLabel>
-                  <h3>{robot?.name ?? "Awaiting robot"}</h3>
-                </div>
-                <Button
-                  size="small"
-                  variant="secondary"
-                  onClick={() =>
-                    replayFrames(rolloutFrames, "the evaluated trajectory")
-                  }
-                  disabled={rolloutFrames.length < 2}
-                >
-                  {replayingDemoId === "evaluation"
-                    ? "Replaying"
-                    : "Play rollout"}
-                </Button>
-              </PanelHeader>
-              <RobotScene robot={robot} state={state} />
-            </Panel>
-            <Panel className="route-content-panel">
-              <PanelHeader>
-                <div>
-                  <PanelLabel>CHECKPOINT COMPARISON</PanelLabel>
-                  <h3>
-                    {rolloutFrames.length
-                      ? `${rolloutFrames.length} predicted frames`
-                      : "No rollout yet"}
-                  </h3>
-                </div>
-              </PanelHeader>
-              <div className="evaluation-route-content">
-                <Button
-                  variant="primary"
-                  full
-                  onClick={testModel}
-                  disabled={!trained || !demonstrations.length || busy}
-                >
-                  Evaluate selected demonstration
-                </Button>
-                {evaluation ? (
-                  <>
-                    <div className="route-metric-grid">
-                      <div>
-                        <PanelLabel>MEAN ERROR</PanelLabel>
-                        <strong>
-                          {meanError(
-                            evaluation.target,
-                            evaluation.positions,
-                          ).toFixed(4)}
-                        </strong>
-                      </div>
-                      <div>
-                        <PanelLabel>MAX ERROR</PanelLabel>
-                        <strong>{evaluation.error.toFixed(4)}</strong>
-                      </div>
-                    </div>
-                    <div className="keyframe-results">
-                      {rolloutFrames.map((frame, index) => (
-                        <div
-                          className="keyframe-result"
-                          key={`${frame.timestamp}-${index}`}
-                        >
-                          <span>Frame {index + 1}</span>
-                          <span>
-                            {meanError(frame.expected, frame.positions).toFixed(
-                              4,
-                            )}{" "}
-                            error
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </>
-                ) : (
-                  <div className="test-empty">
-                    Select a demonstration and run evaluation to inspect the
-                    complete trajectory.
-                  </div>
-                )}
-              </div>
-            </Panel>
-          </div>
-        </div>
+        <EvaluatePage
+          robot={robot}
+          state={state}
+          trained={trained}
+          busy={busy}
+          demonstrationsLength={demonstrations.length}
+          rolloutFrames={rolloutFrames}
+          evaluation={evaluation}
+          replaying={replayingDemoId === "evaluation"}
+          onReplay={() =>
+            replayFrames(rolloutFrames, "the evaluated trajectory")
+          }
+          onEvaluate={testModel}
+        />
       );
     }
     return (
-      <div className="route-page">
-        <div className="route-heading">
-          <div>
-            <p className="kicker">TEACH / POSE EDITOR</p>
-            <h2>Shape the robot pose.</h2>
-            <p className="intro-copy">
-              Edit every controllable joint together, then capture a full-pose
-              keyframe or continue in the animation timeline.
-            </p>
-          </div>
-          <div className="route-heading-actions">
-            <label className="button ghost route-upload">
-              <input
-                type="file"
-                accept=".urdf,application/xml,text/xml"
-                onChange={handleUpload}
-              />
-              Upload URDF
-            </label>
-            <Button variant="primary" onClick={handleDemo} disabled={busy}>
-              Open sample robot
-            </Button>
-          </div>
-        </div>
-        <div className="route-two-column">
-          <Panel className="route-viewport-panel">
-            <PanelHeader>
-              <div>
-                <PanelLabel>LIVE VIEWPORT</PanelLabel>
-                <h3>{robot?.name ?? "Awaiting robot"}</h3>
-              </div>
-              <Button
-                size="small"
-                variant="secondary"
-                onClick={resetPose}
-                disabled={!robot}
-              >
-                Reset pose
-              </Button>
-            </PanelHeader>
-            <RobotScene robot={robot} state={state} />
-          </Panel>
-          <Panel className="route-content-panel">
-            <PanelHeader>
-              <div>
-                <PanelLabel>FULL-ROBOT POSE</PanelLabel>
-                <h3>Joint editor</h3>
-              </div>
-              <span className="count-badge">
-                {controllableJoints.length} active
-              </span>
-            </PanelHeader>
-            <div className="route-joint-list">
-              {controllableJoints.map((joint, index) => (
-                <label className="route-joint-row" key={joint.name}>
-                  <span>
-                    {joint.name}
-                    <small>{joint.type}</small>
-                  </span>
-                  <input
-                    type="range"
-                    min={joint.lower}
-                    max={joint.upper}
-                    step="0.001"
-                    value={positions[index] ?? 0}
-                    onChange={(event) =>
-                      updateJoint(index, Number(event.target.value))
-                    }
-                  />
-                  <input
-                    type="number"
-                    min={joint.lower}
-                    max={joint.upper}
-                    step="0.001"
-                    value={positions[index] ?? 0}
-                    aria-label={`${joint.name} route position`}
-                    onChange={(event) =>
-                      updateJoint(index, Number(event.target.value))
-                    }
-                  />
-                </label>
-              ))}
-            </div>
-            <div className="route-actions">
-              <Button
-                variant="primary"
-                onClick={captureDemonstration}
-                disabled={!robot || !controllableJoints.length}
-              >
-                Capture pose
-              </Button>
-              <Link className="button secondary" to="/teach/timeline">
-                Open keyframe editor
-              </Link>
-            </div>
-          </Panel>
-        </div>
-      </div>
+      <TeachingPosePage
+        robot={robot}
+        state={state}
+        controllableJoints={controllableJoints}
+        positions={positions}
+        busy={busy}
+        onUpload={handleUpload}
+        onDemo={handleDemo}
+        onReset={resetPose}
+        onUpdateJoint={updateJoint}
+        onCapture={captureDemonstration}
+      />
     );
   })();
 
@@ -1498,9 +1150,9 @@ function Workbench() {
             {sessionId ? "Session live" : "No session"}
           </StatusPill>
           {sessionId && (
-            <a className="button ghost small" href={exportUrl(sessionId)}>
-              Export session
-            </a>
+            <Button variant="ghost" size="small" asChild>
+              <a href={exportUrl(sessionId)}>Export session</a>
+            </Button>
           )}
         </div>
       </header>
@@ -1542,20 +1194,22 @@ function Workbench() {
               <h3>{robot?.name ?? "Awaiting robot"}</h3>
             </div>
             <div className="viewer-actions">
-              <button
-                className="button ghost small"
+              <Button
+                variant="ghost"
+                size="small"
                 onClick={resetPose}
                 disabled={!robot}
               >
                 Reset pose
-              </button>
-              <button
-                className="button primary small"
+              </Button>
+              <Button
+                variant="primary"
+                size="small"
                 onClick={handleDemo}
                 disabled={busy}
               >
                 Open sample
-              </button>
+              </Button>
             </div>
           </PanelHeader>
           <RobotScene robot={robot} state={state} />
@@ -1591,13 +1245,9 @@ function Workbench() {
           <div className="or-divider">
             <span>or</span>
           </div>
-          <button
-            className="button secondary full"
-            onClick={handleDemo}
-            disabled={busy}
-          >
+          <Button variant="secondary" full onClick={handleDemo} disabled={busy}>
             Load the 2-joint sample arm
-          </button>
+          </Button>
           <div className="section-divider" />
           <div className="panel-header compact">
             <div>
@@ -1659,32 +1309,11 @@ function Workbench() {
               full
               className="capture-button"
               onClick={captureDemonstration}
-              disabled={!robot || !controllableJoints.length || recording}
+              disabled={!robot || !controllableJoints.length}
               type="button"
             >
               <span>＋</span> Capture pose <b>{demonstrations.length}</b>
             </Button>
-            {recording ? (
-              <Button
-                variant="recording"
-                full
-                onClick={stopRecording}
-                type="button"
-              >
-                <span className="recording-dot" /> Stop recording ·{" "}
-                {recordingFrameCount} frames
-              </Button>
-            ) : (
-              <Button
-                variant="secondary"
-                full
-                onClick={startRecording}
-                disabled={!robot || !controllableJoints.length}
-                type="button"
-              >
-                Record gesture
-              </Button>
-            )}
           </div>
           <p className="helper-text">
             Capture a static pose or record a timestamped gesture. Recorded
@@ -1856,8 +1485,9 @@ function Workbench() {
                 </label>
               </div>
               <div className="training-actions">
-                <button
-                  className="button primary full"
+                <Button
+                  variant="primary"
+                  full
                   onClick={startTraining}
                   disabled={
                     !sessionId ||
@@ -1867,14 +1497,15 @@ function Workbench() {
                   }
                 >
                   Train network <span>↗</span>
-                </button>
-                <button
-                  className="button secondary full"
+                </Button>
+                <Button
+                  variant="secondary"
+                  full
                   onClick={testModel}
                   disabled={!trained || !demonstrations.length || busy}
                 >
                   Evaluate selected demonstration
-                </button>
+                </Button>
               </div>
               <div className="training-summary">
                 <div>
@@ -1908,21 +1539,29 @@ function Workbench() {
             <TimelinePanel
               frames={timelineFrames}
               joints={controllableJoints}
-              recording={recording}
               selectedFrameIndex={selectedFrameIndex}
+              fps={timelineFps}
+              playheadFrame={timelinePlayheadFrame}
+              durationFrames={timelineDurationFrames}
+              editorPositions={
+                timelinePendingPositions ??
+                timelineFrames[selectedFrameIndex]?.positions ??
+                positions
+              }
               dirty={timelineDirty}
               hasSelection={Boolean(timelineDemonstration)}
               onCapture={captureCheckpoint}
+              onTargetFrame={stageInsertFrame}
               onSelectFrame={selectTimelineFrame}
+              onScrubFrame={scrubTimelineFrame}
               onUpdateFrame={updateTimelineFrame}
-              onUpdateTimestamp={updateTimelineTimestamp}
               onDeleteFrame={deleteTimelineFrame}
               onDuplicateFrame={duplicateTimelineFrame}
               onPreviewFrame={previewTimelineFrame}
               onSave={saveTimelineDraft}
               onDiscard={discardTimelineDraft}
-              onStopRecording={stopRecording}
-              onStartRecording={startRecording}
+              onFpsChange={setTimelineFps}
+              onDurationChange={setTimelineDurationFrames}
             />
           ) : activeTab === "demonstrations" ? (
             <div className="demonstrations-panel">
@@ -1934,13 +1573,14 @@ function Workbench() {
                     {demonstrations.length === 1 ? "" : "s"}
                   </strong>
                 </div>
-                <button
-                  className="button ghost small"
+                <Button
+                  variant="ghost"
+                  size="small"
                   onClick={clearDemonstrations}
                   disabled={!demonstrations.length}
                 >
                   Clear all
-                </button>
+                </Button>
               </div>
               {demonstrations.length ? (
                 <div className="demo-list">
@@ -2020,8 +1660,9 @@ function Workbench() {
                         })}
                       </div>
                       <div className="demo-card-actions">
-                        <button
-                          className="button ghost small"
+                        <Button
+                          variant="ghost"
+                          size="small"
                           onClick={(event) => {
                             event.stopPropagation();
                             if (replayingDemoId === demonstration.id) {
@@ -2036,9 +1677,10 @@ function Workbench() {
                             : demonstration.kind === "gesture"
                               ? "Replay gesture"
                               : "Preview pose"}
-                        </button>
-                        <button
-                          className="button secondary small"
+                        </Button>
+                        <Button
+                          variant="secondary"
+                          size="small"
                           onClick={(event) => {
                             event.stopPropagation();
                             beginEditing(demonstration);
@@ -2049,7 +1691,7 @@ function Workbench() {
                             : demonstration.kind === "gesture"
                               ? "Edit timeline"
                               : "Edit pose"}
-                        </button>
+                        </Button>
                       </div>
                     </article>
                   ))}
@@ -2062,30 +1704,33 @@ function Workbench() {
                     Move the sliders and capture a target pose to start a
                     dataset.
                   </span>
-                  <button
-                    className="button secondary small"
+                  <Button
+                    variant="secondary"
+                    size="small"
                     onClick={() => setActiveTab("training")}
                   >
                     Back to pose editor
-                  </button>
+                  </Button>
                 </div>
               )}
               {editingDemoId && (
                 <div className="edit-banner">
                   <span>Editing selected pose with the sliders.</span>
                   <div>
-                    <button
-                      className="button ghost small"
+                    <Button
+                      variant="ghost"
+                      size="small"
                       onClick={() => setEditingDemoId(null)}
                     >
                       Cancel
-                    </button>
-                    <button
-                      className="button primary small"
+                    </Button>
+                    <Button
+                      variant="primary"
+                      size="small"
                       onClick={saveEditedDemonstration}
                     >
                       Save changes
-                    </button>
+                    </Button>
                   </div>
                 </div>
               )}
@@ -2150,16 +1795,18 @@ function Workbench() {
                   {trained ? "Ready" : "Waiting"}
                 </span>
               </div>
-              <button
-                className="button primary full"
+              <Button
+                variant="primary"
+                full
                 onClick={testModel}
                 disabled={!trained || !demonstrations.length || busy}
               >
                 Evaluate selected demonstration
-              </button>
+              </Button>
               {rolloutFrames.length > 1 && (
-                <button
-                  className="button secondary full"
+                <Button
+                  variant="secondary"
+                  full
                   onClick={() =>
                     replayingDemoId === "evaluation"
                       ? stopReplay()
@@ -2170,7 +1817,7 @@ function Workbench() {
                   {replayingDemoId === "evaluation"
                     ? "Stop trajectory replay"
                     : "Play evaluated trajectory"}
-                </button>
+                </Button>
               )}
               <div className="chart-card">
                 <div className="chart-header">
@@ -2277,541 +1924,5 @@ function Workbench() {
         <span>Primitive URDF workbench / local session</span>
       </footer>
     </main>
-  );
-}
-
-type RouteFrameProps = {
-  children: ReactNode;
-  robot: Robot | null;
-  sessionId: string | null;
-  error: string | null;
-  message: string;
-  onDismissError: () => void;
-};
-
-function RouteFrame({
-  children,
-  robot,
-  sessionId,
-  error,
-  message,
-  onDismissError,
-}: RouteFrameProps) {
-  const workspace = useWorkbench();
-  const navigation = [
-    ["/teach/pose", "Pose"],
-    ["/teach/timeline", "Timeline"],
-    ["/archive", "Archive"],
-    ["/train", "Train"],
-    ["/evaluate", "Evaluate"],
-  ] as const;
-  return (
-    <main className="app-shell route-shell">
-      <header className="topbar">
-        <Link className="brand-lockup brand-link" to="/teach/pose">
-          <div className="brand-mark">⌁</div>
-          <div>
-            <div className="eyebrow">ROBOTICS LAB / 01</div>
-            <h1>Learning Workbench</h1>
-          </div>
-        </Link>
-        <div className="topbar-actions">
-          <StatusPill online={Boolean(sessionId)}>
-            {sessionId ? "Session live" : "No session"}
-          </StatusPill>
-          {sessionId && (
-            <a className="button ghost small" href={exportUrl(sessionId)}>
-              Export session
-            </a>
-          )}
-        </div>
-      </header>
-      <nav className="route-nav" aria-label="Workbench pages">
-        {navigation.map(([href, label]) => (
-          <NavLink
-            className={({ isActive }) =>
-              `route-nav-link ${isActive ? "active" : ""}`
-            }
-            to={href}
-            key={href}
-          >
-            {label}
-          </NavLink>
-        ))}
-      </nav>
-      <div className="route-context">
-        <span>{workspace.robot?.name ?? robot?.name ?? "No robot loaded"}</span>
-        <span>·</span>
-        <span>{message}</span>
-      </div>
-      {error && (
-        <div className="alert error">
-          <strong>Attention</strong>
-          <span>{error}</span>
-          <button onClick={onDismissError}>×</button>
-        </div>
-      )}
-      {children}
-      <footer className="footer">
-        <span>FastAPI · PyBullet · PyTorch · Three.js</span>
-        <span>Robot teaching workspace / routed session</span>
-      </footer>
-    </main>
-  );
-}
-
-type TimelinePanelProps = {
-  frames: DemonstrationFrame[];
-  joints: Joint[];
-  recording: boolean;
-  selectedFrameIndex: number;
-  dirty: boolean;
-  hasSelection: boolean;
-  onCapture: () => void;
-  onSelectFrame: (index: number) => void;
-  onUpdateFrame: (
-    frameIndex: number,
-    jointIndex: number,
-    value: number,
-  ) => void;
-  onUpdateTimestamp: (frameIndex: number, value: number) => void;
-  onDeleteFrame: (index: number) => void;
-  onDuplicateFrame: (index: number) => void;
-  onPreviewFrame: (index: number) => void;
-  onSave: () => void;
-  onDiscard: () => void;
-  onStartRecording: () => void;
-  onStopRecording: () => void;
-};
-
-function TimelinePanel({
-  frames,
-  joints,
-  recording,
-  selectedFrameIndex,
-  dirty,
-  hasSelection,
-  onCapture,
-  onSelectFrame,
-  onUpdateFrame,
-  onUpdateTimestamp,
-  onDeleteFrame,
-  onDuplicateFrame,
-  onPreviewFrame,
-  onSave,
-  onDiscard,
-  onStartRecording,
-  onStopRecording,
-}: TimelinePanelProps) {
-  const fps = 30;
-  const lastFrame = frames[frames.length - 1]?.timestamp ?? 0;
-  const durationFrames = Math.max(60, Math.ceil((lastFrame / 1000) * fps) + 12);
-  const selected = frames[selectedFrameIndex];
-  const markerPosition = (timestamp: number) =>
-    `${Math.min(100, Math.max(0, (timestamp / Math.max(lastFrame, 1)) * 100))}%`;
-  const [playing, setPlaying] = useState(false);
-  const playRef = useRef<number | null>(null);
-  useEffect(() => {
-    if (!playing || !frames.length) return;
-    let idx = selectedFrameIndex;
-    const tick = () => {
-      idx = (idx + 1) % frames.length;
-      onSelectFrame(idx);
-      onPreviewFrame(idx);
-      playRef.current = window.setTimeout(tick, 240);
-    };
-    playRef.current = window.setTimeout(tick, 240);
-    return () => {
-      if (playRef.current !== null) window.clearTimeout(playRef.current);
-    };
-  }, [playing, frames, selectedFrameIndex, onSelectFrame, onPreviewFrame]);
-
-  if (!hasSelection && !recording) {
-    return (
-      <div className="animation-editor">
-        <div className="demo-empty">
-          <strong>No gesture selected</strong>
-          <span>Select a gesture in Archive or start a new capture.</span>
-          <Button variant="secondary" size="small" onClick={onStartRecording} disabled={!joints.length}>
-            Start capture
-          </Button>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="animation-editor">
-      <div className="animation-toolbar">
-        <div>
-          <PanelLabel>KEYFRAME EDITOR · {fps} FPS</PanelLabel>
-          <strong>
-            {frames.length} authored keyframe{frames.length === 1 ? "" : "s"}
-            {dirty && <em className="draft-badge"> · unsaved</em>}
-          </strong>
-        </div>
-        <div className="demo-card-actions">
-          {recording ? (
-            <Button variant="recording" size="small" onClick={onStopRecording}>
-              Stop capture
-            </Button>
-          ) : (
-            <Button variant="secondary" size="small" onClick={onStartRecording}>
-              Start capture
-            </Button>
-          )}
-          <Button
-            variant="primary"
-            size="small"
-            onClick={onCapture}
-            disabled={!joints.length}
-          >
-            Insert full-pose key
-          </Button>
-        </div>
-      </div>
-      <p className="helper-text">
-        Isolated draft: pose sliders stay independent. Save publishes to archive
-        for training. Diamonds are authored keys — playback is derived.
-      </p>
-      {dirty && !recording && (
-        <div className="edit-banner">
-          <span>Unsaved timeline edits — training uses last saved version.</span>
-          <div>
-            <Button variant="ghost" size="small" onClick={onDiscard}>Discard</Button>
-            <Button variant="primary" size="small" onClick={onSave}>Save keyframes</Button>
-          </div>
-        </div>
-      )}
-      {frames.length ? (
-        <>
-          <div className="timeline-scrub">
-            <input
-              type="range"
-              min={0}
-              max={Math.max(0, frames.length - 1)}
-              value={selectedFrameIndex}
-              aria-label="Scrub keyframes"
-              onChange={(e) => {
-                const idx = Number(e.target.value);
-                onSelectFrame(idx);
-                onPreviewFrame(idx);
-              }}
-            />
-            <Button
-              variant="secondary"
-              size="small"
-              onClick={() => setPlaying((v) => !v)}
-              disabled={frames.length < 2}
-            >
-              {playing ? "Pause" : "Play"}
-            </Button>
-            <span className="scrub-label">{selectedFrameIndex + 1} / {frames.length}</span>
-          </div>
-          <div
-            className="animation-ruler"
-            style={
-              { "--timeline-duration": durationFrames } as React.CSSProperties
-            }
-            onClick={(e) => {
-              const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
-              const pct = (e.clientX - rect.left) / rect.width;
-              const targetTime = pct * Math.max(lastFrame, 1);
-              let nearest = 0;
-              let best = Infinity;
-              frames.forEach((f, i) => {
-                const d = Math.abs(f.timestamp - targetTime);
-                if (d < best) { best = d; nearest = i; }
-              });
-              onSelectFrame(nearest);
-              onPreviewFrame(nearest);
-            }}
-          >
-            {Array.from(
-              { length: Math.ceil(durationFrames / 12) + 1 },
-              (_, index) => (
-                <span
-                  key={index}
-                  style={{ left: `${((index * 12) / durationFrames) * 100}%` }}
-                >
-                  {index * 12}
-                </span>
-              ),
-            )}
-            <i
-              className="animation-playhead"
-              style={{ left: markerPosition(selected?.timestamp ?? 0) }}
-            />
-          </div>
-          <div
-            className="animation-channels"
-            role="list"
-            aria-label="Robot animation channels"
-          >
-            <div className="channel-row channel-header">
-              <span>CHANNELS</span>
-              <span>AUTHORED KEYFRAMES (click diamond to select)</span>
-            </div>
-            {joints.map((joint) => (
-              <div className="channel-row" key={joint.name}>
-                <span className="channel-name">
-                  {joint.name}
-                  <small>{joint.type}</small>
-                </span>
-                <div className="channel-track">
-                  {frames.map((frame, frameIndex) => (
-                    <button
-                      className={`keyframe-diamond ${selectedFrameIndex === frameIndex ? "selected" : ""}`}
-                      style={{ left: markerPosition(frame.timestamp) }}
-                      aria-label={`Keyframe ${frameIndex + 1} for ${joint.name}`}
-                      key={`${frameIndex}-${frame.timestamp}`}
-                      onClick={() => {
-                        onSelectFrame(frameIndex);
-                        onPreviewFrame(frameIndex);
-                      }}
-                      type="button"
-                    >
-                      ◆
-                    </button>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-          {selected ? (
-            <div className="keyframe-inspector">
-              <div className="timeline-frame-header">
-                <div>
-                  <PanelLabel>SELECTED KEYFRAME</PanelLabel>
-                  <strong>
-                    Frame {Math.round((selected.timestamp / 1000) * fps)} · {Math.round(selected.timestamp)} ms
-                  </strong>
-                </div>
-                <label>
-                  <span>Frame time (ms)</span>
-                  <input
-                    aria-label="Selected keyframe time"
-                    type="number"
-                    min="0"
-                    step="10"
-                    value={Math.round(selected.timestamp)}
-                    onChange={(event) =>
-                      onUpdateTimestamp(
-                        selectedFrameIndex,
-                        Number(event.target.value),
-                      )
-                    }
-                  />
-                </label>
-                <Button
-                  variant="ghost"
-                  size="small"
-                  onClick={() => onDuplicateFrame(selectedFrameIndex)}
-                >
-                  Duplicate
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="small"
-                  onClick={() => onDeleteFrame(selectedFrameIndex)}
-                  disabled={frames.length <= 1}
-                >
-                  Delete key
-                </Button>
-              </div>
-              <div className="timeline-joint-grid">
-                {joints.map((joint, jointIndex) => {
-                  const value = selected.positions[jointIndex] ?? 0;
-                  const updateValue = (nextValue: string) =>
-                    onUpdateFrame(
-                      selectedFrameIndex,
-                      jointIndex,
-                      Number(nextValue),
-                    );
-
-                  return (
-                    <label className="timeline-joint-control" key={joint.name}>
-                      <span>{joint.name}</span>
-                      <div className="timeline-joint-inputs">
-                        <input
-                          aria-label={`${joint.name} slider at selected keyframe`}
-                          type="range"
-                          min={joint.lower}
-                          max={joint.upper}
-                          step="0.001"
-                          value={value}
-                          onChange={(event) => updateValue(event.target.value)}
-                        />
-                        <input
-                          aria-label={`${joint.name} at selected keyframe`}
-                          type="number"
-                          min={joint.lower}
-                          max={joint.upper}
-                          step="0.001"
-                          value={value}
-                          onChange={(event) => updateValue(event.target.value)}
-                        />
-                      </div>
-                    </label>
-                  );
-                })}
-              </div>
-              <p className="helper-text" style={{ paddingLeft: 0 }}>Slider + number per joint — edits this keyframe only. Use Play/scrub to preview.</p>
-            </div>
-          ) : (
-            <div className="demo-empty">
-              <strong>No keyframes yet</strong>
-              <span>Insert a full-pose keyframe to start the animation.</span>
-            </div>
-          )}
-        </>
-      ) : (
-        <div className="demo-empty">
-          <strong>No authored keyframes yet</strong>
-          <span>
-            Start capture, then insert full-pose keys at meaningful moments. Each key stores the full pose, not a delta.
-          </span>
-        </div>
-      )}
-    </div>
-  );
-}
-
-type DatasetPanelProps = {
-  datasets: Dataset[];
-  activeDatasetId: string | null;
-  demonstrations: Demonstration[];
-  onSelect: (datasetId: string) => void;
-  onCreate: () => void;
-  onRename: (datasetId: string, name: string) => void;
-  onMoveDemonstration: (demonstrationId: string, datasetId: string) => void;
-};
-
-function DatasetPanel({
-  datasets,
-  activeDatasetId,
-  demonstrations,
-  onSelect,
-  onCreate,
-  onRename,
-  onMoveDemonstration,
-}: DatasetPanelProps) {
-  return (
-    <div className="datasets-panel">
-      <div className="demo-toolbar">
-        <div>
-          <p className="panel-label">ROBOT DATASETS</p>
-          <strong>
-            {datasets.length} saved dataset{datasets.length === 1 ? "" : "s"}
-          </strong>
-        </div>
-        <button className="button primary small" onClick={onCreate}>
-          New dataset
-        </button>
-      </div>
-      <p className="helper-text">
-        Datasets organize the current robot's captured poses and gestures. The
-        active dataset receives new demonstrations.
-      </p>
-      {datasets.length ? (
-        <div className="dataset-list">
-          {datasets.map((dataset) => (
-            <article
-              className={`dataset-card ${dataset.id === activeDatasetId ? "selected" : ""}`}
-              key={dataset.id}
-            >
-              <button
-                className="dataset-select"
-                onClick={() => onSelect(dataset.id)}
-              >
-                <span className="panel-label">
-                  {dataset.id === activeDatasetId
-                    ? "ACTIVE DATASET"
-                    : "DATASET"}
-                </span>
-                <strong>{dataset.name}</strong>
-                <small>{dataset.demonstration_ids.length} demonstrations</small>
-              </button>
-              <input
-                aria-label={`Rename ${dataset.name}`}
-                value={dataset.name}
-                onChange={(event) => onRename(dataset.id, event.target.value)}
-              />
-            </article>
-          ))}
-        </div>
-      ) : (
-        <div className="demo-empty">
-          <strong>No datasets yet</strong>
-          <span>Create one before capturing a demonstration.</span>
-        </div>
-      )}
-      {demonstrations.length > 0 && datasets.length > 0 && (
-        <div className="dataset-members">
-          <p className="panel-label">DEMONSTRATION MEMBERSHIP</p>
-          {demonstrations.map((demonstration) => {
-            const memberDataset = datasets.find((dataset) =>
-              dataset.demonstration_ids.includes(demonstration.id),
-            );
-            return (
-              <label key={demonstration.id}>
-                <span>{demonstration.name}</span>
-                <select
-                  aria-label={`Dataset for ${demonstration.name}`}
-                  value={memberDataset?.id ?? ""}
-                  onChange={(event) =>
-                    onMoveDemonstration(demonstration.id, event.target.value)
-                  }
-                >
-                  <option value="" disabled>
-                    Select dataset
-                  </option>
-                  {datasets.map((dataset) => (
-                    <option value={dataset.id} key={dataset.id}>
-                      {dataset.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            );
-          })}
-        </div>
-      )}
-      <div className="training-summary">
-        <div>
-          <span>Current archive</span>
-          <strong>{demonstrations.length}</strong>
-        </div>
-        <div>
-          <span>Robot scope</span>
-          <strong>1</strong>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function PoseSketch({ target }: { target: number[] }) {
-  const firstAngle = -Math.PI / 2 + (target[0] ?? 0);
-  const secondAngle = firstAngle + (target[1] ?? 0);
-  const shoulder = {
-    x: 29 + Math.cos(firstAngle) * 15,
-    y: 25 + Math.sin(firstAngle) * 15,
-  };
-  const wrist = {
-    x: shoulder.x + Math.cos(secondAngle) * 13,
-    y: shoulder.y + Math.sin(secondAngle) * 13,
-  };
-  return (
-    <div className="pose-sketch" aria-hidden="true">
-      <svg viewBox="0 0 58 50">
-        <path d="M8 42h42" />
-        <line x1="29" y1="25" x2={shoulder.x} y2={shoulder.y} />
-        <line x1={shoulder.x} y1={shoulder.y} x2={wrist.x} y2={wrist.y} />
-        <circle cx="29" cy="25" r="3" />
-        <circle cx={shoulder.x} cy={shoulder.y} r="2.5" />
-        <circle cx={wrist.x} cy={wrist.y} r="2.2" />
-      </svg>
-    </div>
   );
 }

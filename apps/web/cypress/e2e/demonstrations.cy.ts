@@ -94,7 +94,6 @@ describe("routed teaching workspace", () => {
     cy.contains("button", "Open sample robot").click();
     cy.wait("@createSession");
     cy.contains("Timeline").click();
-    cy.contains("button", "Start capture").click();
     cy.contains("button", "Insert full-pose key").click();
     cy.get('input[aria-label="shoulder_joint at selected keyframe"]')
       .clear()
@@ -103,7 +102,9 @@ describe("routed teaching workspace", () => {
       .should("have.attr", "min", "-1.57")
       .and("have.attr", "max", "1.57")
       .and("have.value", "0.5");
-    cy.contains("button", "Stop capture").click();
+    cy.get('[aria-label="Insert frame"]').clear().type("10");
+    cy.contains("button", "Insert full-pose key").click();
+    cy.contains("button", "Save keyframes").click();
     cy.wait("@saveDemonstrations")
       .its("request.body.demonstrations.0")
       .should((demonstration) => {

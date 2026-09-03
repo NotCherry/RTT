@@ -1,4 +1,11 @@
 import type { ButtonHTMLAttributes, HTMLAttributes, ReactNode } from "react";
+import { cn } from "@/lib/utils";
+import {
+  Button as ShadcnButton,
+  buttonVariants as shadcnButtonVariants,
+} from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 
 type ButtonVariant = "primary" | "secondary" | "ghost" | "recording";
 type ButtonSize = "default" | "small";
@@ -7,40 +14,70 @@ type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
   variant?: ButtonVariant;
   size?: ButtonSize;
   full?: boolean;
+  asChild?: boolean;
   children: ReactNode;
 };
 
-const buttonBase =
-  "inline-flex cursor-pointer items-center justify-center gap-2 rounded-[5px] border-0 font-semibold transition duration-150 ease-out hover:-translate-y-px disabled:cursor-not-allowed disabled:opacity-40";
-const buttonVariants: Record<ButtonVariant, string> = {
-  primary: "bg-accent-500 text-[#07111e] hover:bg-accent-300",
-  secondary: "bg-[#243346] text-blue-100 hover:bg-[#30445b]",
-  ghost:
-    "border border-[#334252] bg-transparent text-slate-300 hover:border-[#5b82aa] hover:text-slate-100",
-  recording: "bg-[#5b2d38] text-[#ffd6d7] hover:bg-[#773a48]",
-};
-const buttonSizes: Record<ButtonSize, string> = {
-  default: "px-[13px] py-[11px] text-xs",
-  small: "px-[11px] py-2 text-[11px]",
+const variantMap: Record<
+  ButtonVariant,
+  "default" | "secondary" | "ghost" | "destructive" | "outline"
+> = {
+  primary: "default",
+  secondary: "secondary",
+  ghost: "ghost",
+  recording: "destructive",
 };
 
+const sizeMap: Record<ButtonSize, "default" | "sm"> = {
+  default: "default",
+  small: "sm",
+};
+
+// Preserve lab-console visual identity while delegating to shadcn Button's
+// cva + focus-ring + disabled handling. Recording gets a custom override
+// because the legacy #5b2d38 is distinct from the semantic destructive token.
 export function Button({
   variant = "secondary",
   size = "default",
   full = false,
+  asChild = false,
   className = "",
   children,
   ...props
 }: ButtonProps) {
+  const shadcnVariant = variantMap[variant];
+  const shadcnSize = sizeMap[size];
+  const isRecording = variant === "recording";
   return (
-    <button
-      className={`${buttonBase} ${buttonVariants[variant]} ${buttonSizes[size]} ${full ? "w-full" : ""} ${className}`}
+    <ShadcnButton
+      asChild={asChild}
+      variant={isRecording ? "destructive" : shadcnVariant}
+      size={shadcnSize}
+      className={cn(
+        "rounded-[5px] font-semibold hover:-translate-y-px",
+        // legacy size-mapping (shadcn default is h-9 px-4 vs legacy px-[13px] py-[11px])
+        size === "default" && "px-[13px] py-[11px] text-xs",
+        size === "small" && "px-[11px] py-2 text-[11px] h-auto",
+        isRecording &&
+          "bg-surface-recording text-text-recording hover:bg-surface-recording-hover border-0",
+        variant === "primary" &&
+          "bg-accent-500 text-primary-foreground hover:bg-accent-300",
+        variant === "secondary" &&
+          "bg-surface-secondary text-text-300 hover:bg-surface-secondary-hover border-0",
+        variant === "ghost" &&
+          "border border-line-strong bg-transparent text-text-500 hover:border-accent-300 hover:text-text-100 hover:bg-transparent",
+        full && "w-full",
+        className,
+      )}
       {...props}
     >
       {children}
-    </button>
+    </ShadcnButton>
   );
 }
+
+// Re-export shadcn variant helper for link-as-button usage per shadcn docs
+export { shadcnButtonVariants as buttonVariants };
 
 export function Panel({
   className = "",
@@ -48,12 +85,15 @@ export function Panel({
   ...props
 }: HTMLAttributes<HTMLElement>) {
   return (
-    <section
-      className={`overflow-hidden rounded-[9px] border border-line-700 bg-ink-900/95 shadow-[0_16px_42px_rgba(0,0,0,0.09)] ${className}`}
+    <Card
+      className={cn(
+        "overflow-hidden rounded-[9px] border border-line-700 bg-ink-900/95 shadow-[0_16px_42px_rgba(0,0,0,0.09)] py-0 gap-0",
+        className,
+      )}
       {...props}
     >
       {children}
-    </section>
+    </Card>
   );
 }
 
@@ -65,7 +105,11 @@ export function PanelHeader({
 }: HTMLAttributes<HTMLDivElement> & { compact?: boolean }) {
   return (
     <div
-      className={`flex items-center justify-between border-b border-[#25303b] ${compact ? "px-[18px] pb-[14px] pt-[17px]" : "px-5 pb-[17px] pt-[19px]"} ${className}`}
+      className={cn(
+        "flex items-center justify-between border-b border-line-800",
+        compact ? "px-[18px] pb-[14px] pt-[17px]" : "px-5 pb-[17px] pt-[19px]",
+        className,
+      )}
       {...props}
     >
       {children}
@@ -82,7 +126,10 @@ export function PanelLabel({
 }) {
   return (
     <p
-      className={`font-mono text-[10px] tracking-[0.16em] text-text-600 ${className}`}
+      className={cn(
+        "font-mono text-[10px] tracking-[0.16em] text-text-600",
+        className,
+      )}
     >
       {children}
     </p>
@@ -99,14 +146,26 @@ export function StatusPill({
   className?: string;
 }) {
   return (
-    <span
-      className={`inline-flex items-center gap-[7px] rounded-full border px-[10px] py-[7px] font-mono text-[11px] ${online ? "border-[#315943] text-green-200" : "border-[#303b49] text-slate-400"} ${className}`}
+    <Badge
+      variant={online ? "default" : "outline"}
+      className={cn(
+        "inline-flex items-center gap-[7px] rounded-full border px-[10px] py-[7px] font-mono text-[11px] font-normal",
+        online
+          ? "border-border-success text-success-400 bg-transparent hover:bg-transparent"
+          : "border-border-muted text-text-500 bg-transparent hover:bg-transparent",
+        className,
+      )}
     >
       <span
-        className={`h-[6px] w-[6px] rounded-full ${online ? "bg-success-400" : "bg-slate-500"}`}
+        className={cn(
+          "h-[6px] w-[6px] rounded-full",
+          online
+            ? "bg-success-400 shadow-[0_0_0_3px_rgba(105,214,150,0.12)]"
+            : "bg-text-600",
+        )}
       />
       {children}
-    </span>
+    </Badge>
   );
 }
 
@@ -118,7 +177,13 @@ export function TabButton({
 }: ButtonHTMLAttributes<HTMLButtonElement> & { active: boolean }) {
   return (
     <button
-      className={`cursor-pointer rounded-[4px] border-0 px-[7px] py-[9px] font-mono text-[11px] transition hover:text-slate-300 ${active ? "bg-accent-deep text-blue-100 shadow-[0_2px_10px_rgba(0,0,0,0.2)]" : "bg-transparent text-slate-500"} ${className}`}
+      className={cn(
+        "cursor-pointer rounded-[4px] border-0 px-[7px] py-[9px] font-mono text-[11px] transition hover:text-text-300",
+        active
+          ? "bg-accent-deep text-text-100 shadow-[0_2px_10px_rgba(0,0,0,0.2)]"
+          : "bg-transparent text-text-600",
+        className,
+      )}
       {...props}
     >
       {children}

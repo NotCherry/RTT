@@ -8,6 +8,7 @@ import type {
   TrainingConfig,
 } from "./types";
 
+// SAFETY: Vite's import.meta is typed as opaque; cast to access VITE_API_URL is intentional and guarded by optional chaining
 const runtimeMeta = import.meta as unknown as {
   env?: { VITE_API_URL?: string };
 };
