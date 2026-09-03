@@ -4,6 +4,7 @@ import { PanelLabel } from "@/components/ui";
 import { Empty, EmptyTitle, EmptyDescription } from "@/components/ui/empty";
 import { Separator } from "@/components/ui/separator";
 import {
+  effectiveDurationFrames,
   frameToTimestamp,
   parseJointInput,
   timestampToFrame,
@@ -34,6 +35,7 @@ type TimelinePanelProps = {
   onPreviewFrame: (index: number) => void;
   onSave: () => void;
   onDiscard: () => void;
+  onSaveAndNew?: () => void;
   onFpsChange: (fps: number) => void;
   onDurationChange: (durationFrames: number) => void;
 };
@@ -58,14 +60,16 @@ export function TimelinePanel({
   onPreviewFrame,
   onSave,
   onDiscard,
+  onSaveAndNew,
   onFpsChange,
   onDurationChange,
 }: TimelinePanelProps) {
   const msPerFrame = 1000 / fps;
-  const lastFrameInt = frames.length
-    ? timestampToFrame(frames[frames.length - 1].timestamp, fps)
-    : 0;
-  const effectiveDuration = Math.max(durationFrames, lastFrameInt + 1, 60);
+  const effectiveDuration = effectiveDurationFrames(
+    frames,
+    durationFrames,
+    fps,
+  );
   const selected = frames[selectedFrameIndex];
   const selectedFrameInt = selected
     ? timestampToFrame(selected.timestamp, fps)
@@ -342,6 +346,17 @@ export function TimelinePanel({
           >
             Save keyframes
           </Button>
+          {onSaveAndNew && (
+            <Button
+              variant="secondary"
+              size="small"
+              onClick={onSaveAndNew}
+              disabled={!hasSelection}
+              title="Save this gesture and start a new one"
+            >
+              Save &amp; New
+            </Button>
+          )}
         </div>
       </div>
       {frames.length ? (

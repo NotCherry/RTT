@@ -20,6 +20,7 @@ import {
 import {
   DEFAULT_TIMELINE_FPS,
   buildReplayPlan,
+  effectiveDurationFrames,
   framesToKeyframes,
   interpolatePositions,
   keyframesToFrames,
@@ -27,6 +28,7 @@ import {
   timestampToFrame,
   upsertFrameAtFrame,
 } from "./domain/timeline";
+import { buildRolloutArgs } from "./domain/evaluate";
 import {
   Button,
   Panel,
@@ -434,6 +436,19 @@ function Workbench() {
     setTrained(false);
   }
 
+  function saveTimelineAndNew() {
+    if (timelineDemonstration && timelineDraft !== null) saveTimelineDraft();
+    // Leave the current gesture behind: clearing the selection resets the
+    // draft, so the next insert starts a brand-new gesture.
+    setSelectedDemoId(null);
+    setSelectedFrameIndex(0);
+    setTimelinePlayheadFrame(0);
+    setTimelinePendingPositions(null);
+    setTimelineInsertFrame(null);
+    setEditingDemoId(null);
+    setMessage("Saved. Start a new gesture — insert a keyframe to begin.");
+  }
+
   function discardTimelineDraft() {
     if (!timelineDemonstration) return;
     setTimelineDraft(
@@ -525,7 +540,16 @@ function Workbench() {
   function scrubTimelineFrame(targetFrame: number) {
     const frame = Math.max(0, Math.round(targetFrame));
     setTimelineInsertFrame(null);
-    const clamped = Math.min(frame, timelineDurationFrames);
+    // Clamp to the full effective duration (60-frame floor included) so
+    // playback wraps over the whole timeline instead of sticking.
+    const clamped = Math.min(
+      frame,
+      effectiveDurationFrames(
+        timelineFrames,
+        timelineDurationFrames,
+        timelineFps,
+      ),
+    );
     const occupiedIndex = timelineFrames.findIndex(
       (item) => timestampToFrame(item.timestamp, timelineFps) === clamped,
     );
@@ -940,13 +964,16 @@ function Workbench() {
       if (demonstration.kind === "gesture" && demonstration.frames.length > 1) {
         // Stage 1 uses the scripted bounded-interpolation controller to reach
         // the first checkpoint; the learned model only follows the gesture.
+        // Density follows the authored timeline fps (timestep as fallback).
+        const rolloutArgs = buildRolloutArgs(demonstration, config);
         const result = await rolloutSession(
           sessionId,
-          demonstration.frames,
-          demonstration.current,
-          config.timestep_ms,
-          config.rollout_steps,
-          "scripted",
+          rolloutArgs.frames,
+          rolloutArgs.current,
+          rolloutArgs.timestepMs,
+          rolloutArgs.maxSteps,
+          rolloutArgs.approachMode,
+          rolloutArgs.timelineFps,
         );
         const finalFrame = result.frames[result.frames.length - 1];
         if (!finalFrame) throw new Error("The rollout returned no frames.");
@@ -1072,6 +1099,7 @@ function Workbench() {
           onPreviewFrame={previewTimelineFrame}
           onSave={saveTimelineDraft}
           onDiscard={discardTimelineDraft}
+          onSaveAndNew={saveTimelineAndNew}
           onFpsChange={setTimelineFps}
           onDurationChange={setTimelineDurationFrames}
         />

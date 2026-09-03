@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildIncrementalSamples,
   buildReplayPlan,
+  effectiveDurationFrames,
   frameToTimestamp,
   framesToKeyframes,
   interpolatePositions,
@@ -80,6 +81,30 @@ describe("gesture timeline", () => {
     ]);
   });
 
+  it("holds a 60-frame floor and covers the last keyframe", () => {
+    expect(effectiveDurationFrames([], 30, 30)).toBe(60);
+    expect(
+      effectiveDurationFrames(
+        [
+          { timestamp: 0, positions: [0] },
+          { timestamp: frameToTimestamp(30, 30), positions: [1] },
+        ],
+        30,
+        30,
+      ),
+    ).toBe(60);
+    expect(
+      effectiveDurationFrames(
+        [
+          { timestamp: 0, positions: [0] },
+          { timestamp: frameToTimestamp(200, 30), positions: [1] },
+        ],
+        30,
+        30,
+      ),
+    ).toBe(201);
+  });
+
   it("replays deterministically and resets short demonstrations to a static pose", () => {
     const gesture = [
       { timestamp: 0, positions: [0, 0] },
@@ -88,9 +113,9 @@ describe("gesture timeline", () => {
     expect(buildReplayPlan(gesture, 100)).toEqual(
       buildReplayPlan(gesture, 100),
     );
-    expect(
-      buildReplayPlan([{ timestamp: 0, positions: [0, 0] }], 120),
-    ).toEqual({ times: [], poses: [] });
+    expect(buildReplayPlan([{ timestamp: 0, positions: [0, 0] }], 120)).toEqual(
+      { times: [], poses: [] },
+    );
     expect(buildReplayPlan([], 120)).toEqual({ times: [], poses: [] });
   });
 });

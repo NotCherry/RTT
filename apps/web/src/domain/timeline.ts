@@ -24,6 +24,19 @@ export function quantizeTimestamp(
   return frameToTimestamp(timestampToFrame(timestamp, fps), fps);
 }
 
+export const MIN_TIMELINE_DURATION_FRAMES = 60;
+
+export function effectiveDurationFrames(
+  frames: DemonstrationFrame[],
+  durationFrames: number,
+  fps = DEFAULT_TIMELINE_FPS,
+): number {
+  const lastFrame = frames.length
+    ? timestampToFrame(frames[frames.length - 1].timestamp, fps)
+    : 0;
+  return Math.max(durationFrames, lastFrame + 1, MIN_TIMELINE_DURATION_FRAMES);
+}
+
 export function nextFreeFrame(
   frames: DemonstrationFrame[],
   desiredFrame: number,
@@ -183,9 +196,7 @@ export function buildReplayPlan(
   times.push(endTimestamp);
   return {
     times,
-    poses: times.map((timestamp) =>
-      interpolatePositions(ordered, timestamp),
-    ),
+    poses: times.map((timestamp) => interpolatePositions(ordered, timestamp)),
   };
 }
 

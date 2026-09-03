@@ -12,27 +12,27 @@ vi.mock("@/RobotScene", () => ({
 afterEach(cleanup);
 
 function renderEvaluate(
-        overrides: Partial<React.ComponentProps<typeof EvaluatePage>> = {},
-    ) {
-        return render(
-            <EvaluatePage
-                robot={null}
-                state={null}
-                trained
-                busy={false}
-                demonstrationsLength={1}
-                demonstrationName="Wave"
-                demonstrationKind="gesture"
-                checkpointCount={3}
-                rolloutFrames={[]}
-                evaluation={null}
-                replaying={false}
-                onReplay={() => {}}
-                onEvaluate={() => {}}
-                {...overrides}
-            />,
-        );
-    }
+    overrides: Partial<React.ComponentProps<typeof EvaluatePage>> = {},
+) {
+    return render(
+        <EvaluatePage
+            robot={null}
+            state={null}
+            trained
+            busy={false}
+            demonstrationsLength={1}
+            demonstrationName="Wave"
+            demonstrationKind="gesture"
+            checkpointCount={3}
+            rolloutFrames={[]}
+            evaluation={null}
+            replaying={false}
+            onReplay={() => {}}
+            onEvaluate={() => {}}
+            {...overrides}
+        />,
+    );
+}
 
 describe("EvaluatePage identity", () => {
     it("labels which demonstration and checkpoints are playing", () => {
@@ -61,14 +61,16 @@ describe("EvaluatePage identity", () => {
 
     it("disables Play rollout until a full trajectory exists", () => {
         renderEvaluate({ rolloutFrames: [] });
-        expect(screen.getByRole("button", { name: "Play rollout" })).toBeDisabled();
+        expect(
+            screen.getByRole("button", { name: "Play rollout" }),
+        ).toBeDisabled();
         cleanup();
         renderEvaluate({
-            rolloutFrames: [
-                { timestamp: 0, positions: [0], expected: [0] },
-            ],
+            rolloutFrames: [{ timestamp: 0, positions: [0], expected: [0] }],
         });
-        expect(screen.getByRole("button", { name: "Play rollout" })).toBeDisabled();
+        expect(
+            screen.getByRole("button", { name: "Play rollout" }),
+        ).toBeDisabled();
     });
 
     it("enables replay and reset behavior for a complete rollout", () => {

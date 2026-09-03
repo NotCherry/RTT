@@ -94,6 +94,7 @@ export function rolloutSession(
   timestepMs: number,
   maxSteps: number,
   approachMode: "scripted" | "learned" = "scripted",
+  timelineFps?: number | null,
 ) {
   return request<{ frames: RolloutFrame[]; steps: number; collisions: number }>(
     `/api/sessions/${sessionId}/rollout`,
@@ -106,6 +107,7 @@ export function rolloutSession(
         timestep_ms: timestepMs,
         max_steps: maxSteps,
         approach_mode: approachMode,
+        timeline_fps: timelineFps ?? null,
       }),
     },
   );

@@ -39,6 +39,7 @@ type TeachingTimelinePageProps = {
   saveConfirmation: string | null;
   onSave: () => void;
   onDiscard: () => void;
+  onSaveAndNew?: () => void;
   onFpsChange: (fps: number) => void;
   onDurationChange: (durationFrames: number) => void;
 };
@@ -69,6 +70,7 @@ export function TeachingTimelinePage({
   saveConfirmation,
   onSave,
   onDiscard,
+  onSaveAndNew,
   onFpsChange,
   onDurationChange,
 }: TeachingTimelinePageProps) {
@@ -135,6 +137,7 @@ export function TeachingTimelinePage({
             onPreviewFrame={onPreviewFrame}
             onSave={onSave}
             onDiscard={onDiscard}
+            onSaveAndNew={onSaveAndNew}
             onFpsChange={onFpsChange}
             onDurationChange={onDurationChange}
           />
