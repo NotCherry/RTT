@@ -40,6 +40,8 @@ const baseProps = {
   onDurationChange: () => {},
 };
 
+const savedMessage = "Saved 3 keyframes.";
+
 describe("TeachingTimelinePage save UX", () => {
   it("renames the gesture before saving", () => {
     const onRenameGesture = vi.fn();
@@ -59,8 +61,7 @@ describe("TeachingTimelinePage save UX", () => {
     expect(onRenameGesture).toHaveBeenCalledWith("Wave hello");
   });
 
-  it("keeps save visible and confirms a successful save", () => {
-    const onSave = vi.fn();
+  it("confirms a successful save without duplicating the panel save row", () => {
     render(
       <TeachingTimelinePage
         {...baseProps}
@@ -68,30 +69,24 @@ describe("TeachingTimelinePage save UX", () => {
         hasSelection
         gestureName="Wave"
         onRenameGesture={() => {}}
-        saveConfirmation="Saved 3 keyframes to “Wave”."
-        onSave={onSave}
+        saveConfirmation={savedMessage}
       />,
     );
-    const saveButton = screen.getByRole("button", { name: "Save gesture" });
-    expect(saveButton).toBeEnabled();
-    fireEvent.click(saveButton);
-    expect(onSave).toHaveBeenCalled();
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "Saved 3 keyframes to “Wave”.",
-    );
+    expect(screen.queryByRole("button")).toBeNull();
+    expect(screen.getByRole("status")).toHaveTextContent(savedMessage);
   });
 
-  it("disables save when the timeline is clean", () => {
+  it("disables rename when nothing is selected", () => {
     render(
       <TeachingTimelinePage
         {...baseProps}
         timelineDirty={false}
-        hasSelection
-        gestureName="Wave"
+        hasSelection={false}
+        gestureName=""
         onRenameGesture={() => {}}
         saveConfirmation={null}
       />,
     );
-    expect(screen.getByRole("button", { name: "Save gesture" })).toBeDisabled();
+    expect(screen.getByLabelText("Gesture name")).toBeDisabled();
   });
 });

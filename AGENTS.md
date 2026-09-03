@@ -48,6 +48,11 @@ Use Conventional Commits extended syntax: `type(scope): subject`, blank line, me
 Allowed types: feat, fix, refactor, test, docs, chore. Scopes: web, api, infra, docs. Keep one logical change per commit.
 Never finish with uncommitted work: run `git status --porcelain` before stopping and commit everything, including formatter output. The tree must be clean when the work is done.
 
+## Finishing
+
+Before marking a goal complete, run the code-review skill on the branch diff and address its findings.
+After UI changes, self-check layout and styling against `apps/web/src/styles.css` and the surrounding panels (alignment, spacing, no duplicated actions); reuse system classes instead of inline styles and fix issues without being asked.
+
 ## Product guardrails
 
 - Demonstrations are the primary product artifact; training metrics are secondary diagnostics.
