@@ -108,7 +108,12 @@ export function TeachingTimelinePage({
                 value={gestureName}
                 onChange={(event) => onRenameGesture(event.target.value)}
                 placeholder="e.g. Wave hello"
-                disabled={!hasSelection}
+                disabled={!hasSelection && controllableJoints.length === 0}
+                title={
+                  hasSelection
+                    ? undefined
+                    : "Name the next gesture before its first keyframe"
+                }
               />
             </label>
           </div>

@@ -111,6 +111,7 @@ function Workbench() {
   const [timelineSaveConfirmation, setTimelineSaveConfirmation] = useState<
     string | null
   >(null);
+  const [pendingGestureName, setPendingGestureName] = useState("");
   const [evaluatedDemoId, setEvaluatedDemoId] = useState<string | null>(null);
   const [timelineFps, setTimelineFps] = useState<number>(DEFAULT_TIMELINE_FPS);
   const [timelineDurationFrames, setTimelineDurationFrames] =
@@ -384,9 +385,12 @@ function Workbench() {
     if (!timelineDemonstration) {
       // No gesture yet — create one from the current draft frames.
       const id = `gesture-${Date.now()}`;
+      const stagedName = pendingGestureName.trim();
       const demonstration: Demonstration = {
         id,
-        name: `Gesture ${String(demonstrations.length + 1).padStart(2, "0")}`,
+        name:
+          stagedName ||
+          `Gesture ${String(demonstrations.length + 1).padStart(2, "0")}`,
         kind: "gesture",
         current: next[0]?.positions ?? positions,
         target: next[next.length - 1]?.positions ?? positions,
@@ -402,6 +406,7 @@ function Workbench() {
       setSelectedDemoId(id);
       setTimelineDraft(next);
       setTimelineDraftSourceId(id);
+      setPendingGestureName("");
       return;
     }
     // Isolated draft — pose tab live state stays independent until Save.
@@ -436,16 +441,19 @@ function Workbench() {
     setTrained(false);
   }
 
-  function saveTimelineAndNew() {
-    if (timelineDemonstration && timelineDraft !== null) saveTimelineDraft();
-    // Leave the current gesture behind: clearing the selection resets the
-    // draft, so the next insert starts a brand-new gesture.
+  function startNewGesture() {
+    setPendingGestureName("");
     setSelectedDemoId(null);
     setSelectedFrameIndex(0);
     setTimelinePlayheadFrame(0);
     setTimelinePendingPositions(null);
     setTimelineInsertFrame(null);
     setEditingDemoId(null);
+  }
+
+  function saveTimelineAndNew() {
+    if (timelineDemonstration && timelineDraft !== null) saveTimelineDraft();
+    startNewGesture();
     setMessage("Saved. Start a new gesture — insert a keyframe to begin.");
   }
 
@@ -743,6 +751,7 @@ function Workbench() {
       setSelectedDemoId(null);
       setSelectedFrameIndex(0);
       setEditingDemoId(null);
+      setPendingGestureName("");
       setActiveTab("training");
       setMetric(null);
       setMetricHistory([]);
@@ -1082,10 +1091,11 @@ function Workbench() {
           }
           timelineDirty={timelineDirty}
           hasSelection={Boolean(timelineDemonstration)}
-          gestureName={timelineDemonstration?.name ?? ""}
+          gestureName={timelineDemonstration?.name ?? pendingGestureName}
           onRenameGesture={(name: string) => {
             if (timelineDemonstration)
               renameDemonstration(timelineDemonstration.id, name);
+            else setPendingGestureName(name);
           }}
           saveConfirmation={timelineSaveConfirmation}
           onReset={resetPose}

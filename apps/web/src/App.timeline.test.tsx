@@ -197,9 +197,11 @@ describe("production timeline keypose flow", () => {
     await waitFor(() =>
       expect(screen.getByLabelText("FPS")).toBeInTheDocument(),
     );
-    fireEvent.click(screen.getByRole("button", {
-      name: "Insert full-pose key",
-    }));
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Insert full-pose key",
+      }),
+    );
     await waitFor(() =>
       expect(screen.getByText(/authored keyframe/)).toBeInTheDocument(),
     );
@@ -211,9 +213,11 @@ describe("production timeline keypose flow", () => {
     fireEvent.change(screen.getByRole("spinbutton", { name: "Insert frame" }), {
       target: { value: "30" },
     });
-    fireEvent.click(screen.getByRole("button", {
-      name: "Insert full-pose key",
-    }));
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Insert full-pose key",
+      }),
+    );
     await waitFor(() =>
       expect(screen.getByText(/Frame 30 \/ 60/)).toBeInTheDocument(),
     );
@@ -241,6 +245,58 @@ describe("production timeline keypose flow", () => {
     }
   });
 
+  it("loops playback past keys authored beyond the duration", async () => {
+    render(<App />);
+    const openBtn = screen.queryByRole("button", { name: "Open sample robot" });
+    if (openBtn) fireEvent.click(openBtn);
+    fireEvent.click(screen.getByRole("link", { name: "Timeline" }));
+    await waitFor(() =>
+      expect(screen.getByLabelText("FPS")).toBeInTheDocument(),
+    );
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Insert full-pose key",
+      }),
+    );
+    await waitFor(() =>
+      expect(screen.getByText(/authored keyframe/)).toBeInTheDocument(),
+    );
+
+    // Duration 30 with a key at frame 100: the timeline spans 0..101.
+    fireEvent.change(screen.getByLabelText("Duration frames"), {
+      target: { value: "30" },
+    });
+    fireEvent.change(screen.getByRole("spinbutton", { name: "Insert frame" }), {
+      target: { value: "100" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Insert full-pose key",
+      }),
+    );
+    await waitFor(() =>
+      expect(screen.getByText(/Frame 100 \/ 101/)).toBeInTheDocument(),
+    );
+
+    vi.useFakeTimers();
+    try {
+      fireEvent.click(screen.getByRole("button", { name: "Play" }));
+      const step = 1000 / 60;
+      const advance = (ticks: number) => {
+        for (let i = 0; i < ticks; i += 1) {
+          act(() => {
+            vi.advanceTimersByTime(step);
+          });
+        }
+      };
+      // (100 + 5) % 102 === 3 — playback crosses the duration boundary.
+      advance(5);
+      expect(screen.getByText(/Frame 3 \/ 101/)).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("saves the current gesture and starts a new one", async () => {
     render(<App />);
     const openBtn = screen.queryByRole("button", { name: "Open sample robot" });
@@ -251,9 +307,11 @@ describe("production timeline keypose flow", () => {
     );
 
     // Author a first gesture.
-    fireEvent.click(screen.getByRole("button", {
-      name: "Insert full-pose key",
-    }));
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Insert full-pose key",
+      }),
+    );
     await waitFor(() =>
       expect(screen.getByText(/authored keyframe/)).toBeInTheDocument(),
     );
@@ -268,9 +326,11 @@ describe("production timeline keypose flow", () => {
     );
 
     // The next insert creates a second, independent gesture.
-    fireEvent.click(screen.getByRole("button", {
-      name: "Insert full-pose key",
-    }));
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Insert full-pose key",
+      }),
+    );
     await waitFor(() =>
       expect(screen.getByText(/authored keyframe/)).toBeInTheDocument(),
     );
@@ -282,6 +342,60 @@ describe("production timeline keypose flow", () => {
     expect(gestures.map((item) => item.name)).toEqual([
       "My Wave",
       expect.stringMatching(/^Gesture/),
+    ]);
+  });
+
+  it("names the next gesture before its first keyframe", async () => {
+    render(<App />);
+    const openBtn = screen.queryByRole("button", { name: "Open sample robot" });
+    if (openBtn) fireEvent.click(openBtn);
+    fireEvent.click(screen.getByRole("link", { name: "Timeline" }));
+    await waitFor(() =>
+      expect(screen.getByLabelText("FPS")).toBeInTheDocument(),
+    );
+
+    // No selection yet — the name field stages the next gesture's name.
+    const nameInput = screen.getByLabelText("Gesture name");
+    expect(nameInput).toBeEnabled();
+    fireEvent.change(nameInput, { target: { value: "First Idea" } });
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Insert full-pose key",
+      }),
+    );
+    await waitFor(() =>
+      expect(screen.getByText(/authored keyframe/)).toBeInTheDocument(),
+    );
+    let latestSave = vi.mocked(api.saveDemonstrations).mock.calls.at(-1);
+    let gestures = (latestSave?.[1] ?? []).filter(
+      (item) => item.kind === "gesture",
+    );
+    expect(gestures.map((item) => item.name)).toEqual(["First Idea"]);
+
+    // Save & New clears the staged name; staging another one applies to it.
+    fireEvent.click(screen.getByRole("button", { name: "Save & New" }));
+    await waitFor(() =>
+      expect(screen.getByText("No gesture yet")).toBeInTheDocument(),
+    );
+    expect(screen.getByLabelText("Gesture name")).toHaveValue("");
+    fireEvent.change(screen.getByLabelText("Gesture name"), {
+      target: { value: "Second Idea" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Insert full-pose key",
+      }),
+    );
+    await waitFor(() =>
+      expect(screen.getByText(/authored keyframe/)).toBeInTheDocument(),
+    );
+    latestSave = vi.mocked(api.saveDemonstrations).mock.calls.at(-1);
+    gestures = (latestSave?.[1] ?? []).filter(
+      (item) => item.kind === "gesture",
+    );
+    expect(gestures.map((item) => item.name)).toEqual([
+      "First Idea",
+      "Second Idea",
     ]);
   });
 });

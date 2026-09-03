@@ -185,6 +185,11 @@ export function TrainingPage({
               onChange={(e) => onConfigChange("rollout_steps", e.target.value)}
             />
           </Label>
+          <p className="helper-text">
+            Gesture rollout density follows the demonstration timeline fps
+            (capped by rollout steps); Increment (ms) applies to the scripted
+            approach and the timestep fallback.
+          </p>
           <Label>
             Epochs
             <Input
