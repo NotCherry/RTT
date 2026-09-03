@@ -183,7 +183,9 @@ export function EvaluatePage({
                                                                                                 <span>
                                                                                                         Frame{" "}
                                                                                                         {index +
-                                                                                                                1}
+                                                                                                                1}{" "}·{" "}
+                                                                                                        {frame.phase ??
+                                                                                                                "gesture"}
                                                                                                 </span>
                                                                                                 <Progress
                                                                                                         value={Math.min(

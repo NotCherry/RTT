@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildIncrementalSamples,
+  buildReplayPlan,
   frameToTimestamp,
   framesToKeyframes,
   interpolatePositions,
@@ -61,6 +62,36 @@ describe("gesture timeline", () => {
       expect(sample.delta[0]).toBeCloseTo(0.3, 10);
       expect(sample.delta[1]).toBeCloseTo(-0.2, 10);
     });
+  });
+
+  it("plays the full gesture through intermediate poses instead of the final pose", () => {
+    const plan = buildReplayPlan(
+      [
+        { timestamp: 0, positions: [0, 0] },
+        { timestamp: 240, positions: [1, 1] },
+      ],
+      120,
+    );
+    expect(plan.times).toEqual([0, 120, 240]);
+    expect(plan.poses).toEqual([
+      [0, 0],
+      [0.5, 0.5],
+      [1, 1],
+    ]);
+  });
+
+  it("replays deterministically and resets short demonstrations to a static pose", () => {
+    const gesture = [
+      { timestamp: 0, positions: [0, 0] },
+      { timestamp: 300, positions: [0.9, -0.6] },
+    ];
+    expect(buildReplayPlan(gesture, 100)).toEqual(
+      buildReplayPlan(gesture, 100),
+    );
+    expect(
+      buildReplayPlan([{ timestamp: 0, positions: [0, 0] }], 120),
+    ).toEqual({ times: [], poses: [] });
+    expect(buildReplayPlan([], 120)).toEqual({ times: [], poses: [] });
   });
 });
 

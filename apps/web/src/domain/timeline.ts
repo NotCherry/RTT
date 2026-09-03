@@ -158,6 +158,37 @@ export function interpolatePositions(
   );
 }
 
+export type ReplayPlan = {
+  times: number[];
+  poses: number[][];
+};
+
+export function buildReplayPlan(
+  frames: DemonstrationFrame[],
+  stepMs = 120,
+): ReplayPlan {
+  const ordered = normalizeFrames(frames);
+  if (ordered.length < 2) return { times: [], poses: [] };
+  const step = Math.max(1, stepMs);
+  const startTimestamp = ordered[0].timestamp;
+  const endTimestamp = ordered[ordered.length - 1].timestamp;
+  const times: number[] = [];
+  for (
+    let timestamp = startTimestamp;
+    timestamp < endTimestamp;
+    timestamp += step
+  ) {
+    times.push(timestamp);
+  }
+  times.push(endTimestamp);
+  return {
+    times,
+    poses: times.map((timestamp) =>
+      interpolatePositions(ordered, timestamp),
+    ),
+  };
+}
+
 export function buildIncrementalSamples(
   frames: DemonstrationFrame[],
   stepMs = 120,

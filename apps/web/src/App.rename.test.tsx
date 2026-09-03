@@ -84,9 +84,7 @@ describe("pose/gesture naming with spaces", () => {
       target: { value: "Home base" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Capture pose" }));
-    await waitFor(() =>
-      expect(api.saveDemonstrations).toHaveBeenCalled(),
-    );
+    await waitFor(() => expect(api.saveDemonstrations).toHaveBeenCalled());
 
     fireEvent.click(screen.getByRole("link", { name: "Timeline" }));
     fireEvent.click(

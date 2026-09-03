@@ -78,4 +78,5 @@ export type RolloutFrame = {
   timestamp: number;
   positions: number[];
   expected: number[];
+  phase?: "approach" | "gesture";
 };

@@ -19,6 +19,7 @@ import {
 } from "./domain/metrics";
 import {
   DEFAULT_TIMELINE_FPS,
+  buildReplayPlan,
   framesToKeyframes,
   interpolatePositions,
   keyframesToFrames,
@@ -647,38 +648,50 @@ function Workbench() {
 
   function replayDemonstration(demonstration: Demonstration) {
     stopReplay();
-    if (demonstration.frames.length < 2) {
+    const ordered = normalizeFrames(demonstration.frames);
+    if (ordered.length < 2) {
       selectDemonstration(demonstration);
       setMessage(`${demonstration.name} is a static pose.`);
       return;
     }
     setSelectedDemoId(demonstration.id);
     setReplayingDemoId(demonstration.id);
-    let frameIndex = 0;
-    const playFrame = () => {
-      const frame = demonstration.frames[frameIndex];
-      if (!frame) {
+    // Expand checkpoints into timed intermediate poses so replay traverses
+    // the full gesture instead of jumping between authored frames.
+    const playbackStepMs = 120;
+    const { times: playbackTimes, poses: playbackPoses } = buildReplayPlan(
+      ordered,
+      playbackStepMs,
+    );
+    if (!playbackTimes.length) {
+      selectDemonstration(demonstration);
+      return;
+    }
+    let stepIndex = 0;
+    const playStep = () => {
+      const pose = playbackPoses[stepIndex];
+      if (!pose) {
         stopReplay();
         return;
       }
-      applyPositions(
-        interpolatePositions(demonstration.frames, frame.timestamp),
-      );
-      frameIndex += 1;
-      if (frameIndex >= demonstration.frames.length) {
+      applyPositions([...pose]);
+      stepIndex += 1;
+      if (stepIndex >= playbackPoses.length) {
         setReplayingDemoId(null);
         setMessage(`Finished replaying ${demonstration.name}.`);
         return;
       }
-      const nextFrame = demonstration.frames[frameIndex];
       const delay = Math.max(
         40,
-        Math.min(500, nextFrame.timestamp - frame.timestamp || 120),
+        Math.min(
+          500,
+          playbackTimes[stepIndex] - playbackTimes[stepIndex - 1] || 120,
+        ),
       );
-      replayTimerRef.current = window.setTimeout(playFrame, delay);
+      replayTimerRef.current = window.setTimeout(playStep, delay);
     };
     setMessage(`Replaying ${demonstration.name} in the viewport.`);
-    playFrame();
+    playStep();
   }
 
   async function openRobot(nextRobot: Robot) {
@@ -856,9 +869,9 @@ function Workbench() {
     persistDemonstrations(
       demonstrations.map((demonstration) =>
         demonstration.id === id
-          // Preserve raw input so in-progress spaces survive while typing;
-          // fall back only when the name is blank.
-          ? { ...demonstration, name: name.trim() ? name : "Untitled" }
+          ? // Preserve raw input so in-progress spaces survive while typing;
+            // fall back only when the name is blank.
+            { ...demonstration, name: name.trim() ? name : "Untitled" }
           : demonstration,
       ),
     );
@@ -934,21 +947,37 @@ function Workbench() {
         );
         const finalFrame = result.frames[result.frames.length - 1];
         if (!finalFrame) throw new Error("The rollout returned no frames.");
-        const error = Math.max(
-          ...finalFrame.positions.map((position, index) =>
-            Math.abs(position - (finalFrame.expected[index] ?? position)),
-          ),
+        const frameError = (frame: RolloutFrame) =>
+          Math.max(
+            ...frame.positions.map((position, index) =>
+              Math.abs(position - (frame.expected[index] ?? position)),
+            ),
+          );
+        const error = frameError(finalFrame);
+        const approachFrames = result.frames.filter(
+          (frame) => (frame.phase ?? "gesture") !== "gesture",
         );
+        const gestureFrames = result.frames.filter(
+          (frame) => (frame.phase ?? "gesture") === "gesture",
+        );
+        const approachError = approachFrames.length
+          ? Math.max(...approachFrames.map(frameError))
+          : 0;
+        const gestureError = gestureFrames.length
+          ? Math.max(...gestureFrames.map(frameError))
+          : error;
         setRolloutFrames(result.frames);
         setEvaluation({
           target: finalFrame.expected,
           positions: finalFrame.positions,
           error,
         });
-        applyPositions(finalFrame.positions);
+        // Start the viewport at the rollout beginning so the trajectory can
+        // be played forward instead of pasting only the finished pose.
+        applyPositions([...result.frames[0].positions]);
         setActiveTab("testing");
         setMessage(
-          `Rolled out ${demonstration.name} through ${result.frames.length} incremental frames. Maximum error: ${error.toFixed(4)} native units.`,
+          `Rolled out ${demonstration.name} through ${result.frames.length} incremental frames. Approach max error: ${approachError.toFixed(4)}, gesture max error: ${gestureError.toFixed(4)} native units.`,
         );
       } else {
         const result = await predictPose(
@@ -1074,7 +1103,7 @@ function Workbench() {
             )
           }
           onMoveDemonstration={moveDemonstration}
-          onPreview={selectDemonstration}
+          onPreview={replayDemonstration}
           onSelectDemo={setSelectedDemoId}
         />
       );
