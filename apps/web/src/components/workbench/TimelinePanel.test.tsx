@@ -35,10 +35,10 @@ const renderTimeline = (
   const props: React.ComponentProps<typeof TimelinePanel> = {
     frames,
     joints: [joint],
-    recording: false,
     fps: 30,
     selectedFrameIndex: 1,
     playheadFrame: 12,
+    durationFrames: 60,
     editorPositions: [0.25],
     dirty: false,
     hasSelection: true,
@@ -47,14 +47,13 @@ const renderTimeline = (
     onSelectFrame: () => {},
     onScrubFrame: () => {},
     onUpdateFrame: () => {},
-    onUpdateTimestamp: () => {},
     onDeleteFrame: () => {},
     onDuplicateFrame: () => {},
     onPreviewFrame: () => {},
     onSave: () => {},
     onDiscard: () => {},
-    onStartRecording: () => {},
-    onStopRecording: () => {},
+    onFpsChange: () => {},
+    onDurationChange: () => {},
     ...overrides,
   };
   return render(<TimelinePanel {...props} />);
@@ -86,20 +85,16 @@ function TimelineStateHarness() {
     <TimelinePanel
       frames={currentFrames}
       joints={[joint]}
-      recording={false}
       fps={30}
       selectedFrameIndex={selectedIndex}
       playheadFrame={playheadFrame}
+      durationFrames={201}
       editorPositions={displayedPositions}
       dirty
       hasSelection
       onTargetFrame={(frame) => {
-        if (frame === frameNumberAt(selectedIndex)) {
-          setInsertFrame(null);
-          setPendingPositions(null);
-          return;
-        }
         setInsertFrame(frame);
+        if (frame === playheadFrame) return;
         setPlayheadFrame(frame);
         setPendingPositions((current) => current ?? [...displayedPositions]);
       }}
@@ -162,14 +157,13 @@ function TimelineStateHarness() {
           ),
         );
       }}
-      onUpdateTimestamp={() => {}}
       onDeleteFrame={() => {}}
       onDuplicateFrame={() => {}}
       onPreviewFrame={() => {}}
       onSave={() => {}}
       onDiscard={() => {}}
-      onStartRecording={() => {}}
-      onStopRecording={() => {}}
+      onFpsChange={() => {}}
+      onDurationChange={() => {}}
     />
   );
 }
@@ -182,7 +176,7 @@ describe("TimelinePanel selected keypose flow", () => {
     renderTimeline({ onCapture, onUpdateFrame });
 
     expect(screen.getByText(/Frame 12 \/ 60/)).toBeInTheDocument();
-    expect(screen.getByLabelText("Selected keyframe frame")).toHaveValue(12);
+    expect(screen.getByLabelText("Insert frame")).toHaveValue(12);
     const poseInput = screen.getByRole("spinbutton", {
       name: "shoulder at selected keyframe",
     });
@@ -218,7 +212,7 @@ describe("TimelinePanel selected keypose flow", () => {
     });
     expect(screen.getByText(/Frame 12 \/ 201/)).toBeInTheDocument();
 
-    const frameInput = screen.getByLabelText("Selected keyframe frame");
+    const frameInput = screen.getByLabelText("Insert frame");
     fireEvent.change(frameInput, { target: { value: "30" } });
 
     const poseInput = screen.getByRole("spinbutton", {
@@ -252,7 +246,7 @@ describe("TimelinePanel selected keypose flow", () => {
     expect(poseInput).toHaveValue(0);
 
     // Type a new target frame, then author the pose for it.
-    fireEvent.change(screen.getByLabelText("Selected keyframe frame"), {
+    fireEvent.change(screen.getByLabelText("Insert frame"), {
       target: { value: "45" },
     });
     fireEvent.change(poseInput, { target: { value: "0.5" } });
@@ -273,6 +267,45 @@ describe("TimelinePanel selected keypose flow", () => {
     ).toHaveValue(0.5);
 
     // Frame 0 keeps its original pose — edits never leaked into it.
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Keyframe 1 at frame 0 for shoulder",
+      }),
+    );
+    expect(
+      screen.getByRole("spinbutton", { name: "shoulder at selected keyframe" }),
+    ).toHaveValue(0);
+  });
+
+  it("scrubbing to an empty frame and inserting keys at the playhead, never frame 0", () => {
+    render(<TimelineStateHarness />);
+
+    // Scrub to empty frame 12 — the playhead pose becomes the staged pose.
+    fireEvent.change(screen.getByLabelText("Scrub keyframes"), {
+      target: { value: "12" },
+    });
+
+    // Author the pose for frame 12.
+    const poseInput = screen.getByRole("spinbutton", {
+      name: "shoulder at selected keyframe",
+    });
+    fireEvent.change(poseInput, { target: { value: "0.5" } });
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Insert full-pose key" }),
+    );
+
+    expect(screen.getByText(/Frame 12 \/ 201/)).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", {
+        name: "Keyframe 2 at frame 12 for shoulder",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("spinbutton", { name: "shoulder at selected keyframe" }),
+    ).toHaveValue(0.5);
+
+    // Frame 0 keeps its original pose.
     fireEvent.click(
       screen.getByRole("button", {
         name: "Keyframe 1 at frame 0 for shoulder",
@@ -308,43 +341,43 @@ describe("TimelinePanel selected keypose flow", () => {
     ).toHaveValue(-0.5);
   });
 
-  it("updates the frame field for a selected key but preserves typed targets on empty scrubs", () => {
-    const onScrubFrame = vi.fn();
-    const { rerender } = renderTimeline({ onScrubFrame });
-    const frameInput = screen.getByLabelText("Selected keyframe frame");
+  it("keeps the frame field synced to the insert target (playhead) and stages typed frames", () => {
+    const onTargetFrame = vi.fn();
+    const { rerender } = renderTimeline({ onTargetFrame });
+    const frameInput = screen.getByLabelText("Insert frame");
 
+    // Typing a frame stages it as the insert target via onTargetFrame.
     fireEvent.change(frameInput, { target: { value: "30" } });
-    fireEvent.change(screen.getByLabelText("Scrub keyframes"), {
-      target: { value: "4" },
-    });
+    expect(onTargetFrame).toHaveBeenCalledWith(30);
+    // The typed value holds until the playhead (insert target) prop moves.
     expect(frameInput).toHaveValue(30);
 
+    // Scrubbing elsewhere moves the insert target; the field follows it.
     rerender(
       <TimelinePanel
         frames={frames}
         joints={[joint]}
-        recording={false}
         fps={30}
         selectedFrameIndex={0}
-        playheadFrame={0}
+        playheadFrame={4}
+        durationFrames={60}
         editorPositions={[0]}
         dirty={false}
         hasSelection
         onCapture={() => {}}
-        onTargetFrame={() => {}}
+        onTargetFrame={onTargetFrame}
         onSelectFrame={() => {}}
-        onScrubFrame={onScrubFrame}
+        onScrubFrame={() => {}}
         onUpdateFrame={() => {}}
-        onUpdateTimestamp={() => {}}
         onDeleteFrame={() => {}}
         onDuplicateFrame={() => {}}
         onPreviewFrame={() => {}}
         onSave={() => {}}
         onDiscard={() => {}}
-        onStartRecording={() => {}}
-        onStopRecording={() => {}}
+        onFpsChange={() => {}}
+        onDurationChange={() => {}}
       />,
     );
-    expect(frameInput).toHaveValue(0);
+    expect(frameInput).toHaveValue(4);
   });
 });

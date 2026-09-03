@@ -66,16 +66,24 @@ describe("site functionality coverage", () => {
     cy.contains("button", "Open sample robot").click();
     cy.wait("@createSession");
     cy.contains("Timeline").click();
-    cy.contains("button", "Start capture").click();
+    // Declarative timeline: insert at frame 0 then at staged frames via FPS/duration controls
+    cy.get('[aria-label="FPS"]').should("exist");
+    cy.contains("button", "Insert full-pose key").click();
+    cy.get('[aria-label="Robot animation channels"]')
+      .find("button.keyframe-diamond")
+      .should("have.length", 2);
+    // Stage frame 10 and insert
+    cy.get('[aria-label="Insert frame"]').clear().type("10");
     cy.contains("button", "Insert full-pose key").click();
     cy.get('[aria-label="Robot animation channels"]')
       .find("button.keyframe-diamond")
       .should("have.length", 4);
+    cy.get('[aria-label="Insert frame"]').clear().type("20");
     cy.contains("button", "Insert full-pose key").click();
     cy.get('[aria-label="Robot animation channels"]')
       .find("button.keyframe-diamond")
       .should("have.length", 6);
-    cy.contains("button", "Stop capture").click();
+    cy.contains("button", "Save keyframes").click();
     cy.wait("@saveDemonstrations")
       .its("request.body.demonstrations.0.keyframes")
       .should((keyframes: any[]) => {
@@ -96,8 +104,10 @@ describe("site functionality coverage", () => {
     cy.contains("button", "Open sample robot").click();
     cy.wait("@createSession");
     cy.contains("Timeline").click();
-    cy.contains("button", "Start capture").click();
     cy.contains("button", "Insert full-pose key").click();
+    cy.get('[aria-label="Insert frame"]').clear().type("10");
+    cy.contains("button", "Insert full-pose key").click();
+    cy.get('[aria-label="Insert frame"]').clear().type("20");
     cy.contains("button", "Insert full-pose key").click();
     cy.get('[aria-label="Robot animation channels"]')
       .find("button.keyframe-diamond")
@@ -120,9 +130,8 @@ describe("site functionality coverage", () => {
     cy.contains("button", "Open sample robot").click();
     cy.wait("@createSession");
     cy.contains("Timeline").click();
-    cy.contains("button", "Start capture").click();
     cy.contains("button", "Insert full-pose key").click();
-    cy.contains("button", "Stop capture").click();
+    cy.contains("button", "Save keyframes").click();
     cy.wait("@saveDemonstrations");
     cy.contains(/authored keyframes/).should("be.visible");
     cy.get("body").should("contain.text", "Delete key");
@@ -140,13 +149,13 @@ describe("site functionality coverage", () => {
     cy.contains("button", "Open sample robot").click();
     cy.wait("@createSession");
     cy.contains("Timeline").click();
-    cy.contains("button", "Start capture").click();
     cy.contains("button", "Insert full-pose key").click();
+    cy.get('[aria-label="Insert frame"]').clear().type("10");
     cy.contains("button", "Insert full-pose key").click();
     // scrub should be frame-based, max = durationFrames > frames.length
     cy.get("body").should("contain.text", "Frame");
     cy.get("body").should("contain.text", "Key");
-    // after 2 inserts, we have at least 3 keys, scrub max should exceed key count
+    // after inserts, duration should exceed key count
     cy.get("body").then(($b) => {
       const text = $b.text();
       const m = text.match(/Frame\s+(\d+)\s+\/\s+(\d+)/);
@@ -157,7 +166,7 @@ describe("site functionality coverage", () => {
         expect(frame).to.be.lessThan(100);
       }
     });
-    cy.contains("button", "Stop capture").click();
+    cy.contains("button", "Save keyframes").click();
     cy.wait("@saveDemonstrations")
       .its("request.body.demonstrations.0.keyframes")
       .should((kfs: any[]) => {
@@ -211,12 +220,9 @@ describe("site functionality coverage", () => {
   it("shows empty states gracefully", () => {
     cy.contains("Timeline").click();
     cy.get("body").should("contain.text", "No");
-    cy.get("body").should("contain.text", "capture");
-    cy.contains("button", "Start capture").should("exist");
-    cy.visit("/teach/pose");
-    cy.contains("button", "Open sample robot").click();
-    cy.wait("@createSession");
-    cy.contains("Timeline").click();
-    cy.contains("button", "Start capture").should("not.be.disabled");
+    cy.get("body").should("contain.text", "gesture");
+    // Empty timeline shows Insert, not Start capture
+    cy.contains("button", "Insert full-pose key").should("exist");
+    cy.contains("Archive").click();
   });
 });

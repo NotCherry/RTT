@@ -67,32 +67,36 @@ beforeEach(() => {
 });
 
 describe("production timeline keypose flow", () => {
-  it("inserts at the typed frame and preserves it while scrubbing", async () => {
+  it("inserts at the scrubbed playhead and typed targets without touching frame 0", async () => {
     render(<App />);
-    fireEvent.click(screen.getByRole("button", { name: "Open sample robot" }));
+    // Sample robot now auto-loads; still allow manual open if button present
+    const openBtn = screen.queryByRole("button", { name: "Open sample robot" });
+    if (openBtn) fireEvent.click(openBtn);
     fireEvent.click(screen.getByRole("link", { name: "Timeline" }));
+    // Wait for timeline editor to appear (FPS controls are always present now)
     await waitFor(() =>
-      expect(
-        screen.getByRole("button", { name: "Start capture" }),
-      ).toBeInTheDocument(),
+      expect(screen.getByLabelText("FPS")).toBeInTheDocument(),
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Start capture" }));
-    fireEvent.click(screen.getByRole("button", { name: "Stop capture" }));
+    // Create initial gesture if none: insert first key at frame 0 (default pose)
+    const insertBtn = screen.getByRole("button", {
+      name: "Insert full-pose key",
+    });
+    fireEvent.click(insertBtn);
     await waitFor(() =>
       expect(screen.getByText(/authored keyframe/)).toBeInTheDocument(),
     );
 
+    // User-reported path: scrub to an empty frame, pose it, insert. The key
+    // must land at the playhead frame — never at frame 0.
     fireEvent.change(screen.getByLabelText("Scrub keyframes"), {
       target: { value: "12" },
     });
     const frameInput = screen.getByRole("spinbutton", {
-      name: "Selected keyframe frame",
+      name: "Insert frame",
     });
-    fireEvent.change(frameInput, { target: { value: "30" } });
-    fireEvent.change(screen.getByLabelText("Scrub keyframes"), {
-      target: { value: "12" },
-    });
+    expect(frameInput).toHaveValue(12);
+
     const poseInput = screen.getByRole("spinbutton", {
       name: "shoulder at selected keyframe",
     });
@@ -102,34 +106,41 @@ describe("production timeline keypose flow", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText(/Frame 30 \/ 60/)).toBeInTheDocument();
+      // Duration is now declarative (default 120); label shows effective duration
+      expect(screen.getByText(/Frame 12 \//)).toBeInTheDocument();
       expect(
-        screen.getByRole("button", {
-          name: /at frame 30 for shoulder/,
-        }),
+        screen.getByRole("button", { name: /at frame 12 for shoulder/ }),
       ).toBeInTheDocument();
     });
-    expect(frameInput).toHaveValue(30);
+    expect(frameInput).toHaveValue(12);
     expect(
       screen.getByRole("spinbutton", { name: "shoulder at selected keyframe" }),
     ).toHaveValue(0.5);
-    expect(screen.getByText(/3 authored keyframes/)).toBeInTheDocument();
 
-    fireEvent.change(frameInput, { target: { value: "4" } });
-    fireEvent.change(screen.getByLabelText("Scrub keyframes"), {
-      target: { value: "12" },
-    });
+    // Frame 0 keeps its original pose.
+    fireEvent.click(
+      screen.getByRole("button", { name: /at frame 0 for shoulder/ }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("spinbutton", {
+          name: "shoulder at selected keyframe",
+        }),
+      ).toHaveValue(0),
+    );
+
+    // Typing a frame stages the insert target and moves the playhead.
+    fireEvent.change(frameInput, { target: { value: "30" } });
+    expect(frameInput).toHaveValue(30);
     fireEvent.click(
       screen.getByRole("button", { name: "Insert full-pose key" }),
     );
     await waitFor(() => {
-      expect(screen.getByText(/Frame 4 \/ 60/)).toBeInTheDocument();
+      expect(screen.getByText(/Frame 30 \//)).toBeInTheDocument();
       expect(
-        screen.getByRole("button", { name: /at frame 4 for shoulder/ }),
+        screen.getByRole("button", { name: /at frame 30 for shoulder/ }),
       ).toBeInTheDocument();
     });
-    expect(frameInput).toHaveValue(4);
-    expect(screen.getByText(/4 authored keyframes/)).toBeInTheDocument();
 
     const savesBeforeTimeline = vi.mocked(api.saveDemonstrations).mock.calls
       .length;
@@ -145,22 +156,17 @@ describe("production timeline keypose flow", () => {
     );
     expect(
       savedGesture?.keyframes?.some(
-        (keyframe) => keyframe.frame === 30 && keyframe.positions[0] === 0.5,
+        (keyframe) => keyframe.frame === 12 && keyframe.positions[0] === 0.5,
       ),
     ).toBe(true);
-
-    fireEvent.change(poseInput, { target: { value: "0.25" } });
-    fireEvent.click(screen.getByRole("button", { name: "Discard" }));
-    fireEvent.click(
-      screen.getByRole("button", { name: /at frame 30 for shoulder/ }),
-    );
-    await waitFor(() =>
-      expect(
-        screen.getByRole("spinbutton", {
-          name: "shoulder at selected keyframe",
-        }),
-      ).toHaveValue(0.5),
-    );
+    expect(
+      savedGesture?.keyframes?.some((keyframe) => keyframe.frame === 30),
+    ).toBe(true);
+    expect(
+      savedGesture?.keyframes?.some(
+        (keyframe) => keyframe.frame === 0 && keyframe.positions[0] === 0,
+      ),
+    ).toBe(true);
 
     fireEvent.change(
       screen.getByRole("spinbutton", { name: "shoulder at selected keyframe" }),
@@ -172,6 +178,5 @@ describe("production timeline keypose flow", () => {
     expect(
       screen.getByRole("button", { name: "Insert full-pose key" }),
     ).toBeDisabled();
-    expect(screen.getByText(/4 authored keyframes/)).toBeInTheDocument();
   });
 });

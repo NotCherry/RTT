@@ -118,7 +118,13 @@ export function RobotScene({ robot, state }: Props) {
     });
 
     const root = links.get(robot.root);
-    if (root) scene.add(root);
+    if (root) {
+      // URDF Z-up -> Three Y-up: rotate upright so arm stands vertically
+      const upright = new THREE.Group();
+      upright.add(root);
+      upright.rotation.x = -Math.PI / 2;
+      scene.add(upright);
+    }
     const bindings: MotionBinding[] = [];
     robot.joints.forEach((joint) => {
       const parent = links.get(joint.parent);

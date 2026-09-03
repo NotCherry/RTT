@@ -10,3 +10,4 @@ coverage/
 apps/web/cypress/screenshots/
 apps/web/cypress/videos/
 .DS_Store
+.pi/

@@ -1,6 +1,6 @@
 import type { DemonstrationFrame, Joint, Keyframe } from "../types";
 
-export const DEFAULT_TIMELINE_FPS = 30;
+export const DEFAULT_TIMELINE_FPS = 60;
 export const DEFAULT_TIMELINE_GAP_FRAMES = 10;
 
 export function frameToTimestamp(

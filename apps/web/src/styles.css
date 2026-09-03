@@ -243,8 +243,14 @@
   .button.secondary { @apply bg-surface-secondary text-text-100 hover:bg-surface-secondary-hover; }
   .button.ghost { @apply border border-line-strong bg-transparent text-text-300 hover:border-accent-300 hover:text-text-100; }
   .button.full { @apply w-full px-[13px] py-[11px] text-xs; }
-  .scene-shell { @apply relative min-h-[410px] flex-1 overflow-hidden; background: linear-gradient(145deg, #10161f, #0c1219); }
+  .scene-shell { @apply relative min-h-[410px] flex-1 overflow-hidden; background: linear-gradient(145deg, #10161f, #0c1219); aspect-ratio: 4 / 3; max-height: 520px; }
   .scene-mount { @apply absolute inset-0; }
+  .route-viewport-panel { @apply flex min-h-[520px] max-h-[640px] flex-col overflow-hidden; }
+  .animation-editor { @apply min-w-0 overflow-hidden; }
+  .animation-toolbar { @apply flex min-h-[56px] items-center justify-between gap-4 border-b border-line-650 pb-4; }
+  .timeline-scrub { @apply flex min-h-[56px] items-center gap-3 rounded border border-line-650 bg-ink-850 p-3; }
+  .animation-ruler { @apply h-9 shrink-0; }
+  .animation-channels { @apply max-h-[240px] overflow-auto; }
   .scene-empty { @apply pointer-events-none absolute inset-0 z-[1] flex flex-col items-center justify-center gap-2 text-[13px] text-text-600; }
   .scene-empty strong { @apply text-[15px] text-text-300; }
   .scene-empty-icon { @apply text-[40px] leading-none text-accent-500; }

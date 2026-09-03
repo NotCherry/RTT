@@ -71,12 +71,6 @@ type EvaluationResult = {
   positions: number[];
   error: number;
 };
-type RecordingDraft = {
-  id: string;
-  name: string;
-  startedAt: number;
-  frames: DemonstrationFrame[];
-};
 
 export default function App() {
   return (
@@ -108,11 +102,9 @@ function Workbench() {
   >("training");
   const [selectedDemoId, setSelectedDemoId] = useState<string | null>(null);
   const [editingDemoId, setEditingDemoId] = useState<string | null>(null);
-  const [recording, setRecording] = useState(false);
-  const [recordingFrameCount, setRecordingFrameCount] = useState(0);
-  const [recordingFrames, setRecordingFrames] = useState<DemonstrationFrame[]>(
-    [],
-  );
+  const [timelineFps, setTimelineFps] = useState<number>(DEFAULT_TIMELINE_FPS);
+  const [timelineDurationFrames, setTimelineDurationFrames] =
+    useState<number>(120);
   const [selectedFrameIndex, setSelectedFrameIndex] = useState(0);
   const [timelinePlayheadFrame, setTimelinePlayheadFrame] = useState(0);
   const [timelineInsertFrame, setTimelineInsertFrame] = useState<number | null>(
@@ -131,8 +123,6 @@ function Workbench() {
   const [activeDatasetId, setActiveDatasetId] = useState<string | null>(null);
   const [replayingDemoId, setReplayingDemoId] = useState<string | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
-  const positionsRef = useRef<number[]>([]);
-  const recordingRef = useRef<RecordingDraft | null>(null);
   const replayTimerRef = useRef<number | null>(null);
 
   const controllableJoints = useMemo(
@@ -145,8 +135,6 @@ function Workbench() {
     (demonstration) =>
       demonstration.id === selectedDemoId && demonstration.kind === "gesture",
   );
-  const timelineFps =
-    timelineDemonstration?.timeline_fps ?? DEFAULT_TIMELINE_FPS;
   const timelineSourceFrames = useMemo(
     () =>
       normalizeFrames(
@@ -157,23 +145,18 @@ function Workbench() {
     [timelineDemonstration, timelineFps],
   );
   const timelineFrames = useMemo(() => {
-    if (recording) return normalizeFrames(recordingFrames);
     if (timelineDraft !== null) return timelineDraft;
     return timelineSourceFrames;
-  }, [recording, recordingFrames, timelineDraft, timelineSourceFrames]);
+  }, [timelineDraft, timelineSourceFrames]);
   const timelineDirty =
     timelineDraft !== null &&
     JSON.stringify(timelineDraft) !== JSON.stringify(timelineSourceFrames);
 
   useEffect(() => {
-    positionsRef.current = positions;
-  }, [positions]);
-
-  useEffect(() => {
-    if (recording) return;
     if (!timelineDemonstration) {
       setTimelineDraft(null);
       setTimelineDraftSourceId(null);
+      // keep current fps/duration for new gesture creation
       return;
     }
     if (timelineDraftSourceId !== timelineDemonstration.id) {
@@ -185,20 +168,47 @@ function Workbench() {
       );
       setTimelineDraftSourceId(timelineDemonstration.id);
       setSelectedFrameIndex(0);
+      const demoFps =
+        timelineDemonstration.timeline_fps ?? DEFAULT_TIMELINE_FPS;
+      setTimelineFps(demoFps);
+      const demoDuration =
+        timelineDemonstration.duration_frames ??
+        Math.max(
+          60,
+          timestampToFrame(
+            timelineSourceFrames[timelineSourceFrames.length - 1]?.timestamp ??
+              0,
+            demoFps,
+          ) + 12,
+        );
+      setTimelineDurationFrames(demoDuration);
       setTimelinePlayheadFrame(
-        timestampToFrame(timelineSourceFrames[0]?.timestamp ?? 0, timelineFps),
+        timestampToFrame(timelineSourceFrames[0]?.timestamp ?? 0, demoFps),
       );
       setTimelinePendingPositions(null);
       setTimelineInsertFrame(null);
     }
-  }, [
-    timelineDemonstration,
-    timelineSourceFrames,
-    timelineDraftSourceId,
-    recording,
-  ]);
+  }, [timelineDemonstration, timelineSourceFrames, timelineDraftSourceId]);
 
   useEffect(() => () => stopReplay(), []);
+
+  // Auto-load sample robot on first mount if none present (vertical stance pre-configured)
+  useEffect(() => {
+    if (robot || busy) return;
+    let cancelled = false;
+    void loadDemoRobot()
+      .then((demo) => {
+        if (cancelled) return;
+        return openRobot(demo);
+      })
+      .catch(() => {
+        // keep error handling in openRobot; swallow here for auto-load
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (!sessionId) return;
@@ -360,13 +370,29 @@ function Workbench() {
 
   function replaceTimelineFrames(nextFrames: DemonstrationFrame[]) {
     const next = normalizeFrames(nextFrames);
-    if (recording && recordingRef.current) {
-      recordingRef.current.frames = next;
-      setRecordingFrames(next);
-      setRecordingFrameCount(next.length);
+    if (!timelineDemonstration) {
+      // No gesture yet — create one from the current draft frames.
+      const id = `gesture-${Date.now()}`;
+      const demonstration: Demonstration = {
+        id,
+        name: `Gesture ${String(demonstrations.length + 1).padStart(2, "0")}`,
+        kind: "gesture",
+        current: next[0]?.positions ?? positions,
+        target: next[next.length - 1]?.positions ?? positions,
+        frames: next,
+        keyframes: framesToKeyframes(next, timelineFps),
+        timeline_fps: timelineFps,
+        duration_frames: timelineDurationFrames,
+        start_frame_index: 0,
+        dataset_id: activeDatasetId ?? undefined,
+      };
+      const newDemos = [...demonstrations, demonstration];
+      persistDemonstrations(newDemos);
+      setSelectedDemoId(id);
+      setTimelineDraft(next);
+      setTimelineDraftSourceId(id);
       return;
     }
-    if (!timelineDemonstration) return;
     // Isolated draft — pose tab live state stays independent until Save.
     setTimelineDraft(next);
   }
@@ -385,9 +411,7 @@ function Workbench() {
               frames: next,
               keyframes: framesToKeyframes(next, timelineFps),
               timeline_fps: timelineFps,
-              duration_frames: Math.round(
-                ((next[next.length - 1]?.timestamp ?? 0) * timelineFps) / 1000,
-              ),
+              duration_frames: timelineDurationFrames,
             }
           : demonstration,
       ),
@@ -413,33 +437,23 @@ function Workbench() {
   }
 
   function stageInsertFrame(frame: number) {
-    if (!recording && !timelineDemonstration) return;
-    const selected = timelineFrames[selectedFrameIndex];
-    const selectedFrameNumber = selected
-      ? timestampToFrame(selected.timestamp, timelineFps)
-      : null;
-    if (selectedFrameNumber !== null && frame === selectedFrameNumber) {
-      setTimelineInsertFrame(null);
-      setTimelinePendingPositions(null);
-      return;
-    }
+    // Allow staging even before a gesture exists — creates draft on next insert.
     setTimelineInsertFrame(frame);
+    if (frame === timelinePlayheadFrame) return;
     setTimelinePlayheadFrame(frame);
     setTimelinePendingPositions(
       (current) =>
         current ??
-        (selected ? [...selected.positions] : [...positionsRef.current]),
+        (timelineFrames[selectedFrameIndex]
+          ? [...timelineFrames[selectedFrameIndex].positions]
+          : [...positions]),
     );
   }
 
   function captureCheckpoint(targetFrame?: number) {
     if (!controllableJoints.length) return;
-    if (!recording && !timelineDemonstration) {
-      startRecording();
-      return;
-    }
     const selected = timelineFrames[selectedFrameIndex];
-    let currentPositions = [...positionsRef.current];
+    let currentPositions = [...positions];
     currentPositions = timelinePendingPositions
       ? [...timelinePendingPositions]
       : selected
@@ -461,8 +475,8 @@ function Workbench() {
     }
 
     const requestedFrame =
-      targetFrame ??
       timelineInsertFrame ??
+      targetFrame ??
       timelinePlayheadFrame ??
       (selected ? timestampToFrame(selected.timestamp, timelineFps) : 0);
     const insertFrame = Math.max(0, Math.round(requestedFrame));
@@ -499,15 +513,26 @@ function Workbench() {
   function scrubTimelineFrame(targetFrame: number) {
     const frame = Math.max(0, Math.round(targetFrame));
     setTimelineInsertFrame(null);
+    const clamped = Math.min(frame, timelineDurationFrames);
     const occupiedIndex = timelineFrames.findIndex(
-      (item) => timestampToFrame(item.timestamp, timelineFps) === frame,
+      (item) => timestampToFrame(item.timestamp, timelineFps) === clamped,
     );
-    setTimelinePlayheadFrame(frame);
+    setTimelinePlayheadFrame(clamped);
     if (occupiedIndex >= 0) {
       selectTimelineFrame(occupiedIndex);
       return;
     }
-    setTimelinePendingPositions([...positionsRef.current]);
+    // Smooth transient preview: interpolate between authored keys
+    const preview = interpolatePositions(
+      timelineFrames,
+      frame * (1000 / timelineFps),
+    );
+    if (preview.length) {
+      setTimelinePendingPositions(preview);
+      applyPositions(preview);
+    } else {
+      setTimelinePendingPositions([...positions]);
+    }
   }
 
   function updateTimelineFrame(
@@ -551,27 +576,6 @@ function Workbench() {
     }
   }
 
-  function updateTimelineTimestamp(frameIndex: number, value: number) {
-    if (!Number.isFinite(value)) {
-      setError("Enter a finite timestamp before updating the keyframe.");
-      return;
-    }
-    setError(null);
-    const clamped = Math.max(0, value);
-    const next = timelineFrames.map((frame, index) =>
-      index === frameIndex ? { ...frame, timestamp: clamped } : frame,
-    );
-    const sanitized = normalizeFrames(next);
-    replaceTimelineFrames(sanitized);
-    // Keep selection on the moved keyframe after sorting.
-    const moved = sanitized.findIndex((f) => f.timestamp === clamped);
-    if (moved >= 0) {
-      setSelectedFrameIndex(moved);
-      setTimelinePlayheadFrame(timestampToFrame(clamped, timelineFps));
-      setTimelinePendingPositions(null);
-    }
-  }
-
   function deleteTimelineFrame(frameIndex: number) {
     if (timelineFrames.length <= 1) return;
     const next = timelineFrames.filter((_, index) => index !== frameIndex);
@@ -597,63 +601,6 @@ function Workbench() {
     const frame = timelineFrames[index];
     if (!frame) return;
     applyPositions([...frame.positions]);
-  }
-
-  function startRecording() {
-    if (!controllableJoints.length || recording) return;
-    stopReplay();
-    const id = `gesture-${Date.now()}`;
-    const startedAt = performance.now();
-    recordingRef.current = {
-      id,
-      name: `Gesture ${String(demonstrations.length + 1).padStart(2, "0")}`,
-      startedAt,
-      frames: [{ timestamp: 0, positions: [...positionsRef.current] }],
-    };
-    setRecordingFrames(recordingRef.current.frames);
-    setRecordingFrameCount(1);
-    setRecording(true);
-    setActiveTab("timeline");
-    setMessage(
-      "Recording gesture. Move the joints, then stop recording to archive it.",
-    );
-  }
-
-  function stopRecording() {
-    const draft = recordingRef.current;
-    if (!draft) return;
-    const finalPositions = [...positionsRef.current];
-    const elapsed = performance.now() - draft.startedAt;
-    const rawFrames = [
-      ...draft.frames,
-      { timestamp: elapsed, positions: finalPositions },
-    ];
-    const frames = rawFrames;
-    const demonstration: Demonstration = {
-      id: draft.id,
-      name: draft.name,
-      kind: "gesture",
-      current: frames[0]?.positions ?? finalPositions,
-      target: finalPositions,
-      frames,
-      keyframes: framesToKeyframes(frames, DEFAULT_TIMELINE_FPS),
-      timeline_fps: DEFAULT_TIMELINE_FPS,
-      duration_frames: Math.round(
-        ((frames[frames.length - 1]?.timestamp ?? 0) * DEFAULT_TIMELINE_FPS) /
-          1000,
-      ),
-      start_frame_index: 0,
-      dataset_id: activeDatasetId ?? undefined,
-    };
-    const next = [...demonstrations, demonstration];
-    recordingRef.current = null;
-    setRecording(false);
-    setRecordingFrames([]);
-    setRecordingFrameCount(0);
-    persistDemonstrations(next);
-    setSelectedDemoId(demonstration.id);
-    setTrained(false);
-    setMessage(`Archived ${demonstration.name} with ${frames.length} frames.`);
   }
 
   function replayFrames(frames: RolloutFrame[], label: string) {
@@ -732,8 +679,6 @@ function Workbench() {
       setSessionId(session.session_id);
       setState(session.state);
       stopReplay();
-      recordingRef.current = null;
-      setRecording(false);
       setDemonstrations([]);
       const datasetId = `dataset-${Date.now()}`;
       const now = new Date().toISOString();
@@ -749,7 +694,6 @@ function Workbench() {
       setActiveDatasetId(datasetId);
       setSelectedDemoId(null);
       setSelectedFrameIndex(0);
-      setRecordingFrames([]);
       setEditingDemoId(null);
       setActiveTab("training");
       setMetric(null);
@@ -833,7 +777,7 @@ function Workbench() {
       target,
       frames: [{ timestamp: 0, positions: target }],
       keyframes: framesToKeyframes([{ timestamp: 0, positions: target }]),
-      timeline_fps: 30,
+      timeline_fps: timelineFps,
       duration_frames: 0,
       start_frame_index: 0,
       dataset_id: activeDatasetId ?? undefined,
@@ -1044,10 +988,10 @@ function Workbench() {
           state={state}
           timelineFrames={timelineFrames}
           controllableJoints={controllableJoints}
-          recording={recording}
           timelineFps={timelineFps}
           selectedFrameIndex={selectedFrameIndex}
           playheadFrame={timelinePlayheadFrame}
+          durationFrames={timelineDurationFrames}
           editorPositions={
             timelinePendingPositions ??
             timelineFrames[selectedFrameIndex]?.positions ??
@@ -1061,14 +1005,13 @@ function Workbench() {
           onSelectFrame={selectTimelineFrame}
           onScrubFrame={scrubTimelineFrame}
           onUpdateFrame={updateTimelineFrame}
-          onUpdateTimestamp={updateTimelineTimestamp}
           onDeleteFrame={deleteTimelineFrame}
           onDuplicateFrame={duplicateTimelineFrame}
           onPreviewFrame={previewTimelineFrame}
           onSave={saveTimelineDraft}
           onDiscard={discardTimelineDraft}
-          onStartRecording={startRecording}
-          onStopRecording={stopRecording}
+          onFpsChange={setTimelineFps}
+          onDurationChange={setTimelineDurationFrames}
         />
       );
     }
@@ -1366,32 +1309,11 @@ function Workbench() {
               full
               className="capture-button"
               onClick={captureDemonstration}
-              disabled={!robot || !controllableJoints.length || recording}
+              disabled={!robot || !controllableJoints.length}
               type="button"
             >
               <span>＋</span> Capture pose <b>{demonstrations.length}</b>
             </Button>
-            {recording ? (
-              <Button
-                variant="recording"
-                full
-                onClick={stopRecording}
-                type="button"
-              >
-                <span className="recording-dot" /> Stop recording ·{" "}
-                {recordingFrameCount} frames
-              </Button>
-            ) : (
-              <Button
-                variant="secondary"
-                full
-                onClick={startRecording}
-                disabled={!robot || !controllableJoints.length}
-                type="button"
-              >
-                Record gesture
-              </Button>
-            )}
           </div>
           <p className="helper-text">
             Capture a static pose or record a timestamped gesture. Recorded
@@ -1617,10 +1539,10 @@ function Workbench() {
             <TimelinePanel
               frames={timelineFrames}
               joints={controllableJoints}
-              recording={recording}
               selectedFrameIndex={selectedFrameIndex}
               fps={timelineFps}
               playheadFrame={timelinePlayheadFrame}
+              durationFrames={timelineDurationFrames}
               editorPositions={
                 timelinePendingPositions ??
                 timelineFrames[selectedFrameIndex]?.positions ??
@@ -1633,14 +1555,13 @@ function Workbench() {
               onSelectFrame={selectTimelineFrame}
               onScrubFrame={scrubTimelineFrame}
               onUpdateFrame={updateTimelineFrame}
-              onUpdateTimestamp={updateTimelineTimestamp}
               onDeleteFrame={deleteTimelineFrame}
               onDuplicateFrame={duplicateTimelineFrame}
               onPreviewFrame={previewTimelineFrame}
               onSave={saveTimelineDraft}
               onDiscard={discardTimelineDraft}
-              onStopRecording={stopRecording}
-              onStartRecording={startRecording}
+              onFpsChange={setTimelineFps}
+              onDurationChange={setTimelineDurationFrames}
             />
           ) : activeTab === "demonstrations" ? (
             <div className="demonstrations-panel">

@@ -14,10 +14,10 @@ type TeachingTimelinePageProps = {
   state: SimulationState | null;
   timelineFrames: DemonstrationFrame[];
   controllableJoints: Joint[];
-  recording: boolean;
   timelineFps: number;
   selectedFrameIndex: number;
   playheadFrame: number;
+  durationFrames: number;
   editorPositions: number[];
   timelineDirty: boolean;
   hasSelection: boolean;
@@ -31,14 +31,13 @@ type TeachingTimelinePageProps = {
     jointIndex: number,
     value: number,
   ) => void;
-  onUpdateTimestamp: (frameIndex: number, value: number) => void;
   onDeleteFrame: (index: number) => void;
   onDuplicateFrame: (index: number) => void;
   onPreviewFrame: (index: number) => void;
   onSave: () => void;
   onDiscard: () => void;
-  onStartRecording: () => void;
-  onStopRecording: () => void;
+  onFpsChange: (fps: number) => void;
+  onDurationChange: (durationFrames: number) => void;
 };
 
 export function TeachingTimelinePage({
@@ -46,10 +45,10 @@ export function TeachingTimelinePage({
   state,
   timelineFrames,
   controllableJoints,
-  recording,
   timelineFps,
   selectedFrameIndex,
   playheadFrame,
+  durationFrames,
   editorPositions,
   timelineDirty,
   hasSelection,
@@ -59,14 +58,13 @@ export function TeachingTimelinePage({
   onSelectFrame,
   onScrubFrame,
   onUpdateFrame,
-  onUpdateTimestamp,
   onDeleteFrame,
   onDuplicateFrame,
   onPreviewFrame,
   onSave,
   onDiscard,
-  onStartRecording,
-  onStopRecording,
+  onFpsChange,
+  onDurationChange,
 }: TeachingTimelinePageProps) {
   return (
     <div className="route-page">
@@ -79,8 +77,8 @@ export function TeachingTimelinePage({
             the interpolated gesture.
           </IntroCopy>
         </div>
-        <StatusPill online={recording}>
-          {recording ? "Keyframe capture" : "Timeline ready"}
+        <StatusPill online={hasSelection || timelineFrames.length > 0}>
+          Timeline ready
         </StatusPill>
       </div>
       <div className="route-two-column">
@@ -96,10 +94,10 @@ export function TeachingTimelinePage({
           <TimelinePanel
             frames={timelineFrames}
             joints={controllableJoints}
-            recording={recording}
             fps={timelineFps}
             selectedFrameIndex={selectedFrameIndex}
             playheadFrame={playheadFrame}
+            durationFrames={durationFrames}
             editorPositions={editorPositions}
             dirty={timelineDirty}
             hasSelection={hasSelection}
@@ -108,14 +106,13 @@ export function TeachingTimelinePage({
             onSelectFrame={onSelectFrame}
             onScrubFrame={onScrubFrame}
             onUpdateFrame={onUpdateFrame}
-            onUpdateTimestamp={onUpdateTimestamp}
             onDeleteFrame={onDeleteFrame}
             onDuplicateFrame={onDuplicateFrame}
             onPreviewFrame={onPreviewFrame}
             onSave={onSave}
             onDiscard={onDiscard}
-            onStartRecording={onStartRecording}
-            onStopRecording={onStopRecording}
+            onFpsChange={onFpsChange}
+            onDurationChange={onDurationChange}
           />
         </Panel>
       </div>

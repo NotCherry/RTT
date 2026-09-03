@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui";
 import { PanelLabel } from "@/components/ui";
 import { Empty, EmptyTitle, EmptyDescription } from "@/components/ui/empty";
@@ -13,10 +13,10 @@ import type { DemonstrationFrame, Joint } from "@/types";
 type TimelinePanelProps = {
   frames: DemonstrationFrame[];
   joints: Joint[];
-  recording: boolean;
   fps: number;
   selectedFrameIndex: number;
   playheadFrame: number;
+  durationFrames: number;
   editorPositions: number[];
   dirty: boolean;
   hasSelection: boolean;
@@ -29,23 +29,22 @@ type TimelinePanelProps = {
     jointIndex: number,
     value: number,
   ) => void;
-  onUpdateTimestamp: (frameIndex: number, value: number) => void;
   onDeleteFrame: (index: number) => void;
   onDuplicateFrame: (index: number) => void;
   onPreviewFrame: (index: number) => void;
   onSave: () => void;
   onDiscard: () => void;
-  onStartRecording: () => void;
-  onStopRecording: () => void;
+  onFpsChange: (fps: number) => void;
+  onDurationChange: (durationFrames: number) => void;
 };
 
 export function TimelinePanel({
   frames,
   joints,
-  recording,
   fps,
   selectedFrameIndex,
   playheadFrame,
+  durationFrames,
   editorPositions,
   dirty,
   hasSelection,
@@ -54,20 +53,19 @@ export function TimelinePanel({
   onSelectFrame,
   onScrubFrame,
   onUpdateFrame,
-  onUpdateTimestamp,
   onDeleteFrame,
   onDuplicateFrame,
   onPreviewFrame,
   onSave,
   onDiscard,
-  onStartRecording,
-  onStopRecording,
+  onFpsChange,
+  onDurationChange,
 }: TimelinePanelProps) {
   const msPerFrame = 1000 / fps;
   const lastFrameInt = frames.length
     ? timestampToFrame(frames[frames.length - 1].timestamp, fps)
     : 0;
-  const durationFrames = Math.max(60, lastFrameInt + 12);
+  const effectiveDuration = Math.max(durationFrames, lastFrameInt + 1, 60);
   const selected = frames[selectedFrameIndex];
   const selectedFrameInt = selected
     ? timestampToFrame(selected.timestamp, fps)
@@ -77,17 +75,32 @@ export function TimelinePanel({
     : (selected?.positions ?? []);
   const markerPosition = (timestamp: number) => {
     const frame = timestampToFrame(timestamp, fps);
-    return `${Math.min(100, Math.max(0, (frame / Math.max(durationFrames, 1)) * 100))}%`;
+    return `${Math.min(100, Math.max(0, (frame / Math.max(effectiveDuration, 1)) * 100))}%`;
   };
   const [playing, setPlaying] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
-  const [frameInput, setFrameInput] = useState(String(selectedFrameInt));
-  const playRef = useRef<number | null>(null);
+  const [frameInput, setFrameInput] = useState(String(playheadFrame));
+  const [fpsInput, setFpsInput] = useState(String(fps));
+  const [durationFramesInput, setDurationFramesInput] = useState(
+    String(durationFrames),
+  );
+  const [durationSecondsInput, setDurationSecondsInput] = useState(
+    (durationFrames / fps).toFixed(2),
+  );
 
   useEffect(() => {
-    setFrameInput(String(selectedFrameInt));
+    setFrameInput(String(playheadFrame));
     setValidationError(null);
-  }, [selectedFrameIndex, selectedFrameInt]);
+  }, [playheadFrame, selectedFrameIndex, selectedFrameInt]);
+
+  useEffect(() => {
+    setFpsInput(String(fps));
+  }, [fps]);
+
+  useEffect(() => {
+    setDurationFramesInput(String(durationFrames));
+    setDurationSecondsInput((durationFrames / fps).toFixed(2));
+  }, [durationFrames, fps]);
 
   const updateJointValue = (jointIndex: number, rawValue: string) => {
     const joint = joints[jointIndex];
@@ -113,6 +126,41 @@ export function TimelinePanel({
     onTargetFrame(value);
   };
 
+  const commitFps = (raw: string) => {
+    setFpsInput(raw);
+    const v = Number(raw);
+    if (!raw.trim() || !Number.isFinite(v) || v < 30 || v > 1000) {
+      setValidationError("FPS must be 30–1000.");
+      return;
+    }
+    setValidationError(null);
+    onFpsChange(Math.round(v));
+  };
+
+  const commitDurationFrames = (raw: string) => {
+    setDurationFramesInput(raw);
+    const v = Number(raw);
+    if (!raw.trim() || !Number.isInteger(v) || v < 1 || v > 10000) {
+      setValidationError("Frames must be 1–10000.");
+      return;
+    }
+    setValidationError(null);
+    onDurationChange(v);
+  };
+
+  const commitDurationSeconds = (raw: string) => {
+    setDurationSecondsInput(raw);
+    const v = Number(raw);
+    if (!raw.trim() || !Number.isFinite(v) || v <= 0 || v > 600) {
+      setValidationError("Seconds must be >0 and ≤600.");
+      return;
+    }
+    setValidationError(null);
+    const frames = Math.max(1, Math.round(v * fps));
+    setDurationFramesInput(String(frames));
+    onDurationChange(frames);
+  };
+
   const insertAtFrame = () => {
     const value = Number(frameInput);
     if (!frameInput.trim() || !Number.isInteger(value) || value < 0) {
@@ -123,48 +171,81 @@ export function TimelinePanel({
     onCapture(Math.round(value));
   };
 
-  const updateTimestamp = (rawValue: string) => {
-    const value = Number(rawValue);
-    if (!rawValue.trim() || !Number.isFinite(value) || value < 0) {
-      setValidationError("Enter a non-negative timestamp in milliseconds.");
-      return;
-    }
-    setValidationError(null);
-    onUpdateTimestamp(selectedFrameIndex, value);
-  };
-
+  // Drive playhead advancement when playing
   useEffect(() => {
-    if (!playing || !frames.length) return;
-    let idx = selectedFrameIndex;
-    const tick = () => {
-      idx = (idx + 1) % frames.length;
-      onSelectFrame(idx);
-      onPreviewFrame(idx);
-      playRef.current = window.setTimeout(tick, 240);
-    };
-    playRef.current = window.setTimeout(tick, 240);
-    return () => {
-      if (playRef.current !== null) window.clearTimeout(playRef.current);
-    };
-  }, [playing, frames, selectedFrameIndex, onSelectFrame, onPreviewFrame]);
+    if (!playing) return;
+    const interval = Math.max(8, 1000 / fps);
+    const id = window.setInterval(() => {
+      // advance playhead by 1, wrap at duration
+      const next = (playheadFrame + 1) % (effectiveDuration + 1);
+      onScrubFrame(next);
+      // Also preview interpolated pose: if no keyframe at next, App's scrub now interpolates
+    }, interval);
+    return () => window.clearInterval(id);
+  }, [playing, fps, effectiveDuration, playheadFrame, onScrubFrame]);
 
-  if (!hasSelection && !recording) {
+  if (!hasSelection && !frames.length) {
     return (
       <div className="animation-editor">
         <Empty>
-          <EmptyTitle>No gesture selected</EmptyTitle>
+          <EmptyTitle>No gesture yet</EmptyTitle>
           <EmptyDescription>
-            Select a gesture in Archive or start a new capture.
+            Set a duration and insert your first keyframe, or open a saved
+            gesture.
           </EmptyDescription>
-          <Button
-            variant="secondary"
-            size="small"
-            onClick={onStartRecording}
-            disabled={!joints.length}
-          >
-            Start capture
-          </Button>
+          <div className="flex gap-2 justify-center">
+            <Button
+              variant="primary"
+              size="small"
+              onClick={insertAtFrame}
+              disabled={!joints.length}
+            >
+              Insert full-pose key
+            </Button>
+          </div>
         </Empty>
+        <div className="mt-4 grid grid-cols-3 gap-3">
+          <label className="flex flex-col gap-1 text-[10px] text-text-500">
+            FPS (30–1000)
+            <input
+              aria-label="FPS"
+              type="number"
+              min={30}
+              max={1000}
+              value={fpsInput}
+              onChange={(e) => commitFps(e.target.value)}
+              className="rounded border border-line-600 bg-ink-800 p-2 font-mono text-[11px] text-text-100 outline-none focus:border-accent-500"
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-[10px] text-text-500">
+            Duration (frames)
+            <input
+              aria-label="Duration frames"
+              type="number"
+              min={1}
+              value={durationFramesInput}
+              onChange={(e) => commitDurationFrames(e.target.value)}
+              className="rounded border border-line-600 bg-ink-800 p-2 font-mono text-[11px] text-text-100 outline-none focus:border-accent-500"
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-[10px] text-text-500">
+            Duration (seconds)
+            <input
+              aria-label="Duration seconds"
+              type="number"
+              step="0.01"
+              min={0.01}
+              value={durationSecondsInput}
+              onChange={(e) => commitDurationSeconds(e.target.value)}
+              className="rounded border border-line-600 bg-ink-800 p-2 font-mono text-[11px] text-text-100 outline-none focus:border-accent-500"
+            />
+          </label>
+        </div>
+        {validationError && (
+          <p className="helper-text" role="alert">
+            {validationError}
+          </p>
+        )}
       </div>
     );
   }
@@ -173,22 +254,13 @@ export function TimelinePanel({
     <div className="animation-editor">
       <div className="animation-toolbar">
         <div>
-          <PanelLabel>KEYFRAME EDITOR · {fps} FPS</PanelLabel>
+          <PanelLabel>KEYFRAME EDITOR</PanelLabel>
           <strong>
             {frames.length} authored keyframe{frames.length === 1 ? "" : "s"}
             {dirty && <em className="draft-badge"> · unsaved</em>}
           </strong>
         </div>
-        <div className="demo-card-actions">
-          {recording ? (
-            <Button variant="recording" size="small" onClick={onStopRecording}>
-              Stop capture
-            </Button>
-          ) : (
-            <Button variant="secondary" size="small" onClick={onStartRecording}>
-              Start capture
-            </Button>
-          )}
+        <div className="demo-card-actions items-center">
           <Button
             variant="primary"
             size="small"
@@ -199,13 +271,55 @@ export function TimelinePanel({
           </Button>
         </div>
       </div>
+
+      <div className="mt-3 grid grid-cols-3 gap-3">
+        <label className="flex flex-col gap-1 text-[10px] text-text-500">
+          FPS (30–1000)
+          <input
+            aria-label="FPS"
+            type="number"
+            min={30}
+            max={1000}
+            step="1"
+            value={fpsInput}
+            onChange={(e) => commitFps(e.target.value)}
+            className="rounded border border-line-600 bg-ink-800 p-2 font-mono text-[11px] text-text-100 outline-none focus:border-accent-500"
+          />
+        </label>
+        <label className="flex flex-col gap-1 text-[10px] text-text-500">
+          Duration (frames)
+          <input
+            aria-label="Duration frames"
+            type="number"
+            min={1}
+            max={10000}
+            step="1"
+            value={durationFramesInput}
+            onChange={(e) => commitDurationFrames(e.target.value)}
+            className="rounded border border-line-600 bg-ink-800 p-2 font-mono text-[11px] text-text-100 outline-none focus:border-accent-500"
+          />
+        </label>
+        <label className="flex flex-col gap-1 text-[10px] text-text-500">
+          Duration (seconds)
+          <input
+            aria-label="Duration seconds"
+            type="number"
+            step="0.01"
+            min={0.01}
+            max={600}
+            value={durationSecondsInput}
+            onChange={(e) => commitDurationSeconds(e.target.value)}
+            className="rounded border border-line-600 bg-ink-800 p-2 font-mono text-[11px] text-text-100 outline-none focus:border-accent-500"
+          />
+        </label>
+      </div>
+
       <p className="helper-text">
-        Isolated draft: pose sliders stay independent. Save publishes to archive
-        for training. Diamonds are authored keys — playback is derived. Insert
-        writes the full pose at the entered frame ({fps} fps); recording uses
-        elapsed capture time.
+        Declare length in seconds or frames (linked via FPS). Diamonds are
+        authored keys — transient frames are interpolated for preview and
+        training. Insert writes the full pose at the entered frame ({fps} fps).
       </p>
-      {dirty && !recording && (
+      {dirty && (
         <div className="edit-banner">
           <span>
             Unsaved timeline edits — training uses last saved version.
@@ -226,8 +340,8 @@ export function TimelinePanel({
             <input
               type="range"
               min={0}
-              max={durationFrames}
-              value={Math.min(playheadFrame, durationFrames)}
+              max={effectiveDuration}
+              value={Math.min(playheadFrame, effectiveDuration)}
               aria-label="Scrub keyframes"
               onChange={(e) => onScrubFrame(Number(e.target.value))}
             />
@@ -235,12 +349,12 @@ export function TimelinePanel({
               variant="secondary"
               size="small"
               onClick={() => setPlaying((v) => !v)}
-              disabled={frames.length < 2}
+              disabled={frames.length < 1}
             >
               {playing ? "Pause" : "Play"}
             </Button>
             <span className="scrub-label">
-              Frame {playheadFrame} / {durationFrames} · Key{" "}
+              Frame {playheadFrame} / {effectiveDuration} · Key{" "}
               {selectedFrameIndex + 1} / {frames.length} ·{" "}
               {Math.round(frameToTimestamp(playheadFrame, fps))} ms
             </span>
@@ -252,16 +366,18 @@ export function TimelinePanel({
                 e.currentTarget as HTMLDivElement
               ).getBoundingClientRect();
               const pct = (e.clientX - rect.left) / rect.width;
-              const targetFrame = Math.round(pct * durationFrames);
+              const targetFrame = Math.round(pct * effectiveDuration);
               onScrubFrame(targetFrame);
             }}
           >
             {Array.from(
-              { length: Math.ceil(durationFrames / 12) + 1 },
+              { length: Math.ceil(effectiveDuration / 12) + 1 },
               (_, index) => (
                 <span
                   key={index}
-                  style={{ left: `${((index * 12) / durationFrames) * 100}%` }}
+                  style={{
+                    left: `${((index * 12) / effectiveDuration) * 100}%`,
+                  }}
                 >
                   {index * 12}
                 </span>
@@ -328,7 +444,7 @@ export function TimelinePanel({
                 <label>
                   <span>Frame</span>
                   <input
-                    aria-label="Selected keyframe frame"
+                    aria-label="Insert frame"
                     type="number"
                     min="0"
                     step="1"
@@ -393,9 +509,9 @@ export function TimelinePanel({
               )}
               <p className="helper-text" style={{ paddingLeft: 0 }}>
                 Slider + number per joint — edits apply to the selected
-                keyframe, or to the staged pose when the frame field above
-                targets a new frame. Insert commits the staged pose at that
-                frame.
+                keyframe, or to the staged pose while the playhead is between
+                keys. The frame field follows the playhead (the insert target);
+                Insert commits the staged pose at that frame.
               </p>
             </div>
           ) : (
@@ -411,8 +527,7 @@ export function TimelinePanel({
         <Empty>
           <EmptyTitle>No authored keyframes yet</EmptyTitle>
           <EmptyDescription>
-            Start capture, then insert full-pose keys at meaningful moments.
-            Each key stores the full pose, not a delta.
+            Insert a full-pose keyframe to start the animation.
           </EmptyDescription>
         </Empty>
       )}
