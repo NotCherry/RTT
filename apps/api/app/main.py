@@ -271,6 +271,7 @@ class RolloutRequest(BaseModel):
     current: list[float] | None = None
     timestep_ms: int = Field(120, ge=10, le=2000)
     max_steps: int = Field(160, ge=1, le=2000)
+    approach_mode: Literal["scripted", "learned"] = "scripted"
 
 
 class SimulationSession:
@@ -289,7 +290,10 @@ class SimulationSession:
         p.setGravity(0, 0, -9.81, physicsClientId=self.client)
         self.body: int | None = None
         try:
-            self.body = p.loadURDF(robot["path"], useFixedBase=True, physicsClientId=self.client)
+            try:
+                self.body = p.loadURDF(robot["path"], useFixedBase=True, physicsClientId=self.client, flags=p.URDF_USE_SELF_COLLISION)
+            except TypeError:
+                self.body = p.loadURDF(robot["path"], useFixedBase=True, physicsClientId=self.client)
         except Exception as exc:
             self.events.append({"type": "warning", "message": f"PyBullet could not load the URDF; using kinematic preview: {exc}"})
         self.joints = [joint for joint in robot["joints"] if joint["controllable"]]
@@ -353,6 +357,24 @@ def denormalized(values: list[float], joints: list[dict[str, Any]]) -> list[floa
         span = joint["upper"] - joint["lower"]
         result.append(clamp((value + 1.0) * 0.5 * span + joint["lower"], joint["lower"], joint["upper"]))
     return result
+
+
+def count_contacts_at(session: SimulationSession, positions: list[float]) -> int:
+    """Collision probe: pose the simulated body and count contact points (self + environment)."""
+    if session.body is None:
+        return 0
+    saved = list(session.positions)
+    try:
+        session.set_positions(list(positions))
+        p.stepSimulation(physicsClientId=session.client)
+        return len(p.getContactPoints(bodyA=session.body, physicsClientId=session.client))
+    except Exception:
+        return 0
+    finally:
+        try:
+            session.set_positions(saved)
+        except Exception:
+            pass
 
 
 def make_model(input_size: int, output_size: int, config: TrainConfig) -> torch.nn.Module:
@@ -720,24 +742,35 @@ def rollout(session_id: str, request: RolloutRequest) -> dict[str, Any]:
     result = [{"timestamp": 0, "positions": list(current), "expected": list(ordered[0].positions), "phase": "approach" if needs_approach else "gesture"}]
     current_timestamp = 0
     total_steps = 0
-    # Stage 1: bounded approach from a randomized start to the first checkpoint.
+    # Stage 1: approach from a randomized start to the first checkpoint.
+    # Default is the scripted bounded-interpolation controller; "learned"
+    # runs the behavior model instead (kept for experiments only).
     approach_start = list(current)
-    approach_steps = approach_step_count(approach_start, list(ordered[0].positions), session.joints, request.timestep_ms)
     if any(abs(a - b) > 1e-9 for a, b in zip(approach_start, ordered[0].positions)):
-        for approach_index in range(approach_steps):
-            if total_steps >= request.max_steps:
-                break
-            progress = min(1.0, (approach_index + 1) / approach_steps)
-            current_normalized = normalized(current, session.joints)
-            target_normalized = normalized(ordered[0].positions, session.joints)
-            features = torch.tensor([current_normalized + target_normalized + [progress]], dtype=torch.float32)
-            with torch.no_grad():
-                delta = session.model(features)[0].tolist()
-            current = denormalized([value + change for value, change in zip(current_normalized, delta)], session.joints)
-            current_timestamp += request.timestep_ms
-            expected = _lerp_positions(approach_start, ordered[0].positions, progress)
-            result.append({"timestamp": current_timestamp, "positions": list(current), "expected": expected, "phase": "approach"})
-            total_steps += 1
+        if request.approach_mode == "scripted":
+            for waypoint in build_approach_plan(approach_start, list(ordered[0].positions), session.joints, request.timestep_ms):
+                if total_steps >= request.max_steps:
+                    break
+                current = list(waypoint)
+                current_timestamp += request.timestep_ms
+                result.append({"timestamp": current_timestamp, "positions": list(current), "expected": list(waypoint), "phase": "approach"})
+                total_steps += 1
+        else:
+            approach_steps = approach_step_count(approach_start, list(ordered[0].positions), session.joints, request.timestep_ms)
+            for approach_index in range(approach_steps):
+                if total_steps >= request.max_steps:
+                    break
+                progress = min(1.0, (approach_index + 1) / approach_steps)
+                current_normalized = normalized(current, session.joints)
+                target_normalized = normalized(ordered[0].positions, session.joints)
+                features = torch.tensor([current_normalized + target_normalized + [progress]], dtype=torch.float32)
+                with torch.no_grad():
+                    delta = session.model(features)[0].tolist()
+                current = denormalized([value + change for value, change in zip(current_normalized, delta)], session.joints)
+                current_timestamp += request.timestep_ms
+                expected = _lerp_positions(approach_start, ordered[0].positions, progress)
+                result.append({"timestamp": current_timestamp, "positions": list(current), "expected": expected, "phase": "approach"})
+                total_steps += 1
     for checkpoint_index in range(1, len(ordered)):
         checkpoint = ordered[checkpoint_index]
         previous_timestamp = ordered[checkpoint_index - 1].timestamp
@@ -762,7 +795,10 @@ def rollout(session_id: str, request: RolloutRequest) -> dict[str, Any]:
             total_steps += 1
         if total_steps >= request.max_steps:
             break
-    return {"frames": result, "steps": total_steps}
+    collisions = 0
+    for frame in result:
+        collisions += count_contacts_at(session, frame["expected"])
+    return {"frames": result, "steps": total_steps, "collisions": collisions}
 
 
 @app.get("/api/sessions/{session_id}/export")

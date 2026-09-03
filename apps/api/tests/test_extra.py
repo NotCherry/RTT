@@ -275,3 +275,69 @@ def test_rollout_approaches_first_checkpoint_from_random_start():
     assert "approach" in phases
     assert "gesture" in phases
     assert phases.index("gesture") > phases.index("approach")
+
+def test_scripted_approach_meets_accuracy_and_reports_collisions():
+    import time
+    sid, _ = _demo_session()
+    demo = {
+        "id": "scripted-stage",
+        "name": "scripted-stage",
+        "kind": "gesture",
+        "current": [0, 0],
+        "target": [0.1, 0.1],
+        "frames": [
+            {"timestamp": 0, "positions": [0.0, 0.0]},
+            {"timestamp": 240, "positions": [0.05, 0.05]},
+            {"timestamp": 480, "positions": [0.1, 0.1]},
+        ],
+    }
+    r = client.post(f"/api/sessions/{sid}/train", json={"demonstrations": [demo], "config": {"epochs": 5, "timestep_ms": 120, "random_starts": 2, "random_seed": 7}})
+    assert r.json()["status"] == "started"
+    for _ in range(200):
+        sess = SESSIONS[sid]
+        if any(e.get("type") == "training_complete" for e in sess.events):
+            break
+        time.sleep(0.05)
+    r = client.post(f"/api/sessions/{sid}/rollout", json={"frames": demo["frames"], "current": [0.8, -0.8], "timestep_ms": 120, "max_steps": 160, "approach_mode": "scripted"})
+    assert r.status_code == 200
+    body = r.json()
+    assert "collisions" in body
+    assert body["collisions"] == 0
+    approach = [f for f in body["frames"] if f.get("phase") == "approach"]
+    gesture = [f for f in body["frames"] if f.get("phase") == "gesture"]
+    assert len(approach) >= 2
+    assert len(gesture) >= 2
+    # Frame 0 is the pre-approach starting pose; every executed approach step
+    # must track its expected waypoint, and the final step must reach the
+    # first checkpoint within the 0.05 approach-success bound.
+    for frame in approach[1:]:
+        assert max(abs(a - b) for a, b in zip(frame["positions"], frame["expected"])) <= 0.05
+    assert max(abs(a - b) for a, b in zip(approach[-1]["positions"], [0.0, 0.0])) <= 0.05
+
+
+def test_learned_approach_mode_still_available():
+    import time
+    sid, _ = _demo_session()
+    demo = {
+        "id": "learned-stage",
+        "name": "learned-stage",
+        "kind": "gesture",
+        "current": [0, 0],
+        "target": [0.1, 0.1],
+        "frames": [
+            {"timestamp": 0, "positions": [0.0, 0.0]},
+            {"timestamp": 240, "positions": [0.05, 0.05]},
+            {"timestamp": 480, "positions": [0.1, 0.1]},
+        ],
+    }
+    r = client.post(f"/api/sessions/{sid}/train", json={"demonstrations": [demo], "config": {"epochs": 5, "timestep_ms": 120, "random_starts": 2, "random_seed": 7}})
+    assert r.json()["status"] == "started"
+    for _ in range(200):
+        sess = SESSIONS[sid]
+        if any(e.get("type") == "training_complete" for e in sess.events):
+            break
+        time.sleep(0.05)
+    r = client.post(f"/api/sessions/{sid}/rollout", json={"frames": demo["frames"], "current": [0.8, -0.8], "timestep_ms": 120, "max_steps": 160, "approach_mode": "learned"})
+    assert r.status_code == 200
+    phases = [f.get("phase") for f in r.json()["frames"]]
+    assert "approach" in phases and "gesture" in phases
