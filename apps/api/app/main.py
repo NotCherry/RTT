@@ -155,6 +155,10 @@ def parse_urdf(raw: bytes, filename: str, stored_path: Path) -> dict[str, Any]:
             upper = number(limit.attrib.get("upper") if limit is not None else None, math.pi)
         if joint_type == "prismatic" and limit is None:
             lower, upper = -1.0, 1.0
+        default_velocity = 1.0 if joint_type == "prismatic" else 2.0
+        velocity = number(limit.attrib.get("velocity") if limit is not None else None, default_velocity)
+        if not math.isfinite(velocity) or velocity <= 0:
+            velocity = default_velocity
         joints.append({
             "name": name,
             "type": joint_type,
@@ -164,6 +168,7 @@ def parse_urdf(raw: bytes, filename: str, stored_path: Path) -> dict[str, Any]:
             "axis": axis,
             "lower": lower,
             "upper": upper,
+            "velocity": velocity,
             "controllable": joint_type in {"revolute", "continuous", "prismatic"},
         })
 
@@ -363,6 +368,43 @@ def make_model(input_size: int, output_size: int, config: TrainConfig) -> torch.
     return torch.nn.Sequential(*layers)
 
 
+def default_joint_velocity(joint_type: Any) -> float:
+    return 1.0 if joint_type == "prismatic" else 2.0
+
+
+def joint_velocity_limit(joint: dict[str, Any]) -> float:
+    """Maximum joint velocity in native units per second (URDF or safe default)."""
+    try:
+        velocity = float(joint.get("velocity", default_joint_velocity(joint.get("type"))))
+    except (TypeError, ValueError):
+        velocity = default_joint_velocity(joint.get("type"))
+    if not math.isfinite(velocity) or velocity <= 0:
+        velocity = default_joint_velocity(joint.get("type"))
+    return velocity
+
+
+def max_joint_step(joint: dict[str, Any], timestep_ms: int) -> float:
+    return max(joint_velocity_limit(joint) * max(1, timestep_ms) / 1000.0, 1e-6)
+
+
+def approach_step_count(start: list[float], goal: list[float], joints: list[dict[str, Any]], timestep_ms: int, cap: int = 500) -> int:
+    """Number of bounded increments needed to move from start to goal without teleporting."""
+    steps = 1
+    for index, joint in enumerate(joints):
+        current = start[index] if index < len(start) else 0.0
+        target = goal[index] if index < len(goal) else current
+        distance = abs(target - current)
+        needed = math.ceil(distance / max_joint_step(joint, timestep_ms))
+        steps = max(steps, needed)
+    return max(1, min(steps, cap))
+
+
+def build_approach_plan(start: list[float], goal: list[float], joints: list[dict[str, Any]], timestep_ms: int) -> list[list[float]]:
+    """Scripted stage-1 controller: bounded interpolation from any pose to a goal pose."""
+    steps = approach_step_count(start, goal, joints, timestep_ms)
+    return [_lerp_positions(list(start), list(goal), (index + 1) / steps) for index in range(steps)]
+
+
 def _lerp_positions(start: list[float], end: list[float], progress: float) -> list[float]:
     return [
         value + ((end[index] if index < len(end) else value) - value) * progress
@@ -431,10 +473,23 @@ def build_incremental_samples(
             ])
 
         for start_index_value, initial in enumerate(starts):
-            route = frames if start_index_value == 0 else [
-                DemonstrationFrame(timestamp=0, positions=initial),
-                *frames,
-            ]
+            if start_index_value != 0:
+                # Randomized start: expand the approach to the first checkpoint
+                # over multiple velocity-bounded increments instead of one teleport.
+                approach = build_approach_plan(list(initial), list(frames[0].positions), joints, step)
+                previous = list(initial)
+                for approach_index, waypoint in enumerate(approach):
+                    progress = approach_index / len(approach)
+                    current_normalized = normalized(previous, joints)
+                    next_normalized = normalized(waypoint, joints)
+                    samples.append({
+                        "current": current_normalized,
+                        "goal": normalized(frames[0].positions, joints),
+                        "progress": progress,
+                        "delta": [next_value - current_value for next_value, current_value in zip(next_normalized, current_normalized)],
+                    })
+                    previous = waypoint
+            route = frames
             for segment_index in range(len(route) - 1):
                 segment_start = route[segment_index]
                 segment_end = route[segment_index + 1]
@@ -661,9 +716,28 @@ def rollout(session_id: str, request: RolloutRequest) -> dict[str, Any]:
     current = request.current or list(ordered[0].positions)
     if len(current) != joint_count:
         raise HTTPException(422, "The current pose does not match the robot joints.")
-    result = [{"timestamp": 0, "positions": list(current), "expected": list(ordered[0].positions)}]
+    needs_approach = any(abs(a - b) > 1e-9 for a, b in zip(list(current), ordered[0].positions))
+    result = [{"timestamp": 0, "positions": list(current), "expected": list(ordered[0].positions), "phase": "approach" if needs_approach else "gesture"}]
     current_timestamp = 0
     total_steps = 0
+    # Stage 1: bounded approach from a randomized start to the first checkpoint.
+    approach_start = list(current)
+    approach_steps = approach_step_count(approach_start, list(ordered[0].positions), session.joints, request.timestep_ms)
+    if any(abs(a - b) > 1e-9 for a, b in zip(approach_start, ordered[0].positions)):
+        for approach_index in range(approach_steps):
+            if total_steps >= request.max_steps:
+                break
+            progress = min(1.0, (approach_index + 1) / approach_steps)
+            current_normalized = normalized(current, session.joints)
+            target_normalized = normalized(ordered[0].positions, session.joints)
+            features = torch.tensor([current_normalized + target_normalized + [progress]], dtype=torch.float32)
+            with torch.no_grad():
+                delta = session.model(features)[0].tolist()
+            current = denormalized([value + change for value, change in zip(current_normalized, delta)], session.joints)
+            current_timestamp += request.timestep_ms
+            expected = _lerp_positions(approach_start, ordered[0].positions, progress)
+            result.append({"timestamp": current_timestamp, "positions": list(current), "expected": expected, "phase": "approach"})
+            total_steps += 1
     for checkpoint_index in range(1, len(ordered)):
         checkpoint = ordered[checkpoint_index]
         previous_timestamp = ordered[checkpoint_index - 1].timestamp
@@ -684,7 +758,7 @@ def rollout(session_id: str, request: RolloutRequest) -> dict[str, Any]:
                 checkpoint.positions,
                 progress,
             )
-            result.append({"timestamp": current_timestamp, "positions": list(current), "expected": expected})
+            result.append({"timestamp": current_timestamp, "positions": list(current), "expected": expected, "phase": "gesture"})
             total_steps += 1
         if total_steps >= request.max_steps:
             break

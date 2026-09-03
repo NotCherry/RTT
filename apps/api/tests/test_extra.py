@@ -194,3 +194,84 @@ def test_parse_rejects_missing_origin_defaults():
         p = Path(td) / "tmp.urdf"
         data = parse_urdf(raw, "a.urdf", p)
         assert data["name"] == "a"
+
+def test_random_starts_approach_without_teleport():
+    from app.main import approach_step_count, build_approach_plan, denormalized, max_joint_step
+    joints = [{"lower": -1.0, "upper": 1.0, "velocity": 2.0, "type": "revolute"}]
+    start, goal = [-1.0], [1.0]
+    assert approach_step_count(start, goal, joints, 120) > 1
+    plan = build_approach_plan(start, goal, joints, 120)
+    assert plan[-1] == pytest.approx(goal)
+    previous = start
+    for waypoint in plan:
+        assert abs(waypoint[0] - previous[0]) <= max_joint_step(joints[0], 120) + 1e-9
+        previous = waypoint
+
+
+def test_random_start_samples_respect_velocity_bounds():
+    from app.main import denormalized
+    demo = Demonstration(  # type: ignore[call-arg]
+        id="bounded",
+        name="bounded",
+        kind="gesture",
+        current=[0.0],
+        target=[0.05],
+        frames=[{"timestamp": 0, "positions": [0.0]}, {"timestamp": 240, "positions": [0.05]}],
+    )
+    joints = [{"lower": -1.0, "upper": 1.0, "velocity": 0.5, "type": "revolute"}]
+    samples = build_incremental_samples([demo], joints, 120, random_starts=3, random_seed=7)
+    assert len(samples) > 0
+    max_step_native = 0.5 * 120 / 1000.0
+    for sample in samples:
+        current = denormalized(sample["current"], joints)
+        delta_native = [
+            (next_value - current_value) * (joints[index]["upper"] - joints[index]["lower"]) / 2.0
+            for index, (next_value, current_value) in enumerate(zip(
+                [current_value + change for current_value, change in zip(sample["current"], sample["delta"])],
+                sample["current"],
+            ))
+        ]
+        assert all(abs(change) <= max_step_native + 1e-6 for change in delta_native)
+        _ = current
+
+
+def test_parse_stores_joint_velocity_limits():
+    from pathlib import Path
+    import tempfile
+    raw = b"""<robot name='v'><link name='l1'/><link name='l2'/><joint name='j' type='revolute'><parent link='l1'/><child link='l2'/><limit lower='-1' upper='1' velocity='3.5'/></joint></robot>"""
+    with tempfile.TemporaryDirectory() as td:
+        data = parse_urdf(raw, "v.urdf", Path(td) / "tmp.urdf")
+        assert data["joints"][0]["velocity"] == pytest.approx(3.5)
+
+def test_rollout_approaches_first_checkpoint_from_random_start():
+    import time
+    sid, _ = _demo_session()
+    demo = {
+        "id": "stage",
+        "name": "stage",
+        "kind": "gesture",
+        "current": [0, 0],
+        "target": [0.1, 0.1],
+        "frames": [
+            {"timestamp": 0, "positions": [0.0, 0.0]},
+            {"timestamp": 240, "positions": [0.05, 0.05]},
+            {"timestamp": 480, "positions": [0.1, 0.1]},
+        ],
+    }
+    r = client.post(f"/api/sessions/{sid}/train", json={"demonstrations": [demo], "config": {"epochs": 5, "timestep_ms": 120, "random_starts": 2, "random_seed": 7}})
+    assert r.json()["status"] == "started"
+    for _ in range(200):
+        sess = SESSIONS[sid]
+        if any(e.get("type") == "training_complete" for e in sess.events):
+            break
+        time.sleep(0.05)
+    r = client.post(f"/api/sessions/{sid}/rollout", json={"frames": demo["frames"], "current": [0.8, -0.8], "timestep_ms": 120, "max_steps": 160})
+    assert r.status_code == 200
+    frames = r.json()["frames"]
+    assert len(frames) > 3
+    assert frames[0]["expected"] == [0.0, 0.0]
+    assert frames[1]["expected"] != frames[0]["expected"]
+    phases = [frame.get("phase", "gesture") for frame in frames]
+    assert "approach" in phases
+    assert "gesture" in phases
+    assert phases.index("gesture") > phases.index("approach")
