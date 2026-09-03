@@ -96,19 +96,32 @@ export function EvaluatePage({
                                                                 CHECKPOINT
                                                                 COMPARISON
                                                         </PanelLabel>
-                                                                <H3>
+                                                        <H3>
                                                                 {demonstrationName
                                                                         ? `Evaluating “${demonstrationName}”`
                                                                         : rolloutFrames.length
-                                                                                ? `${rolloutFrames.length} predicted frames`
-                                                                                : "No rollout yet"}
+                                                                          ? `${rolloutFrames.length} predicted frames`
+                                                                          : "No rollout yet"}
                                                         </H3>
                                                         {demonstrationName && (
-                                                                <p className="helper-text" role="status">
-                                                                        {demonstrationKind ?? "demonstration"} ·{" "}
-                                                                        {checkpointCount} authored{" "}
-                                                                        checkpoint{checkpointCount === 1 ? "" : "s"}
-                                                                        {rolloutFrames.length > 0 &&
+                                                                <p
+                                                                        className="helper-text"
+                                                                        role="status"
+                                                                >
+                                                                        {demonstrationKind ??
+                                                                                "demonstration"}{" "}
+                                                                        ·{" "}
+                                                                        {
+                                                                                checkpointCount
+                                                                        }{" "}
+                                                                        authored{" "}
+                                                                        checkpoint
+                                                                        {checkpointCount ===
+                                                                        1
+                                                                                ? ""
+                                                                                : "s"}
+                                                                        {rolloutFrames.length >
+                                                                                0 &&
                                                                                 ` · ${rolloutFrames.length} predicted frames`}
                                                                 </p>
                                                         )}

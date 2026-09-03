@@ -104,7 +104,10 @@ export function TeachingPosePage({
               </label>
             ))}
           </div>
-          <div className="route-actions" style={{ flexDirection: "column", alignItems: "stretch" }}>
+          <div
+            className="route-actions"
+            style={{ flexDirection: "column", alignItems: "stretch" }}
+          >
             <label className="flex flex-col gap-1 text-[10px] text-text-500">
               Pose name
               <input
@@ -117,16 +120,16 @@ export function TeachingPosePage({
               />
             </label>
             <div className="flex gap-2">
-            <Button
-              variant="primary"
-              onClick={() => onCapture(poseName.trim() || undefined)}
-              disabled={!robot || !controllableJoints.length}
-            >
-              Capture pose
-            </Button>
-            <Button variant="secondary" size="small" asChild>
-              <Link to="/teach/timeline">Open keyframe editor</Link>
-            </Button>
+              <Button
+                variant="primary"
+                onClick={() => onCapture(poseName.trim() || undefined)}
+                disabled={!robot || !controllableJoints.length}
+              >
+                Capture pose
+              </Button>
+              <Button variant="secondary" size="small" asChild>
+                <Link to="/teach/timeline">Open keyframe editor</Link>
+              </Button>
             </div>
             {savedPoseName && (
               <p className="helper-text" role="status">

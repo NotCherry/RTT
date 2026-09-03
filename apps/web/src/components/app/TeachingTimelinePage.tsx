@@ -1,4 +1,10 @@
-import { Button, Panel, PanelHeader, PanelLabel, StatusPill } from "@/components/ui";
+import {
+  Button,
+  Panel,
+  PanelHeader,
+  PanelLabel,
+  StatusPill,
+} from "@/components/ui";
 import { H2, H3, IntroCopy, Kicker } from "@/components/ui/typography";
 import { RobotViewport } from "@/components/workbench/RobotViewport";
 import { TimelinePanel } from "@/components/workbench/TimelinePanel";

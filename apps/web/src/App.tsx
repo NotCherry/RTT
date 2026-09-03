@@ -784,8 +784,7 @@ function Workbench() {
     const demonstration: Demonstration = {
       id,
       name:
-        trimmed ||
-        `Pose ${String(demonstrations.length + 1).padStart(2, "0")}`,
+        trimmed || `Pose ${String(demonstrations.length + 1).padStart(2, "0")}`,
       kind: "pose",
       current: target.map(() => 0),
       target,
@@ -1024,7 +1023,8 @@ function Workbench() {
           hasSelection={Boolean(timelineDemonstration)}
           gestureName={timelineDemonstration?.name ?? ""}
           onRenameGesture={(name: string) => {
-            if (timelineDemonstration) renameDemonstration(timelineDemonstration.id, name);
+            if (timelineDemonstration)
+              renameDemonstration(timelineDemonstration.id, name);
           }}
           saveConfirmation={timelineSaveConfirmation}
           onReset={resetPose}
@@ -1118,12 +1118,14 @@ function Workbench() {
             null
           }
           checkpointCount={
-            (demonstrations.find((item) => item.id === evaluatedDemoId) ??
-              demonstrations.find((item) => item.id === selectedDemoId))
-              ?.keyframes?.length ??
-            (demonstrations.find((item) => item.id === evaluatedDemoId) ??
-              demonstrations.find((item) => item.id === selectedDemoId))
-              ?.frames.length ??
+            (
+              demonstrations.find((item) => item.id === evaluatedDemoId) ??
+              demonstrations.find((item) => item.id === selectedDemoId)
+            )?.keyframes?.length ??
+            (
+              demonstrations.find((item) => item.id === evaluatedDemoId) ??
+              demonstrations.find((item) => item.id === selectedDemoId)
+            )?.frames.length ??
             0
           }
           rolloutFrames={rolloutFrames}

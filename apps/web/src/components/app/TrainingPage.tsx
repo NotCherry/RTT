@@ -103,8 +103,7 @@ export function TrainingPage({
             >
               {demonstrations
                 .filter(
-                  (d) =>
-                    !activeDatasetId || d.dataset_id === activeDatasetId,
+                  (d) => !activeDatasetId || d.dataset_id === activeDatasetId,
                 )
                 .map((d) => (
                   <label
@@ -121,9 +120,9 @@ export function TrainingPage({
                     <span className="font-mono">
                       {d.name}
                       <span className="text-text-500">
-                        {" "}· {d.kind} ·{" "}
-                        {d.keyframes?.length ?? d.frames.length} authored
-                        keyframes
+                        {" "}
+                        · {d.kind} · {d.keyframes?.length ?? d.frames.length}{" "}
+                        authored keyframes
                       </span>
                     </span>
                   </label>
@@ -131,8 +130,8 @@ export function TrainingPage({
             </div>
           ) : (
             <p className="helper-text">
-              No archived demonstrations yet. Capture a pose or author a
-              gesture first.
+              No archived demonstrations yet. Capture a pose or author a gesture
+              first.
             </p>
           )}
         </div>

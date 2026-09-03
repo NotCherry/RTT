@@ -126,9 +126,7 @@ describe("TrainingPage single-target picker", () => {
     ).not.toBeChecked();
     fireEvent.click(screen.getByRole("radio", { name: "Train Home pose" }));
     expect(onDemoChange).toHaveBeenCalledWith("demo-1");
-    expect(
-      screen.getByRole("button", { name: "Train “Wave”" }),
-    ).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Train “Wave”" })).toBeEnabled();
   });
 
   it("blocks training until a target is selected", () => {
