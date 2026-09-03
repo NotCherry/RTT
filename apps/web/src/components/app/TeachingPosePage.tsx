@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import { Button, Panel, PanelHeader, PanelLabel } from "@/components/ui";
 import { H2, H3, IntroCopy, Kicker } from "@/components/ui/typography";
@@ -14,7 +15,8 @@ type TeachingPosePageProps = {
   onDemo: () => void;
   onReset: () => void;
   onUpdateJoint: (index: number, value: number) => void;
-  onCapture: () => void;
+  onCapture: (name?: string) => void;
+  savedPoseName?: string | null;
 };
 
 export function TeachingPosePage({
@@ -28,7 +30,9 @@ export function TeachingPosePage({
   onReset,
   onUpdateJoint,
   onCapture,
+  savedPoseName,
 }: TeachingPosePageProps) {
+  const [poseName, setPoseName] = useState("");
   return (
     <div className="route-page">
       <div className="route-heading">
@@ -100,17 +104,38 @@ export function TeachingPosePage({
               </label>
             ))}
           </div>
-          <div className="route-actions">
-            <Button
-              variant="primary"
-              onClick={onCapture}
-              disabled={!robot || !controllableJoints.length}
-            >
-              Capture pose
-            </Button>
-            <Button variant="secondary" size="small" asChild>
-              <Link to="/teach/timeline">Open keyframe editor</Link>
-            </Button>
+          <div
+            className="route-actions"
+            style={{ flexDirection: "column", alignItems: "stretch" }}
+          >
+            <label className="flex flex-col gap-1 text-[10px] text-text-500">
+              Pose name
+              <input
+                aria-label="Pose name"
+                type="text"
+                value={poseName}
+                onChange={(event) => setPoseName(event.target.value)}
+                placeholder="e.g. Home pose"
+                className="rounded border border-line-600 bg-ink-800 p-2 font-mono text-[11px] text-text-100 outline-none focus:border-accent-500"
+              />
+            </label>
+            <div className="flex gap-2">
+              <Button
+                variant="primary"
+                onClick={() => onCapture(poseName.trim() || undefined)}
+                disabled={!robot || !controllableJoints.length}
+              >
+                Capture pose
+              </Button>
+              <Button variant="secondary" size="small" asChild>
+                <Link to="/teach/timeline">Open keyframe editor</Link>
+              </Button>
+            </div>
+            {savedPoseName && (
+              <p className="helper-text" role="status">
+                Saved &ldquo;{savedPoseName}&rdquo; to the archive.
+              </p>
+            )}
           </div>
         </Panel>
       </div>

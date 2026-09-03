@@ -46,6 +46,7 @@ For every behavior change, assess whether a focused test would protect the user-
 Commit after each completed goal or task, once the Verification loop passes.
 Use Conventional Commits extended syntax: `type(scope): subject`, blank line, meaningful body stating what changed and why, `Refs:` footer with the goal/task id when one exists.
 Allowed types: feat, fix, refactor, test, docs, chore. Scopes: web, api, infra, docs. Keep one logical change per commit.
+Never finish with uncommitted work: run `git status --porcelain` before stopping and commit everything, including formatter output. The tree must be clean when the work is done.
 
 ## Product guardrails
 

@@ -319,21 +319,31 @@ export function TimelinePanel({
         authored keys — transient frames are interpolated for preview and
         training. Insert writes the full pose at the entered frame ({fps} fps).
       </p>
-      {dirty && (
-        <div className="edit-banner">
-          <span>
-            Unsaved timeline edits — training uses last saved version.
-          </span>
-          <div>
-            <Button variant="ghost" size="small" onClick={onDiscard}>
-              Discard
-            </Button>
-            <Button variant="primary" size="small" onClick={onSave}>
-              Save keyframes
-            </Button>
-          </div>
+      <div className="edit-banner">
+        <span>
+          {dirty
+            ? "Unsaved timeline edits — training uses last saved version."
+            : "Timeline matches the last saved version."}
+        </span>
+        <div>
+          <Button
+            variant="ghost"
+            size="small"
+            onClick={onDiscard}
+            disabled={!dirty}
+          >
+            Discard
+          </Button>
+          <Button
+            variant="primary"
+            size="small"
+            onClick={onSave}
+            disabled={!dirty}
+          >
+            Save keyframes
+          </Button>
         </div>
-      )}
+      </div>
       {frames.length ? (
         <>
           <div className="timeline-scrub">

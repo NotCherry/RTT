@@ -91,20 +91,49 @@ export function TrainingPage({
               ))}
             </NativeSelect>
           </Label>
-          <Label className="flex flex-col gap-2">
-            Demonstration
-            <NativeSelect
-              value={selectedDemoId ?? ""}
-              onChange={(e) => onDemoChange(e.target.value)}
+        </div>
+        <Separator />
+        <div className="flex flex-col gap-2">
+          <PanelLabel>Training target — one archived item</PanelLabel>
+          {demonstrations.length ? (
+            <div
+              className="flex flex-col gap-1"
+              role="radiogroup"
+              aria-label="Training target"
             >
-              <option value="">All demonstrations</option>
-              {demonstrations.map((d) => (
-                <option value={d.id} key={d.id}>
-                  {d.name}
-                </option>
-              ))}
-            </NativeSelect>
-          </Label>
+              {demonstrations
+                .filter(
+                  (d) => !activeDatasetId || d.dataset_id === activeDatasetId,
+                )
+                .map((d) => (
+                  <label
+                    key={d.id}
+                    className="flex cursor-pointer items-center gap-2 rounded border border-line-600 bg-ink-800 p-2 text-[11px] text-text-100"
+                  >
+                    <input
+                      type="radio"
+                      name="training-target"
+                      checked={selectedDemoId === d.id}
+                      onChange={() => onDemoChange(d.id)}
+                      aria-label={`Train ${d.name}`}
+                    />
+                    <span className="font-mono">
+                      {d.name}
+                      <span className="text-text-500">
+                        {" "}
+                        · {d.kind} · {d.keyframes?.length ?? d.frames.length}{" "}
+                        authored keyframes
+                      </span>
+                    </span>
+                  </label>
+                ))}
+            </div>
+          ) : (
+            <p className="helper-text">
+              No archived demonstrations yet. Capture a pose or author a gesture
+              first.
+            </p>
+          )}
         </div>
         <Separator />
         <div className="route-form-grid">
@@ -171,9 +200,16 @@ export function TrainingPage({
           <Button
             variant="primary"
             onClick={onTrain}
-            disabled={!sessionId || !demonstrations.length || busy || training}
+            disabled={
+              !sessionId ||
+              !demonstrations.find((d) => d.id === selectedDemoId) ||
+              busy ||
+              training
+            }
           >
-            Train temporal controller
+            {selectedDemoId
+              ? `Train “${demonstrations.find((d) => d.id === selectedDemoId)?.name ?? "selected"}”`
+              : "Select a training target"}
           </Button>
           <Button variant="secondary" size="small" asChild>
             <Link to="/evaluate">Open evaluation</Link>
