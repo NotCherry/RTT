@@ -405,3 +405,23 @@ def test_rollout_dense_grid_degrades_to_full_coverage_under_cap():
     gesture = [f for f in body["frames"] if f.get("phase") == "gesture"]
     assert len(gesture) == 161
     assert gesture[-1]["expected"] == [0.1, 0.1]
+
+def test_save_demonstrations_accepts_timeline_fps_up_to_1000():
+    sid, _ = _demo_session()
+    demo = {
+        "id": "hi-fps",
+        "name": "hi-fps",
+        "kind": "gesture",
+        "current": [0, 0],
+        "target": [0.1, 0.1],
+        "frames": [
+            {"timestamp": 0, "positions": [0.0, 0.0]},
+            {"timestamp": 100, "positions": [0.1, 0.1]},
+        ],
+        "timeline_fps": 1000,
+        "duration_frames": 100,
+        "start_frame_index": 0,
+    }
+    r = client.put(f"/api/sessions/{sid}/demonstrations", json={"demonstrations": [demo]})
+    assert r.status_code == 200
+    assert r.json()["demonstrations"] == 1

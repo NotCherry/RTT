@@ -230,7 +230,7 @@ class Demonstration(BaseModel):
     target: list[float]
     frames: list[DemonstrationFrame] = Field(default_factory=list)
     keyframes: list[Keyframe] = Field(default_factory=list)
-    timeline_fps: int = Field(30, ge=1, le=240)
+    timeline_fps: int = Field(30, ge=1, le=1000)
     duration_frames: int = Field(0, ge=0, le=100000)
     start_frame_index: int = Field(0, ge=0)
     dataset_id: str | None = None
@@ -254,7 +254,7 @@ class DatasetsRequest(BaseModel):
 
 class TrainRequest(BaseModel):
     demonstrations: list[Demonstration]
-    config: TrainConfig = Field(default_factory=TrainConfig)
+    config: TrainConfig = Field(default_factory=TrainConfig)  # type: ignore[arg-type]  # pyright needs a plugin for pydantic defaults; runtime-verified
 
 
 class SessionRequest(BaseModel):
@@ -776,7 +776,10 @@ def rollout(session_id: str, request: RolloutRequest) -> dict[str, Any]:
     # so the predicted trajectory covers the motion faithfully; timestep_ms is
     # the fallback. The grid plan is capped by an explicit step budget so a
     # dense grid degrades to coarser full-gesture coverage, never a cut tail.
-    grid_ms = 1000.0 / request.timeline_fps if request.timeline_fps else float(request.timestep_ms)
+    try:
+        grid_ms = 1000.0 / request.timeline_fps if request.timeline_fps else float(request.timestep_ms)
+    except (TypeError, ValueError, ZeroDivisionError) as exc:
+        raise HTTPException(422, f"Invalid timeline fps: {exc}") from exc
     raw_steps = []
     for checkpoint_index in range(1, len(ordered)):
         segment_ms = ordered[checkpoint_index].timestamp - ordered[checkpoint_index - 1].timestamp
