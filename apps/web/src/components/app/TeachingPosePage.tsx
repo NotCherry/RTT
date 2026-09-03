@@ -104,11 +104,8 @@ export function TeachingPosePage({
               </label>
             ))}
           </div>
-          <div
-            className="route-actions"
-            style={{ flexDirection: "column", alignItems: "stretch" }}
-          >
-            <label className="flex flex-col gap-1 text-[10px] text-text-500">
+          <div className="route-form-grid">
+            <label>
               Pose name
               <input
                 aria-label="Pose name"
@@ -116,27 +113,26 @@ export function TeachingPosePage({
                 value={poseName}
                 onChange={(event) => setPoseName(event.target.value)}
                 placeholder="e.g. Home pose"
-                className="rounded border border-line-600 bg-ink-800 p-2 font-mono text-[11px] text-text-100 outline-none focus:border-accent-500"
               />
             </label>
-            <div className="flex gap-2">
-              <Button
-                variant="primary"
-                onClick={() => onCapture(poseName.trim() || undefined)}
-                disabled={!robot || !controllableJoints.length}
-              >
-                Capture pose
-              </Button>
-              <Button variant="secondary" size="small" asChild>
-                <Link to="/teach/timeline">Open keyframe editor</Link>
-              </Button>
-            </div>
-            {savedPoseName && (
-              <p className="helper-text" role="status">
-                Saved &ldquo;{savedPoseName}&rdquo; to the archive.
-              </p>
-            )}
           </div>
+          <div className="route-actions">
+            <Button
+              variant="primary"
+              onClick={() => onCapture(poseName.trim() || undefined)}
+              disabled={!robot || !controllableJoints.length}
+            >
+              Capture pose
+            </Button>
+            <Button variant="secondary" size="small" asChild>
+              <Link to="/teach/timeline">Open keyframe editor</Link>
+            </Button>
+          </div>
+          {savedPoseName && (
+            <p className="helper-text" role="status">
+              Saved &ldquo;{savedPoseName}&rdquo; to the archive.
+            </p>
+          )}
         </Panel>
       </div>
     </div>
