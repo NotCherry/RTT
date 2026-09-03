@@ -341,3 +341,67 @@ def test_learned_approach_mode_still_available():
     assert r.status_code == 200
     phases = [f.get("phase") for f in r.json()["frames"]]
     assert "approach" in phases and "gesture" in phases
+
+def test_rollout_density_follows_timeline_fps():
+    import time
+    sid, _ = _demo_session()
+    demo = {
+        "id": "dense",
+        "name": "dense",
+        "kind": "gesture",
+        "current": [0, 0],
+        "target": [0.1, 0.1],
+        "frames": [
+            {"timestamp": 0, "positions": [0.0, 0.0]},
+            {"timestamp": 240, "positions": [0.05, 0.05]},
+            {"timestamp": 480, "positions": [0.1, 0.1]},
+        ],
+    }
+    r = client.post(f"/api/sessions/{sid}/train", json={"demonstrations": [demo], "config": {"epochs": 5, "timestep_ms": 120, "random_starts": 0, "random_seed": 7}})
+    assert r.json()["status"] == "started"
+    for _ in range(200):
+        sess = SESSIONS[sid]
+        if any(e.get("type") == "training_complete" for e in sess.events):
+            break
+        time.sleep(0.05)
+    coarse = client.post(f"/api/sessions/{sid}/rollout", json={"frames": demo["frames"], "current": [0, 0], "timestep_ms": 120, "max_steps": 160})
+    dense = client.post(f"/api/sessions/{sid}/rollout", json={"frames": demo["frames"], "current": [0, 0], "timestep_ms": 120, "max_steps": 160, "timeline_fps": 30})
+    assert coarse.status_code == 200 and dense.status_code == 200
+    coarse_gesture = [f for f in coarse.json()["frames"] if f.get("phase") == "gesture"]
+    dense_gesture = [f for f in dense.json()["frames"] if f.get("phase") == "gesture"]
+    # Frame 0 carries the gesture phase when no approach is needed.
+    # timestep fallback: 2 steps per 240ms segment; fps grid: 8 steps per segment.
+    assert len(coarse_gesture) == 5
+    assert len(dense_gesture) == 17
+    assert len(dense_gesture) > len(coarse_gesture)
+
+def test_rollout_dense_grid_degrades_to_full_coverage_under_cap():
+    import time
+    sid, _ = _demo_session()
+    demo = {
+        "id": "cap",
+        "name": "cap",
+        "kind": "gesture",
+        "current": [0, 0],
+        "target": [0.1, 0.1],
+        "frames": [
+            {"timestamp": 0, "positions": [0.0, 0.0]},
+            {"timestamp": 240, "positions": [0.05, 0.05]},
+            {"timestamp": 480, "positions": [0.1, 0.1]},
+        ],
+    }
+    r = client.post(f"/api/sessions/{sid}/train", json={"demonstrations": [demo], "config": {"epochs": 5, "timestep_ms": 120, "random_starts": 0, "random_seed": 7}})
+    assert r.json()["status"] == "started"
+    for _ in range(200):
+        sess = SESSIONS[sid]
+        if any(e.get("type") == "training_complete" for e in sess.events):
+            break
+        time.sleep(0.05)
+    # 1000 fps grid would plan 480 steps; the 160-step budget must keep full
+    # coverage (final checkpoint reached) instead of cutting the tail.
+    r = client.post(f"/api/sessions/{sid}/rollout", json={"frames": demo["frames"], "current": [0, 0], "timestep_ms": 120, "max_steps": 160, "timeline_fps": 1000})
+    assert r.status_code == 200
+    body = r.json()
+    gesture = [f for f in body["frames"] if f.get("phase") == "gesture"]
+    assert len(gesture) == 161
+    assert gesture[-1]["expected"] == [0.1, 0.1]

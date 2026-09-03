@@ -272,6 +272,7 @@ class RolloutRequest(BaseModel):
     timestep_ms: int = Field(120, ge=10, le=2000)
     max_steps: int = Field(160, ge=1, le=2000)
     approach_mode: Literal["scripted", "learned"] = "scripted"
+    timeline_fps: int | None = Field(default=None, ge=1, le=1000)
 
 
 class SimulationSession:
@@ -771,10 +772,28 @@ def rollout(session_id: str, request: RolloutRequest) -> dict[str, Any]:
                 expected = _lerp_positions(approach_start, ordered[0].positions, progress)
                 result.append({"timestamp": current_timestamp, "positions": list(current), "expected": expected, "phase": "approach"})
                 total_steps += 1
+    # Gesture density follows the authored timeline frame grid (fps x duration)
+    # so the predicted trajectory covers the motion faithfully; timestep_ms is
+    # the fallback. The grid plan is capped by an explicit step budget so a
+    # dense grid degrades to coarser full-gesture coverage, never a cut tail.
+    grid_ms = 1000.0 / request.timeline_fps if request.timeline_fps else float(request.timestep_ms)
+    raw_steps = []
     for checkpoint_index in range(1, len(ordered)):
+        segment_ms = ordered[checkpoint_index].timestamp - ordered[checkpoint_index - 1].timestamp
+        raw_steps.append(max(1, math.ceil(max(segment_ms, grid_ms) / grid_ms)))
+    remaining = max(0, request.max_steps - total_steps)
+    if sum(raw_steps) > remaining:
+        scaled = [math.floor(steps * remaining / sum(raw_steps)) for steps in raw_steps] if remaining else [0] * len(raw_steps)
+        leftover = remaining - sum(scaled)
+        largest_first = sorted(range(len(raw_steps)), key=lambda index: raw_steps[index], reverse=True)
+        index = 0
+        while leftover > 0 and largest_first:
+            scaled[largest_first[index % len(largest_first)]] += 1
+            leftover -= 1
+            index += 1
+        raw_steps = scaled
+    for checkpoint_index, segment_steps in zip(range(1, len(ordered)), raw_steps):
         checkpoint = ordered[checkpoint_index]
-        previous_timestamp = ordered[checkpoint_index - 1].timestamp
-        segment_steps = max(1, math.ceil(max(checkpoint.timestamp - previous_timestamp, request.timestep_ms) / request.timestep_ms))
         for step_index in range(segment_steps):
             if total_steps >= request.max_steps:
                 break
