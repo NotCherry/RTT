@@ -856,7 +856,9 @@ function Workbench() {
     persistDemonstrations(
       demonstrations.map((demonstration) =>
         demonstration.id === id
-          ? { ...demonstration, name: name.trim() || "Untitled" }
+          // Preserve raw input so in-progress spaces survive while typing;
+          // fall back only when the name is blank.
+          ? { ...demonstration, name: name.trim() ? name : "Untitled" }
           : demonstration,
       ),
     );
