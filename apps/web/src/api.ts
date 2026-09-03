@@ -93,8 +93,9 @@ export function rolloutSession(
   current: number[],
   timestepMs: number,
   maxSteps: number,
+  approachMode: "scripted" | "learned" = "scripted",
 ) {
-  return request<{ frames: RolloutFrame[]; steps: number }>(
+  return request<{ frames: RolloutFrame[]; steps: number; collisions: number }>(
     `/api/sessions/${sessionId}/rollout`,
     {
       method: "POST",
@@ -104,6 +105,7 @@ export function rolloutSession(
         current,
         timestep_ms: timestepMs,
         max_steps: maxSteps,
+        approach_mode: approachMode,
       }),
     },
   );

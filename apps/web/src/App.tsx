@@ -938,12 +938,15 @@ function Workbench() {
     setError(null);
     try {
       if (demonstration.kind === "gesture" && demonstration.frames.length > 1) {
+        // Stage 1 uses the scripted bounded-interpolation controller to reach
+        // the first checkpoint; the learned model only follows the gesture.
         const result = await rolloutSession(
           sessionId,
           demonstration.frames,
           demonstration.current,
           config.timestep_ms,
           config.rollout_steps,
+          "scripted",
         );
         const finalFrame = result.frames[result.frames.length - 1];
         if (!finalFrame) throw new Error("The rollout returned no frames.");
@@ -977,7 +980,7 @@ function Workbench() {
         applyPositions([...result.frames[0].positions]);
         setActiveTab("testing");
         setMessage(
-          `Rolled out ${demonstration.name} through ${result.frames.length} incremental frames. Approach max error: ${approachError.toFixed(4)}, gesture max error: ${gestureError.toFixed(4)} native units.`,
+          `Rolled out ${demonstration.name} through ${result.frames.length} incremental frames. Approach max error: ${approachError.toFixed(4)}, gesture max error: ${gestureError.toFixed(4)} native units. Contacts along expected path: ${result.collisions ?? 0}.`,
         );
       } else {
         const result = await predictPose(
