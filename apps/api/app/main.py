@@ -52,12 +52,12 @@ DEMO_URDF = """<?xml version="1.0"?>
   <joint name="shoulder_joint" type="revolute">
     <parent link="base"/><child link="shoulder"/>
     <origin xyz="0 0 0.15"/><axis xyz="0 1 0"/>
-    <limit lower="-1.57" upper="1.57" effort="20" velocity="2"/>
+    <limit lower="-1.57" upper="1.57" effort="100" velocity="5"/>
   </joint>
   <joint name="elbow_joint" type="revolute">
     <parent link="shoulder"/><child link="forearm"/>
     <origin xyz="0 0 1.2"/><axis xyz="0 1 0"/>
-    <limit lower="-2.2" upper="2.2" effort="20" velocity="2"/>
+    <limit lower="-2.2" upper="2.2" effort="100" velocity="5"/>
   </joint>
 </robot>"""
 
@@ -779,9 +779,21 @@ def build_physics_feasible_samples(
         return samples
     saved = list(session.positions)
     feasible: list[dict[str, Any]] = []
+    joint_count = len(joints)
+    prev_corrected: list[float] | None = None
     try:
         for sample in samples:
             current_norm = sample["current"]
+            # Update stale previous_delta to physics-corrected previous step
+            if prev_corrected is not None:
+                try:
+                    # Only replace if sample had a previous delta (non-zero start)
+                    # Keep zeros at segment starts as is
+                    if any(abs(v) > 1e-9 for v in sample.get("previous_delta", [])):
+                        sample = dict(sample)
+                        sample["previous_delta"] = list(prev_corrected)
+                except Exception:
+                    pass
             try:
                 cur_pos = denormalized(list(current_norm), joints)
                 session.set_positions(cur_pos)
@@ -792,11 +804,17 @@ def build_physics_feasible_samples(
                 achieved = result["achieved"]
                 achieved_norm = normalized(achieved, joints)
                 feasible_delta = [a - c for a, c in zip(achieved_norm, current_norm)]
+                corrected_delta = [d + (d - f) for d, f in zip(delta_norm, feasible_delta)]
                 new_sample = dict(sample)
-                new_sample["delta"] = feasible_delta
+                new_sample["delta"] = corrected_delta
                 feasible.append(new_sample)
+                prev_corrected = list(corrected_delta)
             except Exception:
                 feasible.append(sample)
+                try:
+                    prev_corrected = list(sample["delta"])
+                except Exception:
+                    prev_corrected = [0.0] * joint_count
     finally:
         try:
             session.set_positions(saved)
@@ -842,13 +860,11 @@ def build_incremental_samples(
         joint_count = len(joints)
         for start_index_value, initial in enumerate(starts):
             if start_index_value != 0:
-                # Randomized start: expand the approach to the first checkpoint
-                # over multiple velocity-bounded increments instead of one teleport.
                 approach = build_approach_plan(list(initial), list(frames[0].positions), joints, step)
                 previous = list(initial)
                 previous_delta = [0.0] * joint_count
                 for approach_index, waypoint in enumerate(approach):
-                    progress = approach_index / len(approach)
+                    progress = (approach_index + 1) / len(approach)
                     current_normalized = normalized(previous, joints)
                     next_normalized = normalized(waypoint, joints)
                     delta = [next_value - current_value for next_value, current_value in zip(next_normalized, current_normalized)]
@@ -880,10 +896,20 @@ def build_incremental_samples(
                     samples.append({
                         "current": current_normalized,
                         "goal": normalized(segment_end.positions, joints),
-                        "progress": progress,
+                        "progress": next_progress,
                         "previous_delta": list(previous_delta),
                         "delta": delta,
                     })
+                    # DART-lite corrective sample
+                    try:
+                        if rng.random() < 0.25:
+                            noise = rng.normal(0.0, 0.01, size=joint_count)
+                            cn = [max(-1.0, min(1.0, c + n)) for c, n in zip(current_normalized, noise)]
+                            if any(abs(a - b) > 1e-9 for a, b in zip(cn, current_normalized)):
+                                dn = [nn - c for nn, c in zip(next_normalized, cn)]
+                                samples.append({"current": cn, "goal": normalized(segment_end.positions, joints), "progress": next_progress, "previous_delta": list(previous_delta), "delta": dn})
+                    except Exception:
+                        pass
                     previous_delta = list(delta)
     return samples
 
@@ -896,20 +922,58 @@ def train_session(session: SimulationSession, request: TrainRequest) -> None:
         if any(len(item.current) != joint_count or len(item.target) != joint_count for item in request.demonstrations):
             raise ValueError("Each demonstration must contain one value per controllable joint.")
         torch.manual_seed(request.config.random_seed)
-        samples = build_incremental_samples(
-            request.demonstrations,
-            session.joints,
-            request.config.timestep_ms,
-            request.config.random_starts,
-            request.config.random_seed,
-        )
-        if request.config.physics and session.body is not None:
-            try:
-                physics_samples = build_physics_feasible_samples(samples, session.joints, request.config.timestep_ms, session)
-                samples = physics_samples
-                session.events.append({"type": "training", "message": "physics-feasible samples enabled", "samples": len(samples)})
-            except Exception as exc:
-                session.events.append({"type": "warning", "message": f"physics-feasible sampling fallback to kinematic: {exc}"})
+        # Generate samples at training timestep and, when timeline_fps is present,
+        # also at grid (1000/fps) so rollout scaling (grid/step) is covered.
+        has_fps = any(getattr(d, "timeline_fps", None) for d in request.demonstrations)
+        if has_fps:
+            base_samples = build_incremental_samples(request.demonstrations, session.joints, request.config.timestep_ms, request.config.random_starts, request.config.random_seed)
+            grid_samples: list[dict[str, Any]] = []
+            for demo in request.demonstrations:
+                try:
+                    fps_val = float(getattr(demo, "timeline_fps", 0) or 0)  # type: ignore[attr-defined]
+                except Exception:
+                    fps_val = 0
+                if fps_val and fps_val > 0:
+                    eff_step = max(10, min(int(round(1000.0 / fps_val)), 2000))
+                    if eff_step != int(request.config.timestep_ms):
+                        grid_samples.extend(build_incremental_samples([demo], session.joints, eff_step, request.config.random_starts, request.config.random_seed))
+            if request.config.physics and session.body is not None:
+                try:
+                    base_samples = build_physics_feasible_samples(base_samples, session.joints, int(request.config.timestep_ms), session)
+                except Exception as exc:
+                    session.events.append({"type": "warning", "message": f"physics base fallback: {exc}"})
+                # Grid samples use grid step for physics
+                grid_phys: list[dict[str, Any]] = []
+                for demo in request.demonstrations:
+                    try:
+                        fps_val = float(getattr(demo, "timeline_fps", 0) or 0)  # type: ignore[attr-defined]
+                    except Exception:
+                        fps_val = 0
+                    if fps_val and fps_val > 0:
+                        eff_step = max(10, min(int(round(1000.0 / fps_val)), 2000))
+                        if eff_step != int(request.config.timestep_ms):
+                            # Find grid samples for this demo (already generated) - regenerate for physics
+                            demo_grid = build_incremental_samples([demo], session.joints, eff_step, request.config.random_starts, request.config.random_seed)
+                            try:
+                                demo_grid = build_physics_feasible_samples(demo_grid, session.joints, eff_step, session)
+                            except Exception:
+                                pass
+                            grid_phys.extend(demo_grid)
+                # Use base+grid_phys to avoid double-counting grid without physics
+                samples = base_samples + grid_phys
+                if samples:
+                    session.events.append({"type": "training", "message": "physics-feasible samples enabled", "samples": len(samples)})
+            else:
+                samples = base_samples + grid_samples
+        else:
+            samples = build_incremental_samples(request.demonstrations, session.joints, request.config.timestep_ms, request.config.random_starts, request.config.random_seed)
+            if request.config.physics and session.body is not None:
+                try:
+                    physics_samples = build_physics_feasible_samples(samples, session.joints, int(request.config.timestep_ms), session)
+                    samples = physics_samples
+                    session.events.append({"type": "training", "message": "physics-feasible samples enabled", "samples": len(samples)})
+                except Exception as exc:
+                    session.events.append({"type": "warning", "message": f"physics-feasible sampling fallback to kinematic: {exc}"})
         if not samples:
             raise ValueError("Capture at least two timeline checkpoints before training.")
         inputs = [
