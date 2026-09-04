@@ -301,17 +301,14 @@ def test_rollout_teacher_forced_vs_autoregressive_diagnoses_mid_peak():
     print(f"\nauto profile: {[round(e, 4) for e in auto_errors]}")
     print(f"teacher profile: {[round(e, 4) for e in teacher_errors]}")
     # Single-step model must be accurate; autoregressive must not drift far.
-    assert max(teacher_errors) < 0.15, (
+    assert max(teacher_errors) < 0.05, (
         f"single-step error too high, teacher={teacher_errors}"
     )
     # Staged aspiration is 0.05 everywhere; previous-delta history gets 0.65 -> ~0.054
     # on this probe (12x reduction, teacher flat). Assert the achieved guardrail
     # and leave the final 0.004 to DAgger/noise-injection follow-up.
-    # Physics-realistic rollout has tracking error ~0.04 due to effort/velocity limits;
-    # mid-trajectory error ~0.28 is expected per ADR 0004, kinematic <0.06 guardrail
-    # is met when physics=False (see repro: kinematic 0.054). Keep physics threshold lenient.
-    assert max(auto_errors) < 0.35, (
-        f"mid-trajectory peak {max(auto_errors):.4f} exceeds 0.35 physics guardrail: {auto_errors}"
+    assert max(auto_errors) < 0.06, (
+        f"mid-trajectory peak {max(auto_errors):.4f} exceeds 0.06 guardrail: {auto_errors}"
     )
 
 
