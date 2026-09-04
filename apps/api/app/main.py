@@ -378,6 +378,33 @@ def count_contacts_at(session: SimulationSession, positions: list[float]) -> int
             pass
 
 
+def expected_input_size(joint_count: int) -> int:
+    """Temporal MLP input size with previous-delta history (still MLP-simple)."""
+    return joint_count * 3 + 1
+
+
+def build_features(
+    current_normalized: list[float],
+    goal_normalized: list[float],
+    progress: float,
+    previous_delta: list[float],
+    expected_size: int,
+) -> "torch.Tensor":
+    """Build model features with backward compat for pre-history models."""
+    base = list(current_normalized) + list(goal_normalized) + [progress]
+    if expected_size == len(current_normalized) * 3 + 1:
+        base = base + list(previous_delta)
+    return torch.tensor([base], dtype=torch.float32)
+
+
+def model_expected_size(model: torch.nn.Module, joint_count: int) -> int:
+    try:
+        in_features = model[0].in_features  # type: ignore[index]
+        return int(in_features)
+    except Exception:
+        return joint_count * 2 + 1
+
+
 def make_model(input_size: int, output_size: int, config: TrainConfig) -> torch.nn.Module:
     layers: list[torch.nn.Module] = []
     size = input_size
@@ -495,28 +522,36 @@ def build_incremental_samples(
                 for joint in joints
             ])
 
+        joint_count = len(joints)
         for start_index_value, initial in enumerate(starts):
             if start_index_value != 0:
                 # Randomized start: expand the approach to the first checkpoint
                 # over multiple velocity-bounded increments instead of one teleport.
                 approach = build_approach_plan(list(initial), list(frames[0].positions), joints, step)
                 previous = list(initial)
+                previous_delta = [0.0] * joint_count
                 for approach_index, waypoint in enumerate(approach):
                     progress = approach_index / len(approach)
                     current_normalized = normalized(previous, joints)
                     next_normalized = normalized(waypoint, joints)
+                    delta = [next_value - current_value for next_value, current_value in zip(next_normalized, current_normalized)]
                     samples.append({
                         "current": current_normalized,
                         "goal": normalized(frames[0].positions, joints),
                         "progress": progress,
-                        "delta": [next_value - current_value for next_value, current_value in zip(next_normalized, current_normalized)],
+                        "previous_delta": list(previous_delta),
+                        "delta": delta,
                     })
+                    previous_delta = list(delta)
                     previous = waypoint
             route = frames
             for segment_index in range(len(route) - 1):
                 segment_start = route[segment_index]
                 segment_end = route[segment_index + 1]
                 duration = max(segment_end.timestamp - segment_start.timestamp, step)
+                # Previous-step delta disambiguates phase within a segment;
+                # zeros at each segment start (still MLP-simple, no recurrence).
+                previous_delta = [0.0] * joint_count
                 for elapsed in np.arange(0, duration, step):
                     progress = min(1.0, elapsed / duration)
                     next_progress = min(1.0, (elapsed + step) / duration)
@@ -524,12 +559,15 @@ def build_incremental_samples(
                     next_state = _lerp_positions(segment_start.positions, segment_end.positions, next_progress)
                     current_normalized = normalized(current, joints)
                     next_normalized = normalized(next_state, joints)
+                    delta = [next_value - current_value for next_value, current_value in zip(next_normalized, current_normalized)]
                     samples.append({
                         "current": current_normalized,
                         "goal": normalized(segment_end.positions, joints),
                         "progress": progress,
-                        "delta": [next_value - current_value for next_value, current_value in zip(next_normalized, current_normalized)],
+                        "previous_delta": list(previous_delta),
+                        "delta": delta,
                     })
+                    previous_delta = list(delta)
     return samples
 
 
@@ -550,11 +588,14 @@ def train_session(session: SimulationSession, request: TrainRequest) -> None:
         )
         if not samples:
             raise ValueError("Capture at least two timeline checkpoints before training.")
-        inputs = [sample["current"] + sample["goal"] + [sample["progress"]] for sample in samples]
+        inputs = [
+            sample["current"] + sample["goal"] + [sample["progress"]] + list(sample.get("previous_delta", [0.0] * joint_count))
+            for sample in samples
+        ]
         targets = [sample["delta"] for sample in samples]
         x = torch.tensor(inputs, dtype=torch.float32)
         y = torch.tensor(targets, dtype=torch.float32)
-        model = make_model(joint_count * 2 + 1, joint_count, request.config)
+        model = make_model(expected_input_size(joint_count), joint_count, request.config)
         optimizer = torch.optim.Adam(model.parameters(), lr=request.config.learning_rate)
         loss_function = torch.nn.SmoothL1Loss()
         steps = request.config.epochs
@@ -711,7 +752,8 @@ def predict(session_id: str, request: PredictRequest) -> dict[str, Any]:
     current_normalized = normalized(current, session.joints)
     target_normalized = normalized(request.target, session.joints)
     if session.model_mode == "temporal":
-        features = torch.tensor([current_normalized + target_normalized + [1.0]], dtype=torch.float32)
+        expected_size = model_expected_size(session.model, len(session.joints))
+        features = build_features(current_normalized, target_normalized, 1.0, [0.0] * len(session.joints), expected_size)
         with torch.no_grad():
             delta = session.model(features)[0].tolist()
         positions = denormalized([value + change for value, change in zip(current_normalized, delta)], session.joints)
@@ -758,15 +800,18 @@ def rollout(session_id: str, request: RolloutRequest) -> dict[str, Any]:
                 total_steps += 1
         else:
             approach_steps = approach_step_count(approach_start, list(ordered[0].positions), session.joints, request.timestep_ms)
+            expected_size = model_expected_size(session.model, joint_count)
+            previous_delta = [0.0] * joint_count
             for approach_index in range(approach_steps):
                 if total_steps >= request.max_steps:
                     break
                 progress = min(1.0, (approach_index + 1) / approach_steps)
                 current_normalized = normalized(current, session.joints)
                 target_normalized = normalized(ordered[0].positions, session.joints)
-                features = torch.tensor([current_normalized + target_normalized + [progress]], dtype=torch.float32)
+                features = build_features(current_normalized, target_normalized, progress, previous_delta, expected_size)
                 with torch.no_grad():
                     delta = session.model(features)[0].tolist()
+                previous_delta = list(delta)
                 current = denormalized([value + change for value, change in zip(current_normalized, delta)], session.joints)
                 current_timestamp += request.timestep_ms
                 expected = _lerp_positions(approach_start, ordered[0].positions, progress)
@@ -795,17 +840,20 @@ def rollout(session_id: str, request: RolloutRequest) -> dict[str, Any]:
             leftover -= 1
             index += 1
         raw_steps = scaled
+    expected_size = model_expected_size(session.model, joint_count)
     for checkpoint_index, segment_steps in zip(range(1, len(ordered)), raw_steps):
         checkpoint = ordered[checkpoint_index]
+        previous_delta = [0.0] * joint_count
         for step_index in range(segment_steps):
             if total_steps >= request.max_steps:
                 break
             progress = min(1.0, (step_index + 1) / segment_steps)
             current_normalized = normalized(current, session.joints)
             target_normalized = normalized(checkpoint.positions, session.joints)
-            features = torch.tensor([current_normalized + target_normalized + [progress]], dtype=torch.float32)
+            features = build_features(current_normalized, target_normalized, progress, previous_delta, expected_size)
             with torch.no_grad():
                 delta = session.model(features)[0].tolist()
+            previous_delta = list(delta)
             current = denormalized([value + change for value, change in zip(current_normalized, delta)], session.joints)
             current_timestamp += request.timestep_ms
             expected = _lerp_positions(

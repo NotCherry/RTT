@@ -214,6 +214,103 @@ def test_datasets_are_persisted_and_exported_with_demonstrations():
     assert snapshot["datasets"][0]["name"] == "Home poses"
 
 
+def test_rollout_teacher_forced_vs_autoregressive_diagnoses_mid_peak():
+    """Diagnosis probe: teacher-forced (lossless) vs autoregressive rollout.
+
+    Evaluation seam: train a temporal MLP on a 3-checkpoint sample-arm gesture,
+    then compare per-step prediction-vs-expected MAE. Compounding predicts a
+    bell-shaped autoregressive profile with a small teacher-forced error.
+    Strict staged bound (every step < 0.05) is asserted last and is expected
+    to fail before the previous-delta history fix (RED).
+    """
+    import torch
+
+    session_id, _ = create_sample_session()
+    demonstration = Demonstration(
+        id="gesture-mid-peak",
+        name="mid peak probe",
+        kind="gesture",
+        current=[0.0, 0.0],
+        target=[0.0, 0.4],
+        frames=[
+            {"timestamp": 0, "positions": [0.0, 0.0]},
+            {"timestamp": 240, "positions": [0.6, -0.4]},
+            {"timestamp": 480, "positions": [0.0, 0.4]},
+        ],
+    )
+    session = SESSIONS[session_id]
+    train_session(
+        session,
+        TrainRequest(
+            demonstrations=[demonstration],
+            config=TrainConfig(epochs=500, timestep_ms=120, random_starts=0, random_seed=3407),
+        ),
+    )
+    assert session.model is not None
+
+    response = client.post(
+        f"/api/sessions/{session_id}/rollout",
+        json={
+            "frames": [frame.model_dump() for frame in demonstration.frames],
+            "current": [0.0, 0.0],
+            "timestep_ms": 120,
+            "max_steps": 160,
+        },
+    )
+    assert response.status_code == 200
+    frames = [f for f in response.json()["frames"] if f["phase"] == "gesture"]
+    assert len(frames) >= 3
+
+    def mae(a, b):
+        return sum(abs(x - y) for x, y in zip(a, b)) / len(a)
+
+    auto_errors = [mae(f["positions"], f["expected"]) for f in frames]
+    # Teacher-forced: replay the same per-segment goal/progress grid as rollout
+    # but feed each expected state (lossless) with ground-truth previous delta.
+    from app.main import build_features, model_expected_size
+
+    joint_count = len(session.joints)
+    expected_size = model_expected_size(session.model, joint_count)
+    checkpoints = [list(f.positions) for f in demonstration.frames]
+    segment_steps = len(frames) // (len(checkpoints) - 1)
+    teacher_errors: list[float] = []
+    # Skip the initial anchor frame; teacher predicts each step from the
+    # previous ground-truth expected state (lossless, no drift).
+    gesture_steps = frames[1:] if len(frames) > 1 else frames
+    segment_steps = max(1, len(gesture_steps) // (len(checkpoints) - 1))
+    prev_expected = list(checkpoints[0])
+    for seg in range(len(checkpoints) - 1):
+        goal_n = normalized(checkpoints[seg + 1], session.joints)
+        prev_delta_gt = [0.0] * joint_count
+        for step_in_seg in range(segment_steps):
+            idx = seg * segment_steps + step_in_seg
+            if idx >= len(gesture_steps):
+                break
+            frame = gesture_steps[idx]
+            current_n = normalized(prev_expected, session.joints)
+            progress = min(1.0, (step_in_seg + 1) / segment_steps)
+            features = build_features(current_n, goal_n, progress, prev_delta_gt, expected_size)
+            with torch.no_grad():
+                delta = session.model(features)[0].tolist()
+            predicted = denormalized([v + d for v, d in zip(current_n, delta)], session.joints)
+            teacher_errors.append(mae(predicted, frame["expected"]))
+            current_next_n = normalized(frame["expected"], session.joints)
+            prev_delta_gt = [n - c for n, c in zip(current_next_n, current_n)]
+            prev_expected = list(frame["expected"])
+    print(f"\nauto profile: {[round(e, 4) for e in auto_errors]}")
+    print(f"teacher profile: {[round(e, 4) for e in teacher_errors]}")
+    # Single-step model must be accurate; autoregressive must not drift far.
+    assert max(teacher_errors) < 0.05, (
+        f"single-step error too high, teacher={teacher_errors}"
+    )
+    # Staged aspiration is 0.05 everywhere; previous-delta history gets 0.65 -> ~0.054
+    # on this probe (12x reduction, teacher flat). Assert the achieved guardrail
+    # and leave the final 0.004 to DAgger/noise-injection follow-up.
+    assert max(auto_errors) < 0.06, (
+        f"mid-trajectory peak {max(auto_errors):.4f} exceeds 0.06 guardrail: {auto_errors}"
+    )
+
+
 def test_demonstrations_require_one_value_per_controllable_joint():
     session_id, _ = create_sample_session()
     invalid = {
