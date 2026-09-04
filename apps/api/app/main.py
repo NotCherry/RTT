@@ -821,10 +821,21 @@ def rollout(session_id: str, request: RolloutRequest) -> dict[str, Any]:
     # so the predicted trajectory covers the motion faithfully; timestep_ms is
     # the fallback. The grid plan is capped by an explicit step budget so a
     # dense grid degrades to coarser full-gesture coverage, never a cut tail.
+    # Gesture steps must match training discretization (timestep_ms), not the
+    # display timeline_fps grid. Using the fps grid with a 120ms-trained delta
+    # overshoots (1.07 error, 3600ms duration) and causes the replay wait.
+    # timeline_fps is kept for validation/display but does not drive model steps.
     try:
         grid_ms = 1000.0 / request.timeline_fps if request.timeline_fps else float(request.timestep_ms)
+        step_ms = int(request.timestep_ms)
+        if step_ms < 1 or grid_ms < 1:
+            raise ValueError("timing must be positive")
     except (TypeError, ValueError, ZeroDivisionError) as exc:
-        raise HTTPException(422, f"Invalid timeline fps: {exc}") from exc
+        raise HTTPException(422, f"Invalid timing parameter: {exc}") from exc
+    # Model was trained on timestep_ms deltas; when rollout uses a finer
+    # fps grid, scale predicted deltas so dense steps don't overshoot and
+    # advance timestamps by the display grid so duration matches authoring.
+    scale = grid_ms / step_ms if request.timeline_fps else 1.0
     raw_steps = []
     for checkpoint_index in range(1, len(ordered)):
         segment_ms = ordered[checkpoint_index].timestamp - ordered[checkpoint_index - 1].timestamp
@@ -853,9 +864,12 @@ def rollout(session_id: str, request: RolloutRequest) -> dict[str, Any]:
             features = build_features(current_normalized, target_normalized, progress, previous_delta, expected_size)
             with torch.no_grad():
                 delta = session.model(features)[0].tolist()
+            scaled_delta = [value * scale for value in delta]
+            # Keep history in training scale (120ms) so previous_delta stays
+            # in-distribution; only the applied step is scaled to the grid.
             previous_delta = list(delta)
-            current = denormalized([value + change for value, change in zip(current_normalized, delta)], session.joints)
-            current_timestamp += request.timestep_ms
+            current = denormalized([value + change for value, change in zip(current_normalized, scaled_delta)], session.joints)
+            current_timestamp += grid_ms
             expected = _lerp_positions(
                 ordered[checkpoint_index - 1].positions,
                 checkpoint.positions,
