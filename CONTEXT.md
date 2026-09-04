@@ -54,6 +54,28 @@ _Avoid_: Expected behavior, demonstration frame
 Diagnostic information about a training run, such as progress or loss, shown to help understand the model rather than define the teaching workflow.
 _Avoid_: Demonstration quality
 
+## Physics Realism
+
+**Mass**:
+Per-link inertial mass in kilograms from URDF `<inertial><mass value>`. Zero-mass links are kinematic and ignore gravity; positive-mass links respond to gravity and effort limits.
+_Avoid_: Visual-only weight, mesh mass
+
+**Inertia**:
+The 3×3 rotational inertia (ixx, ixy, ixz, iyy, iyz, izz) for a link, in kg·m², from URDF `<inertial><inertia>`. Must be positive-definite; may be synthesized from primitive geometry via `calculateLocalInertia` when not authored.
+_Avoid_: Joint limit, collision shape
+
+**Dynamics**:
+Joint-level physical properties from URDF `<joint><limit effort velocity>` and `<dynamics damping friction>` that bound feasible motion. Effort maps to `setJointMotorControl2(force)`, velocity to `maxVelocity`.
+_Avoid_: Training hyperparameter, visual damping
+
+**Physics-realistic replay**:
+Execution of a predicted gesture through PyBullet `POSITION_CONTROL` + `stepSimulation` substeps + `getJointState` read-back, so the achieved pose reflects mass, gravity, effort/velocity clipping, and contact response rather than teleport (`resetJointState`).
+_Avoid_: Kinematic teleport replay, pure visual interpolation
+
+**Tracking error**:
+The per-step difference between a model-predicted target position and the physics-achieved position after stepping, reported alongside contact count and clip count as a realism diagnostic.
+_Avoid_: Training loss, native MAE vs expected
+
 ## Model Exploration
 
 **MLP**:

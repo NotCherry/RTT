@@ -10,7 +10,7 @@ export type Visual = {
   origin: Origin;
   color: number[];
 };
-export type Link = { name: string; visuals: Visual[] };
+export type Link = { name: string; visuals: Visual[]; collisions?: Visual[]; inertial?: { mass: number; inertia: { ixx: number; iyy: number; izz: number; ixy: number; ixz: number; iyz: number }; origin: Origin; synthesized: boolean } };
 export type Joint = {
   name: string;
   type: string;
@@ -20,6 +20,10 @@ export type Joint = {
   axis: number[];
   lower: number;
   upper: number;
+  velocity: number;
+  effort: number;
+  damping: number;
+  friction: number;
   controllable: boolean;
 };
 export type Robot = {
@@ -29,6 +33,9 @@ export type Robot = {
   root: string;
   links: Link[];
   joints: Joint[];
+  gravity?: number[];
+  use_fixed_base?: boolean;
+  physics_timestep?: number;
 };
 export type SimulationState = { positions: number[]; training: boolean };
 export type DemonstrationFrame = {
@@ -73,10 +80,21 @@ export type TrainingConfig = {
   random_starts: number;
   random_seed: number;
   rollout_steps: number;
+  physics: boolean;
 };
 export type RolloutFrame = {
   timestamp: number;
   positions: number[];
   expected: number[];
   phase?: "approach" | "gesture";
+  tracking_error?: number;
+  clipped?: number;
+};
+export type RolloutResponse = {
+  frames: RolloutFrame[];
+  steps: number;
+  collisions: number;
+  max_tracking_error: number;
+  clipped_steps: number;
+  physics: boolean;
 };

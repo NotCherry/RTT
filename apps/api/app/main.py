@@ -99,6 +99,59 @@ def parse_geometry(geometry: ET.Element, link_name: str) -> dict[str, Any]:
         return {"type": "sphere", "radius": number(sphere.attrib.get("radius"), 0.1)}
     raise ValueError(f"Link '{link_name}' has unsupported or missing geometry. Use box, cylinder, or sphere.")
 
+PHYSICS_TIMESTEP = 1.0 / 240.0
+DEFAULT_LINK_MASS = 1.0
+
+def _compute_box_inertia(mass: float, size: list[float]) -> dict[str, float]:
+    sx, sy, sz = size
+    return {
+        "ixx": mass / 12.0 * (sy * sy + sz * sz),
+        "ixy": 0.0,
+        "ixz": 0.0,
+        "iyy": mass / 12.0 * (sx * sx + sz * sz),
+        "iyz": 0.0,
+        "izz": mass / 12.0 * (sx * sx + sy * sy),
+    }
+
+def _compute_cylinder_inertia(mass: float, radius: float, length: float) -> dict[str, float]:
+    r2 = radius * radius
+    return {
+        "ixx": mass / 12.0 * (3 * r2 + length * length),
+        "ixy": 0.0,
+        "ixz": 0.0,
+        "iyy": mass / 12.0 * (3 * r2 + length * length),
+        "iyz": 0.0,
+        "izz": mass * r2 / 2.0,
+    }
+
+def _compute_sphere_inertia(mass: float, radius: float) -> dict[str, float]:
+    i = 2.0 / 5.0 * mass * radius * radius
+    return {"ixx": i, "ixy": 0.0, "ixz": 0.0, "iyy": i, "iyz": 0.0, "izz": i}
+
+def synthesize_inertia(geometry: dict[str, Any], mass: float) -> dict[str, float]:
+    gtype = geometry.get("type")
+    if gtype == "box":
+        size = geometry.get("size", [0.2, 0.2, 0.2])
+        try:
+            sx, sy, sz = float(size[0]), float(size[1]), float(size[2])
+        except Exception:
+            sx, sy, sz = 0.2, 0.2, 0.2
+        return _compute_box_inertia(mass, [sx, sy, sz])
+    if gtype == "cylinder":
+        try:
+            radius = float(geometry.get("radius", 0.1))
+            length = float(geometry.get("length", 0.3))
+        except Exception:
+            radius, length = 0.1, 0.3
+        return _compute_cylinder_inertia(mass, radius, length)
+    if gtype == "sphere":
+        try:
+            radius = float(geometry.get("radius", 0.1))
+        except Exception:
+            radius = 0.1
+        return _compute_sphere_inertia(mass, radius)
+    return {"ixx": 0.01, "ixy": 0.0, "ixz": 0.0, "iyy": 0.01, "iyz": 0.0, "izz": 0.01}
+
 
 def parse_urdf(raw: bytes, filename: str, stored_path: Path) -> dict[str, Any]:
     try:
@@ -129,7 +182,61 @@ def parse_urdf(raw: bytes, filename: str, stored_path: Path) -> dict[str, Any]:
                 if len(color) == 3:
                     color.append(1.0)
             visuals.append({"geometry": geometry, "origin": origin(visual.find("origin")), "color": color})
-        links.append({"name": name, "visuals": visuals})
+        collisions: list[dict[str, Any]] = []
+        for collision in link.findall("collision"):
+            geometry_element = collision.find("geometry")
+            if geometry_element is None:
+                continue
+            geometry = parse_geometry(geometry_element, name)
+            collisions.append({"geometry": geometry, "origin": origin(collision.find("origin"))})
+        if not collisions and visuals:
+            collisions = [{"geometry": dict(item["geometry"]), "origin": dict(item["origin"])} for item in visuals]
+        inertial_elem = link.find("inertial")
+        inertial: dict[str, Any]
+        synthesized = False
+        if inertial_elem is not None:
+            mass_value = inertial_elem.find("mass")
+            inertia_value = inertial_elem.find("inertia")
+            inertial_origin = origin(inertial_elem.find("origin"))
+            if mass_value is not None and mass_value.attrib.get("value") is not None:
+                try:
+                    mass = float(mass_value.attrib.get("value", ""))
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(f"Link '{name}' has invalid inertial mass.") from exc
+                if not math.isfinite(mass) or mass <= 0:
+                    raise ValueError(f"Link '{name}' has invalid inertial mass '{mass}'. Mass must be a finite positive number.")
+            else:
+                mass = DEFAULT_LINK_MASS
+                synthesized = True
+            if inertia_value is not None:
+                try:
+                    ixx = float(inertia_value.attrib.get("ixx", ""))
+                    iyy = float(inertia_value.attrib.get("iyy", ""))
+                    izz = float(inertia_value.attrib.get("izz", ""))
+                    ixy = float(inertia_value.attrib.get("ixy", "0"))
+                    ixz = float(inertia_value.attrib.get("ixz", "0"))
+                    iyz = float(inertia_value.attrib.get("iyz", "0"))
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(f"Link '{name}' has invalid inertia values.") from exc
+                if not all(math.isfinite(v) for v in [ixx, iyy, izz, ixy, ixz, iyz]):
+                    raise ValueError(f"Link '{name}' has non-finite inertia.")
+                if ixx <= 0 or iyy <= 0 or izz <= 0:
+                    raise ValueError(f"Link '{name}' has non-positive principal inertia (ixx,iyy,izz must be >0).")
+                inertia = {"ixx": ixx, "iyy": iyy, "izz": izz, "ixy": ixy, "ixz": ixz, "iyz": iyz}
+                if synthesized:
+                    pass
+            else:
+                base_geom = collisions[0]["geometry"] if collisions else (visuals[0]["geometry"] if visuals else {"type": "box", "size": [0.2, 0.2, 0.2]})
+                inertia = synthesize_inertia(base_geom, mass)
+                synthesized = True
+        else:
+            base_geom = collisions[0]["geometry"] if collisions else (visuals[0]["geometry"] if visuals else {"type": "box", "size": [0.2, 0.2, 0.2]})
+            mass = DEFAULT_LINK_MASS
+            inertia = synthesize_inertia(base_geom, mass)
+            inertial_origin = {"xyz": [0.0, 0.0, 0.0], "rpy": [0.0, 0.0, 0.0]}
+            synthesized = True
+        inertial = {"mass": mass, "inertia": inertia, "origin": inertial_origin, "synthesized": synthesized}
+        links.append({"name": name, "visuals": visuals, "collisions": collisions, "inertial": inertial})
 
     joints: list[dict[str, Any]] = []
     child_names: set[str] = set()
@@ -159,6 +266,17 @@ def parse_urdf(raw: bytes, filename: str, stored_path: Path) -> dict[str, Any]:
         velocity = number(limit.attrib.get("velocity") if limit is not None else None, default_velocity)
         if not math.isfinite(velocity) or velocity <= 0:
             velocity = default_velocity
+        default_effort = 20.0
+        effort = number(limit.attrib.get("effort") if limit is not None else None, default_effort)
+        if not math.isfinite(effort) or effort <= 0:
+            effort = default_effort
+        dynamics_elem = joint.find("dynamics")
+        damping = number(dynamics_elem.attrib.get("damping") if dynamics_elem is not None else None, 0.0)
+        friction = number(dynamics_elem.attrib.get("friction") if dynamics_elem is not None else None, 0.0)
+        if not math.isfinite(damping) or damping < 0:
+            damping = 0.0
+        if not math.isfinite(friction) or friction < 0:
+            friction = 0.0
         joints.append({
             "name": name,
             "type": joint_type,
@@ -169,6 +287,9 @@ def parse_urdf(raw: bytes, filename: str, stored_path: Path) -> dict[str, Any]:
             "lower": lower,
             "upper": upper,
             "velocity": velocity,
+            "effort": effort,
+            "damping": damping,
+            "friction": friction,
             "controllable": joint_type in {"revolute", "continuous", "prismatic"},
         })
 
@@ -186,6 +307,9 @@ def parse_urdf(raw: bytes, filename: str, stored_path: Path) -> dict[str, Any]:
         "root": root_link,
         "links": links,
         "joints": joints,
+        "gravity": [0.0, 0.0, -9.81],
+        "use_fixed_base": True,
+        "physics_timestep": PHYSICS_TIMESTEP,
     }
 
 
@@ -207,6 +331,7 @@ class TrainConfig(BaseModel):
     random_starts: int = Field(4, ge=0, le=64)
     random_seed: int = Field(7, ge=0, le=1_000_000)
     rollout_steps: int = Field(160, ge=1, le=2000)
+    physics: bool = Field(True, description="When true, generate physics-feasible deltas; false uses kinematic teleport for fast training.")
 
 
 class DemonstrationFrame(BaseModel):
@@ -259,6 +384,8 @@ class TrainRequest(BaseModel):
 
 class SessionRequest(BaseModel):
     robot_id: str
+    gravity: list[float] | None = Field(default=None, description="Optional gravity vector [x,y,z]; defaults to robot gravity.")
+    use_fixed_base: bool | None = Field(default=None, description="Override fixed base; defaults to robot setting.")
 
 
 class PredictRequest(BaseModel):
@@ -273,10 +400,13 @@ class RolloutRequest(BaseModel):
     max_steps: int = Field(160, ge=1, le=2000)
     approach_mode: Literal["scripted", "learned"] = "scripted"
     timeline_fps: int | None = Field(default=None, ge=1, le=1000)
+    physics: bool = Field(True, description="When true, rollout servos through PyBullet with substeps; false uses kinematic assign.")
+    gravity: list[float] | None = Field(default=None, description="Optional gravity override for this rollout.")
+    use_fixed_base: bool | None = Field(default=None)
 
 
 class SimulationSession:
-    def __init__(self, session_id: str, robot: dict[str, Any]):
+    def __init__(self, session_id: str, robot: dict[str, Any], gravity: list[float] | None = None, use_fixed_base: bool | None = None):
         self.id = session_id
         self.robot = robot
         self.lock = threading.Lock()
@@ -288,13 +418,24 @@ class SimulationSession:
         self.demonstrations: list[dict[str, Any]] = []
         self.datasets: list[dict[str, Any]] = []
         self.client = p.connect(p.DIRECT)
-        p.setGravity(0, 0, -9.81, physicsClientId=self.client)
+        resolved_gravity = gravity if gravity is not None else robot.get("gravity", [0.0, 0.0, -9.81])
+        try:
+            gx, gy, gz = float(resolved_gravity[0]), float(resolved_gravity[1]), float(resolved_gravity[2])
+        except Exception:
+            gx, gy, gz = 0.0, 0.0, -9.81
+        self.gravity = [gx, gy, gz]
+        p.setGravity(gx, gy, gz, physicsClientId=self.client)
+        try:
+            p.setTimeStep(float(robot.get("physics_timestep", PHYSICS_TIMESTEP)), physicsClientId=self.client)
+        except Exception:
+            p.setTimeStep(PHYSICS_TIMESTEP, physicsClientId=self.client)
+        self.use_fixed_base = robot.get("use_fixed_base", True) if use_fixed_base is None else bool(use_fixed_base)
         self.body: int | None = None
         try:
             try:
-                self.body = p.loadURDF(robot["path"], useFixedBase=True, physicsClientId=self.client, flags=p.URDF_USE_SELF_COLLISION)
+                self.body = p.loadURDF(robot["path"], useFixedBase=self.use_fixed_base, physicsClientId=self.client, flags=p.URDF_USE_SELF_COLLISION)
             except TypeError:
-                self.body = p.loadURDF(robot["path"], useFixedBase=True, physicsClientId=self.client)
+                self.body = p.loadURDF(robot["path"], useFixedBase=self.use_fixed_base, physicsClientId=self.client)
         except Exception as exc:
             self.events.append({"type": "warning", "message": f"PyBullet could not load the URDF; using kinematic preview: {exc}"})
         self.joints = [joint for joint in robot["joints"] if joint["controllable"]]
@@ -308,6 +449,10 @@ class SimulationSession:
                 if match is not None:
                     self.pybullet_indices.append(index)
             self._apply_positions()
+        for link in robot.get("links", []):
+            inertial = link.get("inertial", {})
+            if inertial.get("synthesized"):
+                self.events.append({"type": "warning", "message": f"Link '{link.get('name')}' inertial mass/inertia synthesized from geometry (mass={inertial.get('mass')}). Re-upload URDF with explicit <inertial> for precise dynamics."})
 
     def _apply_positions(self) -> None:
         if self.body is None:
@@ -323,6 +468,55 @@ class SimulationSession:
         except (TypeError, ValueError) as exc:
             raise ValueError("Joint positions must be numeric.") from exc
         self._apply_positions()
+
+    def servo_to_positions(self, targets: list[float], timestep_ms: int) -> dict[str, Any]:
+        """Physics-realistic servo: POSITION_CONTROL with effort/velocity limits + substeps."""
+        if self.body is None or not self.pybullet_indices:
+            self.set_positions(targets)
+            return {"achieved": list(self.positions), "tracking_error": 0.0, "clipped": 0}
+        try:
+            clamped = [clamp(float(v), j["lower"], j["upper"]) for v, j in zip(targets, self.joints)]
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Joint positions must be numeric.") from exc
+        for target, index, joint in zip(clamped, self.pybullet_indices, self.joints):
+            try:
+                p.setJointMotorControl2(
+                    self.body,
+                    index,
+                    p.POSITION_CONTROL,
+                    targetPosition=target,
+                    force=float(joint.get("effort", 20.0)),
+                    maxVelocity=float(joint.get("velocity", 2.0)),
+                    physicsClientId=self.client,
+                )
+            except Exception:
+                pass
+        try:
+            substeps = max(1, int(round(float(timestep_ms) / 1000.0 / PHYSICS_TIMESTEP))) if timestep_ms else 1
+        except (TypeError, ValueError, ZeroDivisionError):
+            substeps = 1
+        substeps = max(1, min(substeps, 200))
+        for _ in range(substeps):
+            p.stepSimulation(physicsClientId=self.client)
+        achieved: list[float] = []
+        for index, joint in zip(self.pybullet_indices, self.joints):
+            try:
+                achieved.append(float(p.getJointState(self.body, index, physicsClientId=self.client)[0]))
+            except Exception:
+                achieved.append(clamped[len(achieved)])
+        self.positions = achieved
+        errors = [abs(a - t) for a, t in zip(achieved, clamped)]
+        tracking_error = max(errors) if errors else 0.0
+        clipped = sum(1 for e in errors if e > 1e-4)
+        return {"achieved": achieved, "tracking_error": tracking_error, "clipped": clipped}
+
+    def set_gravity(self, gravity: list[float]) -> None:
+        try:
+            gx, gy, gz = float(gravity[0]), float(gravity[1]), float(gravity[2])
+        except Exception as exc:
+            raise ValueError("Gravity must be a 3-element numeric vector.") from exc
+        self.gravity = [gx, gy, gz]
+        p.setGravity(gx, gy, gz, physicsClientId=self.client)
 
     def step(self) -> None:
         if self.body is not None:
@@ -487,6 +681,42 @@ def authored_frames(demonstration: Demonstration) -> list[DemonstrationFrame]:
     return sorted(demonstration.frames, key=lambda frame: frame.timestamp)
 
 
+def build_physics_feasible_samples(
+    samples: list[dict[str, Any]],
+    joints: list[dict[str, Any]],
+    timestep_ms: int,
+    session: "SimulationSession",
+) -> list[dict[str, Any]]:
+    """Convert kinematic deltas to physics-feasible deltas via POSITION_CONTROL servo."""
+    if session.body is None or not session.pybullet_indices:
+        return samples
+    saved = list(session.positions)
+    feasible: list[dict[str, Any]] = []
+    try:
+        for sample in samples:
+            current_norm = sample["current"]
+            try:
+                cur_pos = denormalized(list(current_norm), joints)
+                session.set_positions(cur_pos)
+                delta_norm = sample["delta"]
+                next_norm = [c + d for c, d in zip(current_norm, delta_norm)]
+                target_pos = denormalized(next_norm, joints)
+                result = session.servo_to_positions(target_pos, timestep_ms)
+                achieved = result["achieved"]
+                achieved_norm = normalized(achieved, joints)
+                feasible_delta = [a - c for a, c in zip(achieved_norm, current_norm)]
+                new_sample = dict(sample)
+                new_sample["delta"] = feasible_delta
+                feasible.append(new_sample)
+            except Exception:
+                feasible.append(sample)
+    finally:
+        try:
+            session.set_positions(saved)
+        except Exception:
+            pass
+    return feasible
+
 def build_incremental_samples(
     demonstrations: list[Demonstration],
     joints: list[dict[str, Any]],
@@ -586,6 +816,13 @@ def train_session(session: SimulationSession, request: TrainRequest) -> None:
             request.config.random_starts,
             request.config.random_seed,
         )
+        if request.config.physics and session.body is not None:
+            try:
+                physics_samples = build_physics_feasible_samples(samples, session.joints, request.config.timestep_ms, session)
+                samples = physics_samples
+                session.events.append({"type": "training", "message": "physics-feasible samples enabled", "samples": len(samples)})
+            except Exception as exc:
+                session.events.append({"type": "warning", "message": f"physics-feasible sampling fallback to kinematic: {exc}"})
         if not samples:
             raise ValueError("Capture at least two timeline checkpoints before training.")
         inputs = [
@@ -668,7 +905,17 @@ def create_session(request: SessionRequest) -> dict[str, Any]:
     if robot is None:
         raise HTTPException(404, "Robot not found. Upload or load a robot first.")
     session_id = uuid.uuid4().hex
-    session = SimulationSession(session_id, robot)
+    try:
+        gravity = None
+        if request.gravity is not None:
+            if len(request.gravity) != 3:
+                raise ValueError("Gravity must have 3 components.")
+            gravity = [float(v) for v in request.gravity]
+            if not all(math.isfinite(v) for v in gravity):
+                raise ValueError("Gravity components must be finite.")
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    session = SimulationSession(session_id, robot, gravity=gravity, use_fixed_base=request.use_fixed_base)
     SESSIONS[session_id] = session
     return {"session_id": session_id, "robot": serializable_robot(robot), "state": session.state()}
 
@@ -781,110 +1028,152 @@ def rollout(session_id: str, request: RolloutRequest) -> dict[str, Any]:
     current = request.current or list(ordered[0].positions)
     if len(current) != joint_count:
         raise HTTPException(422, "The current pose does not match the robot joints.")
-    needs_approach = any(abs(a - b) > 1e-9 for a, b in zip(list(current), ordered[0].positions))
-    result = [{"timestamp": 0, "positions": list(current), "expected": list(ordered[0].positions), "phase": "approach" if needs_approach else "gesture"}]
-    current_timestamp = 0
-    total_steps = 0
-    # Stage 1: approach from a randomized start to the first checkpoint.
-    # Default is the scripted bounded-interpolation controller; "learned"
-    # runs the behavior model instead (kept for experiments only).
-    approach_start = list(current)
-    if any(abs(a - b) > 1e-9 for a, b in zip(approach_start, ordered[0].positions)):
-        if request.approach_mode == "scripted":
-            for waypoint in build_approach_plan(approach_start, list(ordered[0].positions), session.joints, request.timestep_ms):
-                if total_steps >= request.max_steps:
-                    break
-                current = list(waypoint)
-                current_timestamp += request.timestep_ms
-                result.append({"timestamp": current_timestamp, "positions": list(current), "expected": list(waypoint), "phase": "approach"})
-                total_steps += 1
-        else:
-            approach_steps = approach_step_count(approach_start, list(ordered[0].positions), session.joints, request.timestep_ms)
-            expected_size = model_expected_size(session.model, joint_count)
+    saved_positions = list(session.positions)
+    saved_gravity = list(session.gravity)
+    if request.gravity is not None:
+        try:
+            if len(request.gravity) != 3:
+                raise ValueError("Gravity must have 3 components.")
+            session.set_gravity([float(v) for v in request.gravity])
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+    use_physics = bool(request.physics) and session.body is not None
+    try:
+        if use_physics:
+            try:
+                session.set_positions(list(current))
+            except ValueError:
+                pass
+        needs_approach = any(abs(a - b) > 1e-9 for a, b in zip(list(current), ordered[0].positions))
+        result: list[dict[str, Any]] = [{"timestamp": 0, "positions": list(current), "expected": list(ordered[0].positions), "phase": "approach" if needs_approach else "gesture", "tracking_error": 0.0, "clipped": 0}]
+        current_timestamp = 0
+        total_steps = 0
+        max_tracking_error = 0.0
+        total_clipped = 0
+        approach_start = list(current)
+        if any(abs(a - b) > 1e-9 for a, b in zip(approach_start, ordered[0].positions)):
+            if request.approach_mode == "scripted":
+                for waypoint in build_approach_plan(approach_start, list(ordered[0].positions), session.joints, request.timestep_ms):
+                    if total_steps >= request.max_steps:
+                        break
+                    if use_physics:
+                        servo = session.servo_to_positions(list(waypoint), request.timestep_ms)
+                        current = list(servo["achieved"])
+                        max_tracking_error = max(max_tracking_error, float(servo["tracking_error"]))
+                        total_clipped += int(servo["clipped"])
+                        entry_error = float(servo["tracking_error"])
+                        entry_clipped = int(servo["clipped"])
+                    else:
+                        current = list(waypoint)
+                        entry_error = 0.0
+                        entry_clipped = 0
+                    current_timestamp += request.timestep_ms
+                    result.append({"timestamp": current_timestamp, "positions": list(current), "expected": list(waypoint), "phase": "approach", "tracking_error": entry_error, "clipped": entry_clipped})
+                    total_steps += 1
+            else:
+                approach_steps = approach_step_count(approach_start, list(ordered[0].positions), session.joints, request.timestep_ms)
+                expected_size = model_expected_size(session.model, joint_count)
+                previous_delta = [0.0] * joint_count
+                for approach_index in range(approach_steps):
+                    if total_steps >= request.max_steps:
+                        break
+                    progress = min(1.0, (approach_index + 1) / approach_steps)
+                    current_normalized = normalized(current, session.joints)
+                    target_normalized = normalized(ordered[0].positions, session.joints)
+                    features = build_features(current_normalized, target_normalized, progress, previous_delta, expected_size)
+                    with torch.no_grad():
+                        delta = session.model(features)[0].tolist()
+                    previous_delta = list(delta)
+                    predicted = denormalized([value + change for value, change in zip(current_normalized, delta)], session.joints)
+                    if use_physics:
+                        servo = session.servo_to_positions(predicted, request.timestep_ms)
+                        current = list(servo["achieved"])
+                        max_tracking_error = max(max_tracking_error, float(servo["tracking_error"]))
+                        total_clipped += int(servo["clipped"])
+                        entry_error = float(servo["tracking_error"])
+                        entry_clipped = int(servo["clipped"])
+                    else:
+                        current = predicted
+                        entry_error = 0.0
+                        entry_clipped = 0
+                    current_timestamp += request.timestep_ms
+                    expected = _lerp_positions(approach_start, ordered[0].positions, progress)
+                    result.append({"timestamp": current_timestamp, "positions": list(current), "expected": expected, "phase": "approach", "tracking_error": entry_error, "clipped": entry_clipped})
+                    total_steps += 1
+        try:
+            grid_ms = 1000.0 / request.timeline_fps if request.timeline_fps else float(request.timestep_ms)
+            step_ms = int(request.timestep_ms)
+            if step_ms < 1 or grid_ms < 1:
+                raise ValueError("timing must be positive")
+        except (TypeError, ValueError, ZeroDivisionError) as exc:
+            raise HTTPException(422, f"Invalid timing parameter: {exc}") from exc
+        scale = grid_ms / step_ms if request.timeline_fps else 1.0
+        raw_steps = []
+        for checkpoint_index in range(1, len(ordered)):
+            segment_ms = ordered[checkpoint_index].timestamp - ordered[checkpoint_index - 1].timestamp
+            raw_steps.append(max(1, math.ceil(max(segment_ms, grid_ms) / grid_ms)))
+        remaining = max(0, request.max_steps - total_steps)
+        if sum(raw_steps) > remaining:
+            scaled = [math.floor(steps * remaining / sum(raw_steps)) for steps in raw_steps] if remaining else [0] * len(raw_steps)
+            leftover = remaining - sum(scaled)
+            largest_first = sorted(range(len(raw_steps)), key=lambda index: raw_steps[index], reverse=True)
+            index = 0
+            while leftover > 0 and largest_first:
+                scaled[largest_first[index % len(largest_first)]] += 1
+                leftover -= 1
+                index += 1
+            raw_steps = scaled
+        expected_size = model_expected_size(session.model, joint_count)
+        for checkpoint_index, segment_steps in zip(range(1, len(ordered)), raw_steps):
+            checkpoint = ordered[checkpoint_index]
             previous_delta = [0.0] * joint_count
-            for approach_index in range(approach_steps):
+            for step_index in range(segment_steps):
                 if total_steps >= request.max_steps:
                     break
-                progress = min(1.0, (approach_index + 1) / approach_steps)
+                progress = min(1.0, (step_index + 1) / segment_steps)
                 current_normalized = normalized(current, session.joints)
-                target_normalized = normalized(ordered[0].positions, session.joints)
+                target_normalized = normalized(checkpoint.positions, session.joints)
                 features = build_features(current_normalized, target_normalized, progress, previous_delta, expected_size)
                 with torch.no_grad():
                     delta = session.model(features)[0].tolist()
+                scaled_delta = [value * scale for value in delta]
                 previous_delta = list(delta)
-                current = denormalized([value + change for value, change in zip(current_normalized, delta)], session.joints)
-                current_timestamp += request.timestep_ms
-                expected = _lerp_positions(approach_start, ordered[0].positions, progress)
-                result.append({"timestamp": current_timestamp, "positions": list(current), "expected": expected, "phase": "approach"})
+                predicted = denormalized([value + change for value, change in zip(current_normalized, scaled_delta)], session.joints)
+                if use_physics:
+                    servo = session.servo_to_positions(predicted, int(grid_ms))
+                    current = list(servo["achieved"])
+                    max_tracking_error = max(max_tracking_error, float(servo["tracking_error"]))
+                    total_clipped += int(servo["clipped"])
+                    entry_error = float(servo["tracking_error"])
+                    entry_clipped = int(servo["clipped"])
+                else:
+                    current = predicted
+                    entry_error = 0.0
+                    entry_clipped = 0
+                current_timestamp += grid_ms
+                expected = _lerp_positions(
+                    ordered[checkpoint_index - 1].positions,
+                    checkpoint.positions,
+                    progress,
+                )
+                result.append({"timestamp": current_timestamp, "positions": list(current), "expected": expected, "phase": "gesture", "tracking_error": entry_error, "clipped": entry_clipped})
                 total_steps += 1
-    # Gesture density follows the authored timeline frame grid (fps x duration)
-    # so the predicted trajectory covers the motion faithfully; timestep_ms is
-    # the fallback. The grid plan is capped by an explicit step budget so a
-    # dense grid degrades to coarser full-gesture coverage, never a cut tail.
-    # Gesture steps must match training discretization (timestep_ms), not the
-    # display timeline_fps grid. Using the fps grid with a 120ms-trained delta
-    # overshoots (1.07 error, 3600ms duration) and causes the replay wait.
-    # timeline_fps is kept for validation/display but does not drive model steps.
-    try:
-        grid_ms = 1000.0 / request.timeline_fps if request.timeline_fps else float(request.timestep_ms)
-        step_ms = int(request.timestep_ms)
-        if step_ms < 1 or grid_ms < 1:
-            raise ValueError("timing must be positive")
-    except (TypeError, ValueError, ZeroDivisionError) as exc:
-        raise HTTPException(422, f"Invalid timing parameter: {exc}") from exc
-    # Model was trained on timestep_ms deltas; when rollout uses a finer
-    # fps grid, scale predicted deltas so dense steps don't overshoot and
-    # advance timestamps by the display grid so duration matches authoring.
-    scale = grid_ms / step_ms if request.timeline_fps else 1.0
-    raw_steps = []
-    for checkpoint_index in range(1, len(ordered)):
-        segment_ms = ordered[checkpoint_index].timestamp - ordered[checkpoint_index - 1].timestamp
-        raw_steps.append(max(1, math.ceil(max(segment_ms, grid_ms) / grid_ms)))
-    remaining = max(0, request.max_steps - total_steps)
-    if sum(raw_steps) > remaining:
-        scaled = [math.floor(steps * remaining / sum(raw_steps)) for steps in raw_steps] if remaining else [0] * len(raw_steps)
-        leftover = remaining - sum(scaled)
-        largest_first = sorted(range(len(raw_steps)), key=lambda index: raw_steps[index], reverse=True)
-        index = 0
-        while leftover > 0 and largest_first:
-            scaled[largest_first[index % len(largest_first)]] += 1
-            leftover -= 1
-            index += 1
-        raw_steps = scaled
-    expected_size = model_expected_size(session.model, joint_count)
-    for checkpoint_index, segment_steps in zip(range(1, len(ordered)), raw_steps):
-        checkpoint = ordered[checkpoint_index]
-        previous_delta = [0.0] * joint_count
-        for step_index in range(segment_steps):
             if total_steps >= request.max_steps:
                 break
-            progress = min(1.0, (step_index + 1) / segment_steps)
-            current_normalized = normalized(current, session.joints)
-            target_normalized = normalized(checkpoint.positions, session.joints)
-            features = build_features(current_normalized, target_normalized, progress, previous_delta, expected_size)
-            with torch.no_grad():
-                delta = session.model(features)[0].tolist()
-            scaled_delta = [value * scale for value in delta]
-            # Keep history in training scale (120ms) so previous_delta stays
-            # in-distribution; only the applied step is scaled to the grid.
-            previous_delta = list(delta)
-            current = denormalized([value + change for value, change in zip(current_normalized, scaled_delta)], session.joints)
-            current_timestamp += grid_ms
-            expected = _lerp_positions(
-                ordered[checkpoint_index - 1].positions,
-                checkpoint.positions,
-                progress,
-            )
-            result.append({"timestamp": current_timestamp, "positions": list(current), "expected": expected, "phase": "gesture"})
-            total_steps += 1
-        if total_steps >= request.max_steps:
-            break
-    collisions = 0
-    for frame in result:
-        collisions += count_contacts_at(session, frame["expected"])
-    return {"frames": result, "steps": total_steps, "collisions": collisions}
-
-
+        collisions = 0
+        for frame in result:
+            collisions += count_contacts_at(session, frame["positions"])
+        return {"frames": result, "steps": total_steps, "collisions": collisions, "max_tracking_error": max_tracking_error, "clipped_steps": total_clipped, "physics": use_physics}
+    finally:
+        if request.gravity is not None:
+            try:
+                session.set_gravity(saved_gravity)
+            except Exception:
+                pass
+        try:
+            session.set_positions(saved_positions)
+        except Exception:
+            pass
 @app.get("/api/sessions/{session_id}/export")
 def export_session(session_id: str) -> StreamingResponse:
     session = SESSIONS.get(session_id)

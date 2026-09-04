@@ -95,8 +95,9 @@ export function rolloutSession(
   maxSteps: number,
   approachMode: "scripted" | "learned" = "scripted",
   timelineFps?: number | null,
+  physics: boolean = true,
 ) {
-  return request<{ frames: RolloutFrame[]; steps: number; collisions: number }>(
+  return request<{ frames: RolloutFrame[]; steps: number; collisions: number; max_tracking_error: number; clipped_steps: number; physics: boolean }>(
     `/api/sessions/${sessionId}/rollout`,
     {
       method: "POST",
@@ -108,6 +109,7 @@ export function rolloutSession(
         max_steps: maxSteps,
         approach_mode: approachMode,
         timeline_fps: timelineFps ?? null,
+        physics,
       }),
     },
   );
