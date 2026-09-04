@@ -66,7 +66,7 @@ const initialConfig: TrainingConfig = {
   random_starts: 4,
   random_seed: 7,
   rollout_steps: 160,
-  physics: false,
+  physics: true,
 };
 
 type TrainingMetric = { epoch: number; epochs: number; loss: number };

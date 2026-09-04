@@ -347,7 +347,7 @@ class TrainConfig(BaseModel):
     random_starts: int = Field(4, ge=0, le=64)
     random_seed: int = Field(7, ge=0, le=1_000_000)
     rollout_steps: int = Field(160, ge=1, le=2000)
-    physics: bool = Field(False, description="When true, generate physics-feasible deltas; false uses kinematic teleport for fast training.")
+    physics: bool = Field(True, description="When true, generate physics-feasible deltas; false uses kinematic teleport for fast training.")
 
 
 class DemonstrationFrame(BaseModel):
