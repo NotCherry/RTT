@@ -172,9 +172,32 @@ export function EvaluatePage({
                                                                 </div>
                                                                 <div className="physics-metrics helper-text">
                                                                         {(() => {
-                                                                                const maxTrack = Math.max(0, ...rolloutFrames.map((f) => f.tracking_error ?? 0));
-                                                                                const clipped = rolloutFrames.reduce((sum, f) => sum + (f.clipped ?? 0), 0);
-                                                                                const collisions = rolloutFrames.length ? "see rollout message" : "—";
+                                                                                const maxTrack =
+                                                                                        Math.max(
+                                                                                                0,
+                                                                                                ...rolloutFrames.map(
+                                                                                                        (
+                                                                                                                f,
+                                                                                                        ) =>
+                                                                                                                f.tracking_error ??
+                                                                                                                0,
+                                                                                                ),
+                                                                                        );
+                                                                                const clipped =
+                                                                                        rolloutFrames.reduce(
+                                                                                                (
+                                                                                                        sum,
+                                                                                                        f,
+                                                                                                ) =>
+                                                                                                        sum +
+                                                                                                        (f.clipped ??
+                                                                                                                0),
+                                                                                                0,
+                                                                                        );
+                                                                                const collisions =
+                                                                                        rolloutFrames.length
+                                                                                                ? "see rollout message"
+                                                                                                : "—";
                                                                                 return `Physics: max tracking error ${maxTrack.toFixed(4)}, clipped steps ${clipped}, ${collisions}`;
                                                                         })()}
                                                                 </div>
@@ -187,7 +210,11 @@ export function EvaluatePage({
                                                                                         <div
                                                                                                 className="keyframe-result"
                                                                                                 key={`${frame.timestamp}-${index}`}
-                                                                                                title={frame.tracking_error ? `tracking error ${frame.tracking_error.toFixed(4)}` : undefined}
+                                                                                                title={
+                                                                                                        frame.tracking_error
+                                                                                                                ? `tracking error ${frame.tracking_error.toFixed(4)}`
+                                                                                                                : undefined
+                                                                                                }
                                                                                         >
                                                                                                 <span>
                                                                                                         Frame{" "}
@@ -196,7 +223,9 @@ export function EvaluatePage({
                                                                                                         ·{" "}
                                                                                                         {frame.phase ??
                                                                                                                 "gesture"}
-                                                                                                        {frame.tracking_error ? ` · track ${frame.tracking_error.toFixed(3)}` : ""}
+                                                                                                        {frame.tracking_error
+                                                                                                                ? ` · track ${frame.tracking_error.toFixed(3)}`
+                                                                                                                : ""}
                                                                                                 </span>
                                                                                                 <Progress
                                                                                                         value={Math.min(

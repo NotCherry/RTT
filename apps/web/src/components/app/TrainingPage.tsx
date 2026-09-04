@@ -204,12 +204,18 @@ export function TrainingPage({
             <input
               type="checkbox"
               checked={config.physics}
-              onChange={(e) => onConfigChange("physics", String(e.target.checked))}
+              onChange={(e) =>
+                onConfigChange("physics", String(e.target.checked))
+              }
               className="h-4 w-4 rounded border-line-600 bg-ink-800"
             />
             Physics-realistic training
           </Label>
-          <p className="helper-text col-span-2">When enabled, training samples are made physics-feasible via PyBullet servo (mass, effort, velocity) with auto substeps; disable for fast kinematic training.</p>
+          <p className="helper-text col-span-2">
+            When enabled, training samples are made physics-feasible via
+            PyBullet servo (mass, effort, velocity) with auto substeps; disable
+            for fast kinematic training.
+          </p>
         </div>
         <div className="route-actions">
           <Button

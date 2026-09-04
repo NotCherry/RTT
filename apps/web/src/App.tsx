@@ -1013,9 +1013,13 @@ function Workbench() {
           positions: finalFrame.positions,
           error,
         });
-        const clipped = (result as { clipped_steps?: number }).clipped_steps ?? 0;
-        const maxTrack = (result as { max_tracking_error?: number }).max_tracking_error ?? 0;
-        const physicsLabel = (result as { physics?: boolean }).physics ? "physics" : "kinematic";
+        const clipped =
+          (result as { clipped_steps?: number }).clipped_steps ?? 0;
+        const maxTrack =
+          (result as { max_tracking_error?: number }).max_tracking_error ?? 0;
+        const physicsLabel = (result as { physics?: boolean }).physics
+          ? "physics"
+          : "kinematic";
         // Start the viewport at the rollout beginning so the trajectory can
         // be played forward instead of pasting only the finished pose.
         applyPositions([...result.frames[0].positions]);

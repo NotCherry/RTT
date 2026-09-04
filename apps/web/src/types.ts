@@ -10,7 +10,24 @@ export type Visual = {
   origin: Origin;
   color: number[];
 };
-export type Link = { name: string; visuals: Visual[]; collisions?: Visual[]; inertial?: { mass: number; inertia: { ixx: number; iyy: number; izz: number; ixy: number; ixz: number; iyz: number }; origin: Origin; synthesized: boolean } };
+export type Link = {
+  name: string;
+  visuals: Visual[];
+  collisions?: Visual[];
+  inertial?: {
+    mass: number;
+    inertia: {
+      ixx: number;
+      iyy: number;
+      izz: number;
+      ixy: number;
+      ixz: number;
+      iyz: number;
+    };
+    origin: Origin;
+    synthesized: boolean;
+  };
+};
 export type Joint = {
   name: string;
   type: string;
@@ -20,10 +37,10 @@ export type Joint = {
   axis: number[];
   lower: number;
   upper: number;
-  velocity: number;
-  effort: number;
-  damping: number;
-  friction: number;
+  velocity?: number;
+  effort?: number;
+  damping?: number;
+  friction?: number;
   controllable: boolean;
 };
 export type Robot = {
@@ -80,7 +97,7 @@ export type TrainingConfig = {
   random_starts: number;
   random_seed: number;
   rollout_steps: number;
-  physics: boolean;
+  physics?: boolean;
 };
 export type RolloutFrame = {
   timestamp: number;

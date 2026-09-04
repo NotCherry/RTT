@@ -97,22 +97,26 @@ export function rolloutSession(
   timelineFps?: number | null,
   physics: boolean = true,
 ) {
-  return request<{ frames: RolloutFrame[]; steps: number; collisions: number; max_tracking_error: number; clipped_steps: number; physics: boolean }>(
-    `/api/sessions/${sessionId}/rollout`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        frames,
-        current,
-        timestep_ms: timestepMs,
-        max_steps: maxSteps,
-        approach_mode: approachMode,
-        timeline_fps: timelineFps ?? null,
-        physics,
-      }),
-    },
-  );
+  return request<{
+    frames: RolloutFrame[];
+    steps: number;
+    collisions: number;
+    max_tracking_error: number;
+    clipped_steps: number;
+    physics: boolean;
+  }>(`/api/sessions/${sessionId}/rollout`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      frames,
+      current,
+      timestep_ms: timestepMs,
+      max_steps: maxSteps,
+      approach_mode: approachMode,
+      timeline_fps: timelineFps ?? null,
+      physics,
+    }),
+  });
 }
 
 export function predictPose(

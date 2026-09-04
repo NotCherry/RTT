@@ -209,22 +209,38 @@ def parse_urdf(raw: bytes, filename: str, stored_path: Path) -> dict[str, Any]:
                 mass = DEFAULT_LINK_MASS
                 synthesized = True
             if inertia_value is not None:
+                inertia_elem = inertia_value
+                def _inertia_attr(key: str, default: str | None) -> float:
+                    raw = inertia_elem.attrib.get(key)
+                    if raw is None or raw.strip() == "":
+                        if default is None:
+                            raise ValueError(f"Link '{name}' missing inertia attribute '{key}'.")
+                        raw = default
+                    try:
+                        return float(raw)
+                    except (TypeError, ValueError) as exc:
+                        raise ValueError(f"Link '{name}' has invalid inertia value '{key}={raw}'.") from exc
                 try:
-                    ixx = float(inertia_value.attrib.get("ixx", ""))
-                    iyy = float(inertia_value.attrib.get("iyy", ""))
-                    izz = float(inertia_value.attrib.get("izz", ""))
-                    ixy = float(inertia_value.attrib.get("ixy", "0"))
-                    ixz = float(inertia_value.attrib.get("ixz", "0"))
-                    iyz = float(inertia_value.attrib.get("iyz", "0"))
-                except (TypeError, ValueError) as exc:
-                    raise ValueError(f"Link '{name}' has invalid inertia values.") from exc
-                if not all(math.isfinite(v) for v in [ixx, iyy, izz, ixy, ixz, iyz]):
-                    raise ValueError(f"Link '{name}' has non-finite inertia.")
-                if ixx <= 0 or iyy <= 0 or izz <= 0:
-                    raise ValueError(f"Link '{name}' has non-positive principal inertia (ixx,iyy,izz must be >0).")
-                inertia = {"ixx": ixx, "iyy": iyy, "izz": izz, "ixy": ixy, "ixz": ixz, "iyz": iyz}
-                if synthesized:
-                    pass
+                    ixx = _inertia_attr("ixx", None)
+                    iyy = _inertia_attr("iyy", None)
+                    izz = _inertia_attr("izz", None)
+                    ixy = _inertia_attr("ixy", "0")
+                    ixz = _inertia_attr("ixz", "0")
+                    iyz = _inertia_attr("iyz", "0")
+                except ValueError as exc:
+                    # If principal components missing, fall back to synthesized inertia
+                    if "missing inertia attribute" in str(exc):
+                        base_geom = collisions[0]["geometry"] if collisions else (visuals[0]["geometry"] if visuals else {"type": "box", "size": [0.2, 0.2, 0.2]})
+                        inertia = synthesize_inertia(base_geom, mass)
+                        synthesized = True
+                    else:
+                        raise
+                else:
+                    if not all(math.isfinite(v) for v in [ixx, iyy, izz, ixy, ixz, iyz]):
+                        raise ValueError(f"Link '{name}' has non-finite inertia.")
+                    if ixx <= 0 or iyy <= 0 or izz <= 0:
+                        raise ValueError(f"Link '{name}' has non-positive principal inertia (ixx,iyy,izz must be >0).")
+                    inertia = {"ixx": ixx, "iyy": iyy, "izz": izz, "ixy": ixy, "ixz": ixz, "iyz": iyz}
             else:
                 base_geom = collisions[0]["geometry"] if collisions else (visuals[0]["geometry"] if visuals else {"type": "box", "size": [0.2, 0.2, 0.2]})
                 inertia = synthesize_inertia(base_geom, mass)
@@ -453,6 +469,45 @@ class SimulationSession:
             inertial = link.get("inertial", {})
             if inertial.get("synthesized"):
                 self.events.append({"type": "warning", "message": f"Link '{link.get('name')}' inertial mass/inertia synthesized from geometry (mass={inertial.get('mass')}). Re-upload URDF with explicit <inertial> for precise dynamics."})
+        if self.body is not None:
+            try:
+                link_mass_map = {link.get("name"): link.get("inertial", {}) for link in robot.get("links", [])}
+                # Override synthesized masses via changeDynamics so PyBullet respects them
+                # Build pybullet index -> link name map
+                pb_index_to_link: dict[int, str] = {-1: str(robot.get("root", ""))}
+                for pb_idx in range(p.getNumJoints(self.body, physicsClientId=self.client)):
+                    try:
+                        info = p.getJointInfo(self.body, pb_idx, physicsClientId=self.client)
+                        link_name = info[12].decode("utf-8") if isinstance(info[12], bytes) else str(info[12])
+                        pb_index_to_link[pb_idx] = link_name
+                    except Exception:
+                        continue
+                for pb_idx, link_name in pb_index_to_link.items():
+                    inertial = link_mass_map.get(link_name, {})
+                    if not inertial.get("synthesized"):
+                        continue
+                    mass = float(inertial.get("mass", DEFAULT_LINK_MASS))
+                    inertia = inertial.get("inertia", {})
+                    try:
+                        ixx = float(inertia.get("ixx", 0.01))
+                        iyy = float(inertia.get("iyy", 0.01))
+                        izz = float(inertia.get("izz", 0.01))
+                    except Exception:
+                        ixx, iyy, izz = 0.01, 0.01, 0.01
+                    try:
+                        p.changeDynamics(self.body, pb_idx, mass=mass, localInertiaDiagonal=[ixx, iyy, izz], physicsClientId=self.client)
+                    except Exception:
+                        pass
+                # Validation via getDynamicsInfo
+                for pb_idx in list(pb_index_to_link.keys())[:5]:
+                    try:
+                        dyn_mass = p.getDynamicsInfo(self.body, pb_idx, physicsClientId=self.client)[0]
+                        if not math.isfinite(dyn_mass) or dyn_mass < 0:
+                            self.events.append({"type": "warning", "message": f"Link '{pb_index_to_link.get(pb_idx)}' has invalid dynamics mass {dyn_mass}."})
+                    except Exception:
+                        pass
+            except Exception:
+                pass
 
     def _apply_positions(self) -> None:
         if self.body is None:
@@ -536,6 +591,38 @@ class SimulationSession:
     def close(self) -> None:
         if p.isConnected(self.client):
             p.disconnect(self.client)
+
+def _resolve_rollout_step(session: "SimulationSession", predicted: list[float], timestep_ms: int, use_physics: bool) -> tuple[list[float], float, int]:
+    """Apply predicted positions via physics servo or kinematic assign; returns (achieved, tracking_error, clipped)."""
+    if use_physics:
+        try:
+            step_ms = int(timestep_ms) if timestep_ms else 0
+        except (TypeError, ValueError):
+            step_ms = 0
+        try:
+            servo = session.servo_to_positions(list(predicted), step_ms)
+            try:
+                achieved = list(servo["achieved"])
+            except Exception:
+                achieved = list(predicted)
+            try:
+                tracking_error = float(servo["tracking_error"])
+            except Exception:
+                tracking_error = 0.0
+            try:
+                clipped = int(servo["clipped"])
+            except Exception:
+                clipped = 0
+            return achieved, tracking_error, clipped
+        except Exception:
+            try:
+                return list(predicted), 0.0, 0
+            except Exception:
+                return [], 0.0, 0
+    try:
+        return list(predicted), 0.0, 0
+    except Exception:
+        return [], 0.0, 0
 
 
 def normalized(values: list[float], joints: list[dict[str, Any]]) -> list[float]:
@@ -1056,17 +1143,9 @@ def rollout(session_id: str, request: RolloutRequest) -> dict[str, Any]:
                 for waypoint in build_approach_plan(approach_start, list(ordered[0].positions), session.joints, request.timestep_ms):
                     if total_steps >= request.max_steps:
                         break
-                    if use_physics:
-                        servo = session.servo_to_positions(list(waypoint), request.timestep_ms)
-                        current = list(servo["achieved"])
-                        max_tracking_error = max(max_tracking_error, float(servo["tracking_error"]))
-                        total_clipped += int(servo["clipped"])
-                        entry_error = float(servo["tracking_error"])
-                        entry_clipped = int(servo["clipped"])
-                    else:
-                        current = list(waypoint)
-                        entry_error = 0.0
-                        entry_clipped = 0
+                    current, entry_error, entry_clipped = _resolve_rollout_step(session, list(waypoint), request.timestep_ms, use_physics)
+                    max_tracking_error = max(max_tracking_error, entry_error)
+                    total_clipped += entry_clipped
                     current_timestamp += request.timestep_ms
                     result.append({"timestamp": current_timestamp, "positions": list(current), "expected": list(waypoint), "phase": "approach", "tracking_error": entry_error, "clipped": entry_clipped})
                     total_steps += 1
@@ -1085,17 +1164,9 @@ def rollout(session_id: str, request: RolloutRequest) -> dict[str, Any]:
                         delta = session.model(features)[0].tolist()
                     previous_delta = list(delta)
                     predicted = denormalized([value + change for value, change in zip(current_normalized, delta)], session.joints)
-                    if use_physics:
-                        servo = session.servo_to_positions(predicted, request.timestep_ms)
-                        current = list(servo["achieved"])
-                        max_tracking_error = max(max_tracking_error, float(servo["tracking_error"]))
-                        total_clipped += int(servo["clipped"])
-                        entry_error = float(servo["tracking_error"])
-                        entry_clipped = int(servo["clipped"])
-                    else:
-                        current = predicted
-                        entry_error = 0.0
-                        entry_clipped = 0
+                    current, entry_error, entry_clipped = _resolve_rollout_step(session, predicted, request.timestep_ms, use_physics)
+                    max_tracking_error = max(max_tracking_error, entry_error)
+                    total_clipped += entry_clipped
                     current_timestamp += request.timestep_ms
                     expected = _lerp_positions(approach_start, ordered[0].positions, progress)
                     result.append({"timestamp": current_timestamp, "positions": list(current), "expected": expected, "phase": "approach", "tracking_error": entry_error, "clipped": entry_clipped})
@@ -1139,17 +1210,9 @@ def rollout(session_id: str, request: RolloutRequest) -> dict[str, Any]:
                 scaled_delta = [value * scale for value in delta]
                 previous_delta = list(delta)
                 predicted = denormalized([value + change for value, change in zip(current_normalized, scaled_delta)], session.joints)
-                if use_physics:
-                    servo = session.servo_to_positions(predicted, int(grid_ms))
-                    current = list(servo["achieved"])
-                    max_tracking_error = max(max_tracking_error, float(servo["tracking_error"]))
-                    total_clipped += int(servo["clipped"])
-                    entry_error = float(servo["tracking_error"])
-                    entry_clipped = int(servo["clipped"])
-                else:
-                    current = predicted
-                    entry_error = 0.0
-                    entry_clipped = 0
+                current, entry_error, entry_clipped = _resolve_rollout_step(session, predicted, int(grid_ms), use_physics)
+                max_tracking_error = max(max_tracking_error, entry_error)
+                total_clipped += entry_clipped
                 current_timestamp += grid_ms
                 expected = _lerp_positions(
                     ordered[checkpoint_index - 1].positions,
@@ -1160,9 +1223,33 @@ def rollout(session_id: str, request: RolloutRequest) -> dict[str, Any]:
                 total_steps += 1
             if total_steps >= request.max_steps:
                 break
-        collisions = 0
-        for frame in result:
-            collisions += count_contacts_at(session, frame["positions"])
+        if session.body is None:
+            collisions = 0
+        else:
+            unique_contacts: set[tuple[int, int]] = set()
+            saved_for_collision = list(session.positions)
+            try:
+                for frame in result:
+                    try:
+                        session.set_positions(list(frame["positions"]))
+                        p.stepSimulation(physicsClientId=session.client)
+                        contacts = p.getContactPoints(bodyA=session.body, physicsClientId=session.client)
+                        for cp in contacts:
+                            try:
+                                link_a = int(cp[3]) if len(cp) > 3 else -1
+                                link_b = int(cp[4]) if len(cp) > 4 else -1
+                            except Exception:
+                                continue
+                            key = (link_a, link_b) if link_a <= link_b else (link_b, link_a)
+                            unique_contacts.add(key)
+                    except Exception:
+                        continue
+            finally:
+                try:
+                    session.set_positions(saved_for_collision)
+                except Exception:
+                    pass
+            collisions = len(unique_contacts)
         return {"frames": result, "steps": total_steps, "collisions": collisions, "max_tracking_error": max_tracking_error, "clipped_steps": total_clipped, "physics": use_physics}
     finally:
         if request.gravity is not None:
