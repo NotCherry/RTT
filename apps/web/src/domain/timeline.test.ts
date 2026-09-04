@@ -5,6 +5,7 @@ import {
   effectiveDurationFrames,
   frameToTimestamp,
   framesToKeyframes,
+  hasUnsavedTimelineChanges,
   interpolatePositions,
   keyframesToFrames,
   nextFreeFrame,
@@ -247,5 +248,26 @@ describe("timeline quantization (Blender-like)", () => {
     expect(sanitized).toHaveLength(2);
     expect(sanitized[0].positions).toEqual([0.1, -0.2]);
     expect(sanitized[1].positions).toEqual([0.5, 0.3]);
+  });
+
+  it("detects unsaved timeline changes as pure deep module", () => {
+    const source = [
+      { timestamp: 0, positions: [0, 0] },
+      { timestamp: 100, positions: [1, 1] },
+    ];
+    const same = [
+      { timestamp: 0, positions: [0, 0] },
+      { timestamp: 100, positions: [1, 1] },
+    ];
+    const edited = [
+      { timestamp: 0, positions: [0, 0] },
+      { timestamp: 100, positions: [1, 0.9] },
+    ];
+    expect(hasUnsavedTimelineChanges(null, null)).toBe(false);
+    expect(hasUnsavedTimelineChanges(source, same)).toBe(false);
+    expect(hasUnsavedTimelineChanges(edited, source)).toBe(true);
+    expect(hasUnsavedTimelineChanges(null, source)).toBe(true);
+    expect(hasUnsavedTimelineChanges(source, null)).toBe(true);
+    expect(hasUnsavedTimelineChanges([], source)).toBe(true);
   });
 });

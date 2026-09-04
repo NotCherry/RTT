@@ -742,6 +742,71 @@ def _lerp_positions(start: list[float], end: list[float], progress: float) -> li
         for index, value in enumerate(start)
     ]
 
+def compute_rollout_density(
+    segment_ms_list: list[float],
+    grid_ms: float,
+    max_steps: int,
+    total_steps: int,
+) -> dict[str, Any]:
+    """Deep module: pure density computation behind small interface.
+
+    Inputs: segment durations in ms, grid in ms, budget max_steps and already-consumed total_steps.
+    Outputs: {raw_steps, scaled_steps, scale, remaining, density_ratio} for testability.
+    No side effects — test via interface, not implementation.
+    """
+    raw_steps = [max(1, math.ceil(max(seg_ms, grid_ms) / grid_ms)) for seg_ms in segment_ms_list]
+    remaining = max(0, max_steps - total_steps)
+    if sum(raw_steps) > remaining:
+        scaled = [math.floor(steps * remaining / sum(raw_steps)) for steps in raw_steps] if remaining else [0] * len(raw_steps)
+        leftover = remaining - sum(scaled)
+        largest_first = sorted(range(len(raw_steps)), key=lambda i: raw_steps[i], reverse=True)
+        idx = 0
+        while leftover > 0 and largest_first:
+            scaled[largest_first[idx % len(largest_first)]] += 1
+            leftover -= 1
+            idx += 1
+        scaled_steps = scaled
+    else:
+        scaled_steps = list(raw_steps)
+    density_ratio = sum(raw_steps) / max(1, sum(scaled_steps)) if scaled_steps and sum(scaled_steps) else 1.0
+    return {
+        "raw_steps": raw_steps,
+        "scaled_steps": scaled_steps,
+        "remaining": remaining,
+        "density_ratio": density_ratio,
+        "grid_ms": grid_ms,
+    }
+
+def compute_effective_scale(
+    segment_ms: float,
+    segment_steps: int,
+    step_ms: int,
+    grid_ms: float,
+) -> float:
+    """Deep module: decimation-aware scale."""
+    try:
+        if segment_steps <= 0 or step_ms <= 0:
+            return 1.0
+        effective_ms_per_step = float(segment_ms) / float(segment_steps)
+        scale = effective_ms_per_step / float(step_ms)
+        if not math.isfinite(scale) or scale <= 0:
+            return 1.0
+        return float(scale)
+    except Exception:
+        return 1.0
+
+
+def check_budget_exhaustion(remaining: int, max_steps: int) -> dict[str, str] | None:
+    """Deep module: pure warning when gesture budget exhausted."""
+    try:
+        if remaining == 0 and max_steps > 0:
+            return {
+                "type": "warning",
+                "message": f"Gesture trimmed: approach consumed max_steps budget ({max_steps}), 0 gesture steps emitted",
+            }
+        return None
+    except Exception:
+        return None
 
 def _interpolate_frame_positions(frames: list[DemonstrationFrame], timestamp: float) -> list[float]:
     ordered = sorted(frames, key=lambda frame: frame.timestamp)
@@ -1243,24 +1308,33 @@ def rollout(session_id: str, request: RolloutRequest) -> dict[str, Any]:
         except (TypeError, ValueError, ZeroDivisionError) as exc:
             raise HTTPException(422, f"Invalid timing parameter: {exc}") from exc
         scale = grid_ms / step_ms if request.timeline_fps else 1.0
-        raw_steps = []
-        for checkpoint_index in range(1, len(ordered)):
-            segment_ms = ordered[checkpoint_index].timestamp - ordered[checkpoint_index - 1].timestamp
-            raw_steps.append(max(1, math.ceil(max(segment_ms, grid_ms) / grid_ms)))
-        remaining = max(0, request.max_steps - total_steps)
-        if sum(raw_steps) > remaining:
-            scaled = [math.floor(steps * remaining / sum(raw_steps)) for steps in raw_steps] if remaining else [0] * len(raw_steps)
-            leftover = remaining - sum(scaled)
-            largest_first = sorted(range(len(raw_steps)), key=lambda index: raw_steps[index], reverse=True)
-            index = 0
-            while leftover > 0 and largest_first:
-                scaled[largest_first[index % len(largest_first)]] += 1
-                leftover -= 1
-                index += 1
-            raw_steps = scaled
+        segment_ms_list = [ordered[i].timestamp - ordered[i-1].timestamp for i in range(1, len(ordered))]
+        density = compute_rollout_density(segment_ms_list, grid_ms, request.max_steps, total_steps)
+        raw_steps = density["scaled_steps"]
+        # Keep raw for diagnostics, scaled is the budget-aware steps
+        raw_steps_for_diag = density["raw_steps"]
+        density_ratio = density["density_ratio"]
+        # Build per-segment diagnostics for observability (no behavior change except via density module)
+        segment_diagnostics = [
+            {
+                "segment_index": idx,
+                "segment_ms": float(segment_ms_list[idx]),
+                "raw_steps": int(raw_steps_for_diag[idx]),
+                "scaled_steps": int(raw_steps[idx]),
+                "scale": float(compute_effective_scale(float(segment_ms_list[idx]), int(raw_steps[idx]), step_ms, grid_ms)),
+                "density_ratio": float(density_ratio),
+                "grid_ms": float(grid_ms),
+            }
+            for idx in range(len(segment_ms_list))
+        ]
+        warning = check_budget_exhaustion(int(density["remaining"]), int(request.max_steps))
+        warnings: list[dict[str, str]] = [warning] if warning else []
         expected_size = model_expected_size(session.model, joint_count)
         for checkpoint_index, segment_steps in zip(range(1, len(ordered)), raw_steps):
             checkpoint = ordered[checkpoint_index]
+            # Decimation-aware scale per segment: when budget squeezes steps, per-step delta must grow
+            segment_ms = float(ordered[checkpoint_index].timestamp - ordered[checkpoint_index - 1].timestamp)
+            effective_scale = compute_effective_scale(segment_ms, segment_steps, step_ms, grid_ms)
             previous_delta = [0.0] * joint_count
             for step_index in range(segment_steps):
                 if total_steps >= request.max_steps:
@@ -1271,7 +1345,7 @@ def rollout(session_id: str, request: RolloutRequest) -> dict[str, Any]:
                 features = build_features(current_normalized, target_normalized, progress, previous_delta, expected_size)
                 with torch.no_grad():
                     delta = session.model(features)[0].tolist()
-                scaled_delta = [value * scale for value in delta]
+                scaled_delta = [value * effective_scale for value in delta]
                 previous_delta = list(delta)
                 predicted = denormalized([value + change for value, change in zip(current_normalized, scaled_delta)], session.joints)
                 current, entry_error, entry_clipped = _resolve_rollout_step(session, predicted, int(grid_ms), use_physics)
@@ -1314,7 +1388,7 @@ def rollout(session_id: str, request: RolloutRequest) -> dict[str, Any]:
                 except Exception:
                     pass
             collisions = len(unique_contacts)
-        return {"frames": result, "steps": total_steps, "collisions": collisions, "max_tracking_error": max_tracking_error, "clipped_steps": total_clipped, "physics": use_physics}
+        return {"frames": result, "steps": total_steps, "collisions": collisions, "max_tracking_error": max_tracking_error, "clipped_steps": total_clipped, "physics": use_physics, "segment_diagnostics": segment_diagnostics, "density_ratio": density_ratio, "warnings": warnings}
     finally:
         if request.gravity is not None:
             try:

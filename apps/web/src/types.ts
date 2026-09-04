@@ -114,4 +114,15 @@ export type RolloutResponse = {
   max_tracking_error: number;
   clipped_steps: number;
   physics: boolean;
+  segment_diagnostics?: {
+    segment_index: number;
+    segment_ms: number;
+    raw_steps: number;
+    scaled_steps: number;
+    scale: number;
+    density_ratio: number;
+    grid_ms: number;
+  }[];
+  density_ratio?: number;
+  warnings?: { type: string; message: string }[];
 };

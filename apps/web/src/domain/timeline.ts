@@ -24,6 +24,25 @@ export function quantizeTimestamp(
   return frameToTimestamp(timestampToFrame(timestamp, fps), fps);
 }
 
+export function hasUnsavedTimelineChanges(
+  draft: DemonstrationFrame[] | null | undefined,
+  source: DemonstrationFrame[] | null | undefined,
+): boolean {
+  if (!draft && !source) return false;
+  if (!draft || !source) return true;
+  if (draft.length !== source.length) return true;
+  const a = [...draft].sort((x, y) => x.timestamp - y.timestamp);
+  const b = [...source].sort((x, y) => x.timestamp - y.timestamp);
+  for (let i = 0; i < a.length; i++) {
+    if (a[i].timestamp !== b[i].timestamp) return true;
+    if (a[i].positions.length !== b[i].positions.length) return true;
+    for (let j = 0; j < a[i].positions.length; j++) {
+      if (Math.abs(a[i].positions[j] - b[i].positions[j]) > 1e-9) return true;
+    }
+  }
+  return false;
+}
+
 export const MIN_TIMELINE_DURATION_FRAMES = 60;
 
 export function effectiveDurationFrames(

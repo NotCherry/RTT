@@ -22,6 +22,7 @@ import {
   buildReplayPlan,
   effectiveDurationFrames,
   framesToKeyframes,
+  hasUnsavedTimelineChanges,
   interpolatePositions,
   keyframesToFrames,
   normalizeFrames,
@@ -95,6 +96,16 @@ function Workbench() {
   const [metricHistory, setMetricHistory] = useState<TrainingMetric[]>([]);
   const [evaluation, setEvaluation] = useState<EvaluationResult | null>(null);
   const [rolloutFrames, setRolloutFrames] = useState<RolloutFrame[]>([]);
+  const [rolloutDiagnostics, setRolloutDiagnostics] = useState<{
+    density_ratio?: number;
+    warnings?: { type: string; message: string }[];
+    segment_diagnostics?: {
+      segment_index: number;
+      raw_steps: number;
+      scaled_steps: number;
+      density_ratio: number;
+    }[];
+  } | null>(null);
   const [trained, setTrained] = useState(false);
   const [message, setMessage] = useState(
     "Load the sample robot or upload a primitive URDF.",
@@ -1008,6 +1019,20 @@ function Workbench() {
           ? Math.max(...gestureFrames.map(frameError))
           : error;
         setRolloutFrames(result.frames);
+        setRolloutDiagnostics({
+          density_ratio: (result as { density_ratio?: number }).density_ratio,
+          warnings: (result as { warnings?: { type: string; message: string }[] }).warnings,
+          segment_diagnostics: (
+            result as {
+              segment_diagnostics?: {
+                segment_index: number;
+                raw_steps: number;
+                scaled_steps: number;
+                density_ratio: number;
+              }[];
+            }
+          ).segment_diagnostics,
+        });
         setEvaluation({
           target: finalFrame.expected,
           positions: finalFrame.positions,
@@ -1034,6 +1059,7 @@ function Workbench() {
           demonstration.current,
         );
         setRolloutFrames([]);
+        setRolloutDiagnostics(null);
         setEvaluation(result);
         applyPositions(result.positions);
         setActiveTab("testing");
@@ -1175,6 +1201,7 @@ function Workbench() {
           training={Boolean(state?.training)}
           trained={trained}
           sessionId={sessionId}
+          hasUnsavedTimelineChanges={hasUnsavedTimelineChanges(timelineDraft, timelineSourceFrames)}
           onDatasetChange={setActiveDatasetId}
           onDemoChange={setSelectedDemoId}
           onConfigChange={updateConfig}
@@ -1212,6 +1239,7 @@ function Workbench() {
             0
           }
           rolloutFrames={rolloutFrames}
+          rolloutDiagnostics={rolloutDiagnostics}
           evaluation={evaluation}
           replaying={replayingDemoId === "evaluation"}
           onReplay={() =>

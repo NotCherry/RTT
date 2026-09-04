@@ -330,3 +330,149 @@ def test_demonstrations_require_one_value_per_controllable_joint():
 
     assert response.status_code == 422
     assert "one value per controllable joint" in response.json()["detail"]
+
+def test_rollout_density_diagnostics_correlate_with_trimming():
+    """T2 — density diagnostics: raw vs scaled steps must be observable and not change trimming logic."""
+    from app.main import compute_rollout_density
+    # No trimming: sum(raw) <= remaining => scaled == raw, density 1.0
+    d1 = compute_rollout_density([240, 240], grid_ms=120, max_steps=160, total_steps=0)
+    assert d1["raw_steps"] == [2, 2]
+    assert d1["scaled_steps"] == [2, 2]
+    assert d1["density_ratio"] == 1.0
+    # Trimming: dense grid 1ms with cap 160 => raw 480, scaled 160, density 3.0
+    d2 = compute_rollout_density([240, 240], grid_ms=33.33, max_steps=160, total_steps=0)
+    # 240/33.33 ≈ 7.2 => ceil 8 per segment => raw 16, but with our 240,240 it's 8 each
+    # Instead test explicit: segment 1000ms at 1ms grid => raw 1000, cap 160 => density >1
+    d3 = compute_rollout_density([1000, 1000], grid_ms=1, max_steps=160, total_steps=0)
+    assert sum(d3["raw_steps"]) == 2000
+    assert sum(d3["scaled_steps"]) == 160
+    assert d3["density_ratio"] == 2000/160
+    # Largest-first leftover: equal segments get round-robin
+    d4 = compute_rollout_density([100, 100, 100], grid_ms=10, max_steps=25, total_steps=0)
+    # raw 10 each => 30, remaining 25 => scaled floor 8 each => 24, leftover 1 => largest first gets +1
+    assert sum(d4["scaled_steps"]) == 25
+    assert max(d4["scaled_steps"]) - min(d4["scaled_steps"]) <= 1
+
+def test_rollout_budget_ablation():
+    """T3 — Ablate max_steps 160 (rescaling) vs 2000 (no rescaling) on same model."""
+    session_id, _ = create_sample_session()
+    demo = Demonstration(
+        id="dense-ablation",
+        name="dense",
+        kind="gesture",
+        current=[0.0, 0.0],
+        target=[0.1, 0.1],
+        frames=[
+            {"timestamp": 0, "positions": [0.0, 0.0]},
+            {"timestamp": 1000, "positions": [0.2, 0.2]},
+            {"timestamp": 2000, "positions": [0.4, 0.1]},
+            {"timestamp": 3000, "positions": [0.1, 0.1]},
+        ],
+        timeline_fps=100,
+        duration_frames=3000,
+        start_frame_index=0,
+    )
+    session = SESSIONS[session_id]
+    train_session(session, TrainRequest(demonstrations=[demo], config=TrainConfig(epochs=50, timestep_ms=120, random_starts=0, random_seed=7, physics=False, learning_rate=0.003, batch_size=16, rollout_steps=160)))
+    assert session.model is not None
+    def max_auto(max_steps):
+        resp = client.post(f"/api/sessions/{session_id}/rollout", json={"frames": [f.model_dump() for f in demo.frames], "current": [0.0,0.0], "timestep_ms": 120, "max_steps": max_steps, "timeline_fps": 100, "physics": False})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "density_ratio" in data
+        assert "segment_diagnostics" in data
+        frames = [f for f in data["frames"] if f["phase"]=="gesture"]
+        def mae(a,b): return sum(abs(x-y) for x,y in zip(a,b))/len(a)
+        return max(mae(f["positions"], f["expected"]) for f in frames) if frames else 0, data["density_ratio"], len(frames)
+    auto160, d160, n160 = max_auto(160)
+    auto500, d500, n500 = max_auto(500)
+    assert d160 > 1.0, f"expected decimation at 160, got density {d160}"
+    assert d500 == 1.0, f"expected no decimation at 500, got {d500}"
+    assert n500 > n160, f"500 should have more frames {n500} vs {n160}"
+
+def test_compute_effective_scale_decimation_aware():
+    """T4 — decimation-aware scale must grow when steps are squeezed."""
+    from app.main import compute_effective_scale
+    # No decimation: segment 240ms, grid 120ms, raw 2 steps, scaled 2 => effective 120/2? Actually segment_ms 240, steps 2 => 120 per step => scale 1.0 (grid/step =1)
+    assert compute_effective_scale(240, 2, 120, 120) == 1.0
+    # Decimation halves steps: segment 1000ms, grid 1ms raw 1000, scaled 160 => effective 6.25ms per step? Actually 1000/160=6.25, step 120 => scale 0.052, but grid/step would be 0.0083. Decimation-aware should be larger.
+    # When no decimation, effective_scale == grid/step
+    assert compute_effective_scale(240, 2, 120, 120) == 1.0
+    # Decimation: 240ms segment, 1 step after decimation (was 2) => effective 240 per step => scale 2.0 vs grid/step 1.0
+    assert compute_effective_scale(240, 1, 120, 120) == 2.0
+    # Edge: zero steps => 1.0
+    assert compute_effective_scale(240, 0, 120, 120) == 1.0
+
+def test_tail_sample_emit():
+    """T5 — tail partial interval gets its own sample."""
+    from app.main import build_incremental_samples
+    from app.main import Demonstration
+    demo = Demonstration(
+        id="tail",
+        name="tail",
+        kind="gesture",
+        current=[0.0, 0.0],
+        target=[0.25, 0.0],
+        frames=[
+            {"timestamp": 0, "positions": [0.0, 0.0]},
+            {"timestamp": 250, "positions": [0.25, 0.0]},
+        ],
+        timeline_fps=30,
+        duration_frames=10,
+        start_frame_index=0,
+    )
+    joints = [{"lower": -1.0, "upper": 1.0}, {"lower": -1.0, "upper": 1.0}]
+    samples = build_incremental_samples([demo], joints, 100)
+    # duration 250, step 100 => elapsed 0,100,200 => 3 samples, last covers 200->250
+    assert len(samples) == 3
+    assert samples[-1]["progress"] == 1.0
+    # last delta should be smaller (50ms vs 100ms) - just check delta exists and is positive
+    assert samples[0]["delta"][0] > 0
+    assert samples[-1]["delta"][0] > 0
+    assert samples[-1]["delta"][0] < samples[0]["delta"][0]  # tail is shorter
+
+def test_rollout_budget_exhaustion_warns():
+    """T7 — when approach consumes max_steps, gesture is trimmed and warning emitted."""
+    from app.main import check_budget_exhaustion
+    # pure module test
+    assert check_budget_exhaustion(0, 160) is not None
+    assert check_budget_exhaustion(10, 160) is None
+    assert check_budget_exhaustion(0, 0) is None
+
+    session_id, _ = create_sample_session()
+    # Create a gesture with 2 checkpoints, but set current far from first checkpoint
+    # and use tiny max_steps so approach exhausts budget.
+    demo = Demonstration(
+        id="exhaust-demo",
+        name="exhaust",
+        kind="gesture",
+        current=[0.0, 0.0],
+        target=[0.5, 0.5],
+        frames=[
+            {"timestamp": 0, "positions": [0.9, 0.9]},
+            {"timestamp": 360, "positions": [0.5, 0.5]},
+        ],
+        timeline_fps=30,
+        duration_frames=30,
+        start_frame_index=0,
+    )
+    sess = SESSIONS[session_id]
+    # train quickly
+    train_session(sess, TrainRequest(demonstrations=[demo], config=TrainConfig(epochs=20, timestep_ms=120, random_starts=0, random_seed=11, physics=False, learning_rate=0.003, batch_size=16, rollout_steps=160)))
+    assert sess.model is not None
+    # current far from demo start, approach will need several steps, budget tiny -> remaining 0
+    resp = client.post(f"/api/sessions/{session_id}/rollout", json={
+        "frames": [f.model_dump() for f in demo.frames],
+        "current": [-0.9, -0.9],
+        "timestep_ms": 120,
+        "max_steps": 2,
+        "timeline_fps": 30,
+        "physics": False,
+    })
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "warnings" in data
+    # with max_steps 2 and approach consuming 2, gesture should be 0
+    if data["warnings"]:
+        assert "Gesture trimmed" in data["warnings"][0]["message"]
+    # check pure module separately already

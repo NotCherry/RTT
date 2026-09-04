@@ -27,6 +27,16 @@ type EvaluatePageProps = {
         demonstrationKind: string | null;
         checkpointCount: number;
         rolloutFrames: RolloutFrame[];
+        rolloutDiagnostics?: {
+                density_ratio?: number;
+                warnings?: { type: string; message: string }[];
+                segment_diagnostics?: {
+                        segment_index: number;
+                        raw_steps: number;
+                        scaled_steps: number;
+                        density_ratio: number;
+                }[];
+        } | null;
         evaluation: EvaluationResult | null;
         replaying: boolean;
         onReplay: () => void;
@@ -43,6 +53,7 @@ export function EvaluatePage({
         demonstrationKind,
         checkpointCount,
         rolloutFrames,
+        rolloutDiagnostics,
         evaluation,
         replaying,
         onReplay,
@@ -141,6 +152,11 @@ export function EvaluatePage({
                                                         Evaluate selected
                                                         demonstration
                                                 </Button>
+                                                {rolloutDiagnostics?.warnings?.length ? (
+                                                        <div className="warning-pill" role="alert">
+                                                                {rolloutDiagnostics.warnings.map((w) => w.message).join("; ")}
+                                                        </div>
+                                                ) : null}
                                                 {evaluation ? (
                                                         <>
                                                                 <div className="route-metric-grid">
@@ -201,6 +217,40 @@ export function EvaluatePage({
                                                                                 return `Physics: max tracking error ${maxTrack.toFixed(4)}, clipped steps ${clipped}, ${collisions}`;
                                                                         })()}
                                                                 </div>
+                                                                {rolloutDiagnostics?.density_ratio !==
+                                                                        undefined &&
+                                                                        rolloutDiagnostics.density_ratio >
+                                                                                1.01 && (
+                                                                                <div
+                                                                                        className="helper-text"
+                                                                                        title={
+                                                                                                rolloutDiagnostics.segment_diagnostics
+                                                                                                        ?.map(
+                                                                                                                (
+                                                                                                                        d,
+                                                                                                                ) =>
+                                                                                                                        `seg ${d.segment_index}: raw ${d.raw_steps} → scaled ${d.scaled_steps}`,
+                                                                                                        )
+                                                                                                        .join(
+                                                                                                                ", ",
+                                                                                                        ) ??
+                                                                                                ""
+                                                                                        }
+                                                                                >
+                                                                                        Density:{" "}
+                                                                                        {rolloutDiagnostics.density_ratio.toFixed(
+                                                                                                2,
+                                                                                        )}
+                                                                                        ×
+                                                                                        (raw
+                                                                                        →
+                                                                                        scaled
+                                                                                        {rolloutDiagnostics.segment_diagnostics
+                                                                                                ? ` per seg: ${rolloutDiagnostics.segment_diagnostics.map((d) => `${d.raw_steps}→${d.scaled_steps}`).join(", ")}`
+                                                                                                : ""}
+                                                                                        )
+                                                                                </div>
+                                                                        )}
                                                                 <div className="keyframe-results">
                                                                         {rolloutFrames.map(
                                                                                 (

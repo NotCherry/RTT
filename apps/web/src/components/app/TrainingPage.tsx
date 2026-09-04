@@ -29,6 +29,7 @@ type TrainingPageProps = {
   training: boolean;
   trained: boolean;
   sessionId: string | null;
+  hasUnsavedTimelineChanges?: boolean;
   onDatasetChange: (id: string) => void;
   onDemoChange: (id: string) => void;
   onConfigChange: (key: keyof TrainingConfig, value: string) => void;
@@ -48,6 +49,7 @@ export function TrainingPage({
   training,
   trained,
   sessionId,
+  hasUnsavedTimelineChanges,
   onDatasetChange,
   onDemoChange,
   onConfigChange,
@@ -217,6 +219,12 @@ export function TrainingPage({
             for fast kinematic training.
           </p>
         </div>
+        {hasUnsavedTimelineChanges && (
+          <div className="alert warning" role="alert">
+            Timeline has unsaved changes — training will use the last saved
+            gesture. Save the timeline before training.
+          </div>
+        )}
         <div className="route-actions">
           <Button
             variant="primary"
