@@ -208,7 +208,7 @@ export function TimelinePanel({
             </Button>
           </div>
         </Empty>
-        <div className="mt-4 grid grid-cols-3 gap-3">
+        <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
           <label className="flex flex-col gap-1 text-[10px] text-text-500">
             FPS (30–1000)
             <input
@@ -276,7 +276,7 @@ export function TimelinePanel({
         </div>
       </div>
 
-      <div className="mt-3 grid grid-cols-3 gap-3">
+      <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-3">
         <label className="flex flex-col gap-1 text-[10px] text-text-500">
           FPS (30–1000)
           <input

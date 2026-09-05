@@ -374,7 +374,9 @@
   .route-heading-actions { @apply flex shrink-0 gap-2; }
   .route-upload input { @apply hidden; }
   .route-two-column { @apply grid items-stretch gap-[13px]; grid-template-columns: minmax(0, 1.15fr) minmax(420px, .85fr); }
-  .route-viewport-panel { @apply flex min-h-[650px] flex-col; }
+  .route-viewport-panel { @apply flex min-h-[480px] flex-col overflow-hidden; }
+  @media (min-width: 701px) { .route-viewport-panel { min-height: 560px; } }
+  @media (min-width: 1025px) { .route-viewport-panel { min-height: 620px; } }
   .route-content-panel { @apply min-w-0; }
   .route-archive-grid { @apply grid items-start gap-[13px]; grid-template-columns: minmax(360px, .8fr) minmax(0, 1.2fr); }
   .archive-demo-panel { @apply min-h-[420px]; }
@@ -442,25 +444,61 @@
   .viewer-column { @apply col-span-full min-h-[600px]; }
   .training-column { @apply col-start-2 row-start-2; }
   .controls-column { @apply col-start-1 row-start-2; }
+  .route-two-column { grid-template-columns: minmax(0, 1fr) minmax(340px, 0.85fr); }
+}
+
+@media (max-width: 980px) {
+  .route-two-column, .route-archive-grid { @apply flex flex-col; }
+  .route-viewport-panel { min-height: 460px; }
+  .route-selection-grid, .route-form-grid { @apply grid-cols-1; }
+  .route-metric-grid { @apply grid-cols-2; }
 }
 
 @media (max-width: 700px) {
-  .app-shell { @apply px-[14px] py-[18px]; }
-  .topbar { @apply items-start gap-[14px]; }
-  .topbar-actions { @apply flex-col items-end; }
-  .intro-row { @apply flex-col items-start py-[31px] pb-[23px]; }
-  .workflow { @apply max-w-full overflow-x-auto; }
+  .app-shell { @apply px-[14px] py-4 pb-6; }
+  .topbar { @apply flex-wrap items-start gap-3 pb-4; }
+  .topbar-actions { @apply w-full flex-row flex-wrap justify-between items-center gap-2; }
+  .brand-lockup { @apply flex-1 min-w-[180px]; }
+  .route-nav { @apply -mx-[14px] px-[14px] gap-0 overflow-x-auto; scrollbar-width: none; }
+  .route-nav::-webkit-scrollbar { display: none; }
+  .route-nav-link { @apply px-[10px] py-[9px] text-[10px]; }
+  .route-context { @apply flex-wrap gap-1 text-[9px] leading-[1.4]; }
+  .intro-row { @apply flex-col items-start py-7 pb-5 gap-5; }
+  .intro-row h2 { @apply text-[clamp(22px,7vw,32px)]; }
+  .workflow { @apply max-w-full overflow-x-auto pb-1; scrollbar-width: none; }
   /* @deprecated workbench responsive — legacy only */
   .workbench-grid { @apply flex flex-col; }
-  .viewer-column { @apply min-h-[460px]; }
+  .viewer-column { @apply min-h-[420px]; }
   .training-column, .controls-column { @apply order-none; }
-  .viewer-footer { @apply flex-wrap; }
-  .viewer-hint { @apply mt-[3px] w-full; }
-  .footer { @apply flex-col gap-2; }
-  .route-heading { @apply flex-col items-start gap-5 py-8; }
-  .route-two-column, .route-archive-grid { @apply flex flex-col; }
-  .route-viewport-panel { @apply min-h-[460px]; }
-  .route-selection-grid, .route-form-grid { @apply grid-cols-1; }
-  .route-metric-grid { @apply grid-cols-2; }
-  .route-joint-row { @apply grid-cols-[110px_minmax(100px,1fr)_80px] gap-2; }
+  .panel-header { @apply flex-wrap gap-3 px-4 py-3; }
+  .viewer-footer { @apply flex-wrap gap-2 px-3 py-2 text-[9px]; }
+  .viewer-hint { @apply w-full text-[9px]; }
+  .footer { @apply flex-col gap-2 text-[9px]; }
+  .route-heading { @apply flex-col items-start gap-4 py-6 pb-4; }
+  .route-heading-actions { @apply w-full flex-wrap; }
+  .scene-shell { @apply min-h-[320px] max-h-[420px]; aspect-ratio: 4 / 3.2; }
+  .route-joint-row { @apply grid-cols-[96px_minmax(0,1fr)_72px] gap-2 py-3; }
+  .route-joint-row > span { @apply text-[11px]; }
+  .route-actions { @apply p-3 gap-2; }
+  .archive-route-card { @apply flex-col items-start gap-3; }
+  .archive-route-card .demo-card-actions { @apply w-full justify-start flex-wrap; }
+  .animation-toolbar { @apply flex-wrap gap-3; }
+  .timeline-scrub { @apply flex-col items-stretch gap-2 p-2; }
+  .timeline-scrub input[type='range'] { @apply w-full; }
+  .scrub-label { @apply text-[9px] leading-[1.4] break-words; }
+  .edit-banner { @apply flex-col items-start gap-2; }
+  .edit-banner > div { @apply w-full flex-wrap justify-start; }
+  .keyframe-inspector .timeline-frame-header { @apply gap-2; }
+  .timeline-joint-grid { @apply grid-cols-1 gap-2; }
+  .animation-channels { @apply max-h-[220px]; }
+  .channel-row { @apply min-w-[520px]; grid-template-columns: 110px minmax(410px, 1fr); }
+  .scene-hud { @apply text-[9px] left-2 bottom-2 px-2 py-1 max-w-[85%] truncate; }
+}
+
+@media (max-width: 420px) {
+  .route-joint-row { @apply grid-cols-[76px_minmax(0,1fr)_64px] gap-2; }
+  .route-joint-row input[type='number'] { @apply text-[11px] p-[6px]; }
+  h2 { @apply text-[22px]; }
+  .scene-shell { @apply min-h-[280px] max-h-[380px]; }
+  .app-shell { @apply px-[10px]; }
 }

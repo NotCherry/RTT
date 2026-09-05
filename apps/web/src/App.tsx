@@ -235,6 +235,14 @@ function Workbench() {
 
   useEffect(() => () => stopReplay(), []);
 
+  useEffect(() => {
+    stopReplay();
+    if (location.pathname !== "/teach/timeline") {
+      setTimelinePendingPositions(null);
+      setTimelineInsertFrame(null);
+    }
+  }, [location.pathname]);
+
   // Auto-load sample robot on first mount if none present (vertical stance pre-configured)
   useEffect(() => {
     if (robot || busy) return;
@@ -402,7 +410,7 @@ function Workbench() {
   }
 
   function applyPositions(next: number[]) {
-    setPreviewPositions(null);
+    stopReplay();
     setState((current) => ({
       positions: [...next],
       training: current?.training ?? false,
@@ -857,6 +865,7 @@ function Workbench() {
   }
 
   function updateJoint(index: number, value: number) {
+    stopReplay();
     const next = positions.map((position, positionIndex) =>
       positionIndex === index ? value : position,
     );
@@ -868,7 +877,7 @@ function Workbench() {
   }
 
   function resetPose() {
-    clearPreview();
+    stopReplay();
     const next = controllableJoints.map(() => 0);
     setState((current) => ({
       positions: next,
@@ -905,6 +914,7 @@ function Workbench() {
   }
 
   function selectDemonstration(demonstration: Demonstration) {
+    stopReplay();
     setSelectedDemoId(demonstration.id);
     setState((current) => ({
       positions: [...demonstration.target],
@@ -2103,8 +2113,14 @@ function Workbench() {
                         title={`Multi-joint steps: ${rolloutDiagnostics.coordination.multi_joint_steps}`}
                       >
                         Simultaneity{" "}
-                        <b>{rolloutDiagnostics.coordination.simultaneity.toFixed(2)}</b>
-                        {rolloutDiagnostics.coordination.sequential ? " — SEQUENTIAL" : ""}
+                        <b>
+                          {rolloutDiagnostics.coordination.simultaneity.toFixed(
+                            2,
+                          )}
+                        </b>
+                        {rolloutDiagnostics.coordination.sequential
+                          ? " — SEQUENTIAL"
+                          : ""}
                       </span>
                     ) : null}
                   </div>
