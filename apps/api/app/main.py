@@ -1312,7 +1312,10 @@ def rollout(session_id: str, request: RolloutRequest) -> dict[str, Any]:
                 raise ValueError("timing must be positive")
         except (TypeError, ValueError, ZeroDivisionError) as exc:
             raise HTTPException(422, f"Invalid timing parameter: {exc}") from exc
-        scale = grid_ms / step_ms if request.timeline_fps else 1.0
+        # Canonical training step is grid when timeline_fps present
+        canonical_step = int(round(grid_ms)) if request.timeline_fps else step_ms
+        canonical_step = max(1, min(canonical_step, 2000))
+        scale = grid_ms / canonical_step if request.timeline_fps else 1.0
         segment_ms_list = [ordered[i].timestamp - ordered[i-1].timestamp for i in range(1, len(ordered))]
         density = compute_rollout_density(segment_ms_list, grid_ms, request.max_steps, total_steps)
         raw_steps = density["scaled_steps"]
@@ -1326,8 +1329,8 @@ def rollout(session_id: str, request: RolloutRequest) -> dict[str, Any]:
                 "segment_ms": float(segment_ms_list[idx]),
                 "raw_steps": int(raw_steps_for_diag[idx]),
                 "scaled_steps": int(raw_steps[idx]),
-                "effective_scale": float(compute_effective_scale(float(segment_ms_list[idx]), int(raw_steps[idx]), step_ms, grid_ms)),
-                "scale": float(compute_effective_scale(float(segment_ms_list[idx]), int(raw_steps[idx]), step_ms, grid_ms)),
+                "effective_scale": float(compute_effective_scale(float(segment_ms_list[idx]), int(raw_steps[idx]), canonical_step, grid_ms)),
+                "scale": float(compute_effective_scale(float(segment_ms_list[idx]), int(raw_steps[idx]), canonical_step, grid_ms)),
                 "density_ratio": float(density_ratio),
                 "grid_ms": float(grid_ms),
             }
@@ -1340,7 +1343,7 @@ def rollout(session_id: str, request: RolloutRequest) -> dict[str, Any]:
             checkpoint = ordered[checkpoint_index]
             # Decimation-aware scale per segment: when budget squeezes steps, per-step delta must grow
             segment_ms = float(ordered[checkpoint_index].timestamp - ordered[checkpoint_index - 1].timestamp)
-            effective_scale = compute_effective_scale(segment_ms, segment_steps, step_ms, grid_ms)
+            effective_scale = compute_effective_scale(segment_ms, segment_steps, canonical_step, grid_ms)
             previous_delta = [0.0] * joint_count
             for step_index in range(segment_steps):
                 if total_steps >= request.max_steps:
