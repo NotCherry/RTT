@@ -175,8 +175,7 @@ export function EvaluatePage({
                                                                 <div className="route-metric-grid">
                                                                         <div>
                                                                                 <PanelLabel>
-                                                                                        MEAN
-                                                                                        ERROR
+                                                                                        FINAL MEAN
                                                                                 </PanelLabel>
                                                                                 <strong>
                                                                                         {meanError(
@@ -189,13 +188,34 @@ export function EvaluatePage({
                                                                         </div>
                                                                         <div>
                                                                                 <PanelLabel>
-                                                                                        MAX
-                                                                                        ERROR
+                                                                                        FINAL MAX
                                                                                 </PanelLabel>
                                                                                 <strong>
                                                                                         {evaluation.error.toFixed(
                                                                                                 4,
                                                                                         )}
+                                                                                </strong>
+                                                                        </div>
+                                                                        <div>
+                                                                                <PanelLabel>
+                                                                                        TRAJECTORY MAX
+                                                                                </PanelLabel>
+                                                                                <strong>
+                                                                                        {(() => {
+                                                                                                const gestureFrames = rolloutFrames.filter(
+                                                                                                        (f) => (f.phase ?? "gesture") === "gesture",
+                                                                                                );
+                                                                                                const maxErr = gestureFrames.length
+                                                                                                        ? Math.max(
+                                                                                                                  ...gestureFrames.map((f) =>
+                                                                                                                          Math.max(
+                                                                                                                                  ...f.positions.map((p, i) => Math.abs(p - (f.expected[i] ?? p))),
+                                                                                                                          ),
+                                                                                                                  ),
+                                                                                                          )
+                                                                                                        : evaluation.error;
+                                                                                                return maxErr.toFixed(4);
+                                                                                        })()}
                                                                                 </strong>
                                                                         </div>
                                                                 </div>

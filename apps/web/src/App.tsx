@@ -145,6 +145,7 @@ function Workbench() {
   const [datasets, setDatasets] = useState<Dataset[]>([]);
   const [activeDatasetId, setActiveDatasetId] = useState<string | null>(null);
   const [replayingDemoId, setReplayingDemoId] = useState<string | null>(null);
+  const [previewPositions, setPreviewPositions] = useState<number[] | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
   const replayTimerRef = useRef<number | null>(null);
 
@@ -152,7 +153,11 @@ function Workbench() {
     () => robot?.joints.filter((joint) => joint.controllable) ?? [],
     [robot],
   );
-  const positions = state?.positions ?? controllableJoints.map(() => 0);
+  const basePositions = state?.positions ?? controllableJoints.map(() => 0);
+  const positions = previewPositions ?? basePositions;
+  const displayState: SimulationState | null = previewPositions
+    ? { positions: previewPositions, training: state?.training ?? false }
+    : state;
   const hiddenLayerText = config.hidden_layers.join(", ");
   const timelineDemonstration = demonstrations.find(
     (demonstration) =>
@@ -376,11 +381,21 @@ function Workbench() {
   }
 
   function applyPositions(next: number[]) {
+    setPreviewPositions(null);
     setState((current) => ({
-      positions: next,
+      positions: [...next],
       training: current?.training ?? false,
     }));
     send({ type: "set_positions", positions: next });
+  }
+
+  function applyPreviewPositions(next: number[]) {
+    // Kinematic preview: local only, no physics sync, avoids jitter after first preview
+    setPreviewPositions([...next]);
+  }
+
+  function clearPreview() {
+    setPreviewPositions(null);
   }
 
   function stopReplay() {
@@ -389,6 +404,7 @@ function Workbench() {
       replayTimerRef.current = null;
     }
     setReplayingDemoId(null);
+    clearPreview();
   }
 
   function replaceTimelineFrames(nextFrames: DemonstrationFrame[]) {
@@ -554,7 +570,7 @@ function Workbench() {
     setTimelinePlayheadFrame(timestampToFrame(frame.timestamp, timelineFps));
     setTimelinePendingPositions(null);
     setTimelineInsertFrame(null);
-    applyPositions([...frame.positions]);
+    applyPreviewPositions([...frame.positions]);
   }
 
   function scrubTimelineFrame(targetFrame: number) {
@@ -585,9 +601,10 @@ function Workbench() {
     );
     if (preview.length) {
       setTimelinePendingPositions(preview);
-      applyPositions(preview);
+      applyPreviewPositions(preview);
     } else {
       setTimelinePendingPositions([...positions]);
+      applyPreviewPositions([...positions]);
     }
   }
 
@@ -612,7 +629,7 @@ function Workbench() {
         index === jointIndex ? value : position,
       );
       setTimelinePendingPositions(nextPositions);
-      applyPositions(nextPositions);
+      applyPreviewPositions(nextPositions);
       return;
     }
     const nextFrames = timelineFrames.map((frame, index) =>
@@ -628,7 +645,7 @@ function Workbench() {
     replaceTimelineFrames(nextFrames);
     const updatedFrame = nextFrames[frameIndex];
     if (frameIndex === selectedFrameIndex && updatedFrame) {
-      applyPositions([...updatedFrame.positions]);
+      applyPreviewPositions([...updatedFrame.positions]);
     }
   }
 
@@ -656,7 +673,7 @@ function Workbench() {
   function previewTimelineFrame(index: number) {
     const frame = timelineFrames[index];
     if (!frame) return;
-    applyPositions([...frame.positions]);
+    applyPreviewPositions([...frame.positions]);
   }
 
   function replayFrames(frames: RolloutFrame[], label: string) {
@@ -668,12 +685,14 @@ function Workbench() {
       const frame = frames[frameIndex];
       if (!frame) {
         stopReplay();
+        clearPreview();
         return;
       }
-      applyPositions([...frame.positions]);
+      applyPreviewPositions([...frame.positions]);
       frameIndex += 1;
       if (frameIndex >= frames.length) {
         setReplayingDemoId(null);
+        clearPreview();
         setMessage(`Finished replaying ${label}.`);
         return;
       }
@@ -716,12 +735,14 @@ function Workbench() {
       const pose = playbackPoses[stepIndex];
       if (!pose) {
         stopReplay();
+        clearPreview();
         return;
       }
-      applyPositions([...pose]);
+      applyPreviewPositions([...pose]);
       stepIndex += 1;
       if (stepIndex >= playbackPoses.length) {
         setReplayingDemoId(null);
+        clearPreview();
         setMessage(`Finished replaying ${demonstration.name}.`);
         return;
       }
@@ -826,6 +847,7 @@ function Workbench() {
   }
 
   function resetPose() {
+    clearPreview();
     const next = controllableJoints.map(() => 0);
     setState((current) => ({
       positions: next,
@@ -1116,7 +1138,7 @@ function Workbench() {
       return (
         <TeachingTimelinePage
           robot={robot}
-          state={state}
+                state={displayState}
           timelineFrames={timelineFrames}
           controllableJoints={controllableJoints}
           timelineFps={timelineFps}
@@ -1218,7 +1240,7 @@ function Workbench() {
       return (
         <EvaluatePage
           robot={robot}
-          state={state}
+                state={displayState}
           trained={trained}
           busy={busy}
           demonstrationsLength={demonstrations.length}
@@ -1257,7 +1279,7 @@ function Workbench() {
     return (
       <TeachingPosePage
         robot={robot}
-        state={state}
+                state={displayState}
         controllableJoints={controllableJoints}
         positions={positions}
         busy={busy}
@@ -1378,7 +1400,7 @@ function Workbench() {
               </Button>
             </div>
           </PanelHeader>
-          <RobotScene robot={robot} state={state} />
+          <RobotScene robot={robot} state={displayState} />
           <div className="viewer-footer">
             <span>
               <i className="legend-swatch blue" /> Trainable joint
