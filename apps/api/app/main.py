@@ -348,8 +348,7 @@ class TrainConfig(BaseModel):
     random_seed: int = Field(7, ge=0, le=1_000_000)
     rollout_steps: int = Field(160, ge=1, le=2000)
     physics: bool = Field(True, description="When true, generate physics-feasible deltas; false uses kinematic teleport for fast training.")
-    direction_weight: float = Field(0.2, ge=0.0, le=5.0, description="Extra emphasis on samples where several joints move together (direction).")
-    sync_weight: float = Field(0.3, ge=0.0, le=5.0, description="Extra emphasis on samples where several joints move together (simultaneity).")
+    coordination_weight: float = Field(0.5, ge=0.0, le=5.0, description="Extra emphasis on samples where several joints must move together.")
 
 
 class DemonstrationFrame(BaseModel):
@@ -1019,8 +1018,7 @@ def expected_active_mask(target_row: list[float] | Any) -> list[bool]:
 
 def coordination_sample_weights(
     target: "torch.Tensor",
-    direction_weight: float = 0.2,
-    sync_weight: float = 0.3,
+    coordination_weight: float = 0.5,
 ) -> "torch.Tensor":
     """Per-sample emphasis so combined motion dominates the training loss.
 
@@ -1039,7 +1037,7 @@ def coordination_sample_weights(
     if not target_list:
         return torch.ones((0,), dtype=torch.float32)
     try:
-        boost = max(0.0, float(direction_weight)) + max(0.0, float(sync_weight))
+        boost = max(0.0, float(coordination_weight))
     except Exception:
         boost = 0.0
     weights: list[float] = []
@@ -1281,15 +1279,11 @@ def train_session(session: SimulationSession, request: TrainRequest) -> None:
         loss_function = torch.nn.SmoothL1Loss(reduction="none")
         steps = request.config.epochs
         try:
-            direction_weight = float(request.config.direction_weight)
+            coordination_weight = float(request.config.coordination_weight)
         except Exception:
-            direction_weight = 0.2
+            coordination_weight = 0.5
         try:
-            sync_weight = float(request.config.sync_weight)
-        except Exception:
-            sync_weight = 0.3
-        try:
-            sample_weights = coordination_sample_weights(y, direction_weight, sync_weight)
+            sample_weights = coordination_sample_weights(y, coordination_weight)
         except Exception:
             sample_weights = torch.ones((y.shape[0],), dtype=torch.float32)
         try:

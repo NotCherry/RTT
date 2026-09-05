@@ -98,8 +98,7 @@ export type TrainingConfig = {
   random_seed: number;
   rollout_steps: number;
   physics?: boolean;
-  direction_weight?: number;
-  sync_weight?: number;
+  coordination_weight?: number;
 };
 export type CoordinationDiagnostics = {
   simultaneity: number;

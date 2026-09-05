@@ -415,11 +415,11 @@ def test_coordination_weights_emphasize_multi_joint_samples():
     import torch
     # One single-joint row and one two-joint row; only the latter is boosted.
     targets = torch.tensor([[0.2, 0.0], [0.19, -0.09]], dtype=torch.float32)
-    weights = coordination_sample_weights(targets, 0.2, 0.3)
+    weights = coordination_sample_weights(targets, 0.5)
     assert weights[0].item() == pytest.approx(1.0)
     assert weights[1].item() == pytest.approx(1.5)
-    # Zero weights leave every sample equal; the optimum never moves.
-    flat = coordination_sample_weights(targets, 0.0, 0.0)
+    # Zero weight leaves every sample equal; the optimum never moves.
+    flat = coordination_sample_weights(targets, 0.0)
     assert flat.tolist() == pytest.approx([1.0, 1.0])
     assert expected_active_mask([0.19, -0.09]).count(True) == 2
     assert expected_active_mask([0.2, 0.0]).count(True) == 1
