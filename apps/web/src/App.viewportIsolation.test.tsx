@@ -46,7 +46,10 @@ describe("viewport isolation — review fixes", () => {
     expect(src).toContain("function replayFrames");
     expect(src).toContain("function replayDemonstration");
     expect(src).toContain("function applyPreviewPositions");
-    const applyBlock = src.slice(src.indexOf("function applyPreviewPositions"), src.indexOf("function applyPreviewPositions") + 300);
+    const applyBlock = src.slice(
+      src.indexOf("function applyPreviewPositions"),
+      src.indexOf("function applyPreviewPositions") + 300,
+    );
     expect(applyBlock).not.toContain("stopReplay()");
   });
 
@@ -59,7 +62,9 @@ describe("viewport isolation — review fixes", () => {
 
   it("coord display is not gratuitously wrapped (scope-creep guard)", () => {
     const src = appSrc;
-    expect(src).toContain("<b>{rolloutDiagnostics.coordination.simultaneity.toFixed(2)}</b>");
+    expect(src).toContain(
+      "<b>{rolloutDiagnostics.coordination.simultaneity.toFixed(2)}</b>",
+    );
     expect(src).not.toContain("simultaneity.toFixed(\n");
   });
 });
