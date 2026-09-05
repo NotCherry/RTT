@@ -490,8 +490,8 @@
   .edit-banner > div { @apply w-full flex-wrap justify-start; }
   .keyframe-inspector .timeline-frame-header { @apply gap-2; }
   .timeline-joint-grid { @apply grid-cols-1 gap-2; }
-  .animation-channels { @apply max-h-[220px]; }
-  .channel-row { @apply min-w-[520px]; grid-template-columns: 110px minmax(410px, 1fr); }
+  .animation-channels { @apply max-h-[220px] overflow-x-auto; }
+  .channel-row { @apply min-w-0; grid-template-columns: 110px minmax(0, 1fr); }
   .scene-hud { @apply text-[9px] left-2 bottom-2 px-2 py-1 max-w-[85%] truncate; }
 }
 

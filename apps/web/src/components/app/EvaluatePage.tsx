@@ -179,24 +179,14 @@ export function EvaluatePage({
                                                 {rolloutDiagnostics?.coordination ? (
                                                         <div
                                                                 className={
-                                                                        rolloutDiagnostics
-                                                                                .coordination
-                                                                                .sequential
+                                                                        rolloutDiagnostics.coordination.sequential
                                                                                 ? "warning-pill"
                                                                                 : "helper-text"
                                                                 }
-                                                                role={
-                                                                        rolloutDiagnostics
-                                                                                .coordination
-                                                                                .sequential
-                                                                                ? "alert"
-                                                                                : "status"
-                                                                }
+                                                                role={rolloutDiagnostics.coordination.sequential ? "alert" : "status"}
                                                                 title={`Multi-joint steps: ${rolloutDiagnostics.coordination.multi_joint_steps}`}
                                                         >
-                                                                {rolloutDiagnostics
-                                                                        .coordination
-                                                                        .sequential
+                                                                {rolloutDiagnostics.coordination.sequential
                                                                         ? `Sequential motion: joints moved one-at-a-time (simultaneity ${rolloutDiagnostics.coordination.simultaneity.toFixed(2)}, direction ${rolloutDiagnostics.coordination.direction_alignment.toFixed(2)}). Retrain — the gesture needs simultaneous motion.`
                                                                         : `Simultaneous motion: simultaneity ${rolloutDiagnostics.coordination.simultaneity.toFixed(2)}, direction ${rolloutDiagnostics.coordination.direction_alignment.toFixed(2)} over ${rolloutDiagnostics.coordination.multi_joint_steps} multi-joint steps.`}
                                                         </div>

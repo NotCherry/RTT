@@ -283,9 +283,7 @@ export function TrainingPage({
                 className="mt-2 block font-mono text-lg text-text-100"
                 title="Fraction of jointly-moving steps where every expected joint actually moved (1.0 = simultaneous)"
               >
-                {metric?.simultaneity !== undefined
-                  ? metric.simultaneity.toFixed(2)
-                  : "—"}
+                {metric?.simultaneity === undefined ? "—" : metric.simultaneity.toFixed(2)}
               </strong>
             </CardContent>
           </Card>
@@ -296,9 +294,7 @@ export function TrainingPage({
                 className="mt-2 block font-mono text-lg text-text-100"
                 title="Mean cosine alignment between predicted and demonstrated motion direction (1.0 = same direction)"
               >
-                {metric?.direction_alignment !== undefined
-                  ? metric.direction_alignment.toFixed(2)
-                  : "—"}
+                {metric?.direction_alignment === undefined ? "—" : metric.direction_alignment.toFixed(2)}
               </strong>
             </CardContent>
           </Card>

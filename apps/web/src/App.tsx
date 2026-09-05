@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BrowserRouter, Navigate, useLocation } from "react-router-dom";
 import {
   createSession,
@@ -233,15 +233,32 @@ function Workbench() {
     }
   }, [timelineDemonstration, timelineSourceFrames, timelineDraftSourceId]);
 
-  useEffect(() => () => stopReplay(), []);
+  const clearPreview = useCallback(() => {
+    setPreviewPositions(null);
+  }, []);
+
+  const stopReplay = useCallback(() => {
+    if (replayTimerRef.current !== null) {
+      window.clearTimeout(replayTimerRef.current);
+      replayTimerRef.current = null;
+    }
+    setReplayingDemoId(null);
+    clearPreview();
+  }, [clearPreview]);
+
+  useEffect(() => () => stopReplay(), [stopReplay]);
 
   useEffect(() => {
     stopReplay();
     if (location.pathname !== "/teach/timeline") {
       setTimelinePendingPositions(null);
       setTimelineInsertFrame(null);
+      setTimelineDraft(null);
+      setTimelineDraftSourceId(null);
+      setSelectedFrameIndex(0);
+      setTimelinePlayheadFrame(0);
     }
-  }, [location.pathname]);
+  }, [location.pathname, stopReplay]);
 
   // Auto-load sample robot on first mount if none present (vertical stance pre-configured)
   useEffect(() => {
@@ -423,19 +440,6 @@ function Workbench() {
     setPreviewPositions([...next]);
   }
 
-  function clearPreview() {
-    setPreviewPositions(null);
-  }
-
-  function stopReplay() {
-    if (replayTimerRef.current !== null) {
-      window.clearTimeout(replayTimerRef.current);
-      replayTimerRef.current = null;
-    }
-    setReplayingDemoId(null);
-    clearPreview();
-  }
-
   function replaceTimelineFrames(nextFrames: DemonstrationFrame[]) {
     setTimelineSaveConfirmation(null);
     const next = normalizeFrames(nextFrames);
@@ -595,6 +599,7 @@ function Workbench() {
   function selectTimelineFrame(index: number) {
     const frame = timelineFrames[index];
     if (!frame) return;
+    stopReplay();
     setSelectedFrameIndex(index);
     setTimelinePlayheadFrame(timestampToFrame(frame.timestamp, timelineFps));
     setTimelinePendingPositions(null);
@@ -629,9 +634,11 @@ function Workbench() {
       frame * (1000 / timelineFps),
     );
     if (preview.length) {
+      stopReplay();
       setTimelinePendingPositions(preview);
       applyPreviewPositions(preview);
     } else {
+      stopReplay();
       setTimelinePendingPositions([...positions]);
       applyPreviewPositions([...positions]);
     }
@@ -657,6 +664,7 @@ function Workbench() {
       const nextPositions = timelinePendingPositions.map((position, index) =>
         index === jointIndex ? value : position,
       );
+      stopReplay();
       setTimelinePendingPositions(nextPositions);
       applyPreviewPositions(nextPositions);
       return;
@@ -674,6 +682,7 @@ function Workbench() {
     replaceTimelineFrames(nextFrames);
     const updatedFrame = nextFrames[frameIndex];
     if (frameIndex === selectedFrameIndex && updatedFrame) {
+      stopReplay();
       applyPreviewPositions([...updatedFrame.positions]);
     }
   }
@@ -702,6 +711,7 @@ function Workbench() {
   function previewTimelineFrame(index: number) {
     const frame = timelineFrames[index];
     if (!frame) return;
+    stopReplay();
     applyPreviewPositions([...frame.positions]);
   }
 
@@ -2113,14 +2123,8 @@ function Workbench() {
                         title={`Multi-joint steps: ${rolloutDiagnostics.coordination.multi_joint_steps}`}
                       >
                         Simultaneity{" "}
-                        <b>
-                          {rolloutDiagnostics.coordination.simultaneity.toFixed(
-                            2,
-                          )}
-                        </b>
-                        {rolloutDiagnostics.coordination.sequential
-                          ? " — SEQUENTIAL"
-                          : ""}
+                        <b>{rolloutDiagnostics.coordination.simultaneity.toFixed(2)}</b>
+                        {rolloutDiagnostics.coordination.sequential ? " — SEQUENTIAL" : ""}
                       </span>
                     ) : null}
                   </div>
