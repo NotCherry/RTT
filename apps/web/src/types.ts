@@ -120,6 +120,7 @@ export type RolloutResponse = {
     raw_steps: number;
     scaled_steps: number;
     scale: number;
+    effective_scale?: number;
     density_ratio: number;
     grid_ms: number;
   }[];

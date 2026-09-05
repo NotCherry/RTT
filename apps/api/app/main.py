@@ -796,13 +796,18 @@ def compute_effective_scale(
         return 1.0
 
 
-def check_budget_exhaustion(remaining: int, max_steps: int) -> dict[str, str] | None:
-    """Deep module: pure warning when gesture budget exhausted."""
+def check_budget_exhaustion(remaining: int, max_steps: int, density_ratio: float | None = None) -> dict[str, str] | None:
+    """Deep module: pure warning when gesture budget exhausted or trimmed."""
     try:
         if remaining == 0 and max_steps > 0:
             return {
                 "type": "warning",
                 "message": f"Gesture trimmed: approach consumed max_steps budget ({max_steps}), 0 gesture steps emitted",
+            }
+        if density_ratio is not None and density_ratio > 1.01:
+            return {
+                "type": "warning",
+                "message": f"Gesture decimated: density {density_ratio:.2f}x (budget {max_steps} < raw steps), trajectory sparsified",
             }
         return None
     except Exception:
@@ -1321,13 +1326,14 @@ def rollout(session_id: str, request: RolloutRequest) -> dict[str, Any]:
                 "segment_ms": float(segment_ms_list[idx]),
                 "raw_steps": int(raw_steps_for_diag[idx]),
                 "scaled_steps": int(raw_steps[idx]),
+                "effective_scale": float(compute_effective_scale(float(segment_ms_list[idx]), int(raw_steps[idx]), step_ms, grid_ms)),
                 "scale": float(compute_effective_scale(float(segment_ms_list[idx]), int(raw_steps[idx]), step_ms, grid_ms)),
                 "density_ratio": float(density_ratio),
                 "grid_ms": float(grid_ms),
             }
             for idx in range(len(segment_ms_list))
         ]
-        warning = check_budget_exhaustion(int(density["remaining"]), int(request.max_steps))
+        warning = check_budget_exhaustion(int(density["remaining"]), int(request.max_steps), float(density_ratio))
         warnings: list[dict[str, str]] = [warning] if warning else []
         expected_size = model_expected_size(session.model, joint_count)
         for checkpoint_index, segment_steps in zip(range(1, len(ordered)), raw_steps):

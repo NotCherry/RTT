@@ -152,9 +152,22 @@ export function EvaluatePage({
                                                         Evaluate selected
                                                         demonstration
                                                 </Button>
-                                                {rolloutDiagnostics?.warnings?.length ? (
-                                                        <div className="warning-pill" role="alert">
-                                                                {rolloutDiagnostics.warnings.map((w) => w.message).join("; ")}
+                                                {rolloutDiagnostics?.warnings
+                                                        ?.length ? (
+                                                        <div
+                                                                className="warning-pill"
+                                                                role="alert"
+                                                        >
+                                                                {rolloutDiagnostics.warnings
+                                                                        .map(
+                                                                                (
+                                                                                        w,
+                                                                                ) =>
+                                                                                        w.message,
+                                                                        )
+                                                                        .join(
+                                                                                "; ",
+                                                                        )}
                                                         </div>
                                                 ) : null}
                                                 {evaluation ? (

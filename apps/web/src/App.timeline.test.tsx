@@ -406,25 +406,50 @@ describe("training draft guard", () => {
     const { MemoryRouter } = await import("react-router-dom");
     const { render: r2 } = await import("@testing-library/react");
     const { container } = r2(
-      <MemoryRouter><TrainingPage
-        demonstrations={[{ id: "d1", name: "demo", kind: "gesture", current: [0], target: [0], frames: [{ timestamp: 0, positions: [0] }], timeline_fps: 30, duration_frames: 60, start_frame_index: 0 } as unknown as import("./types").Demonstration]}
-        datasets={[]}
-        activeDatasetId={null}
-        selectedDemoId="d1"
-        controllableJoints={[robot.joints[0]]}
-        config={{ epochs: "100", timestep_ms: "120", physics: true, hidden_layers: "64,64", learning_rate: "0.003", batch_size: "16", rollout_steps: "160", random_starts: "0" } as unknown as import("./types").TrainingConfig}
-        hiddenLayerText="64,64"
-        metric={null}
-        busy={false}
-        training={false}
-        trained={false}
-        sessionId="s1"
-        hasUnsavedTimelineChanges={true}
-        onDatasetChange={() => {}}
-        onDemoChange={() => {}}
-        onConfigChange={() => {}}
-        onTrain={() => {}}
-      /></MemoryRouter>
+      <MemoryRouter>
+        <TrainingPage
+          demonstrations={[
+            {
+              id: "d1",
+              name: "demo",
+              kind: "gesture",
+              current: [0],
+              target: [0],
+              frames: [{ timestamp: 0, positions: [0] }],
+              timeline_fps: 30,
+              duration_frames: 60,
+              start_frame_index: 0,
+            } as unknown as import("./types").Demonstration,
+          ]}
+          datasets={[]}
+          activeDatasetId={null}
+          selectedDemoId="d1"
+          controllableJoints={[robot.joints[0]]}
+          config={
+            {
+              epochs: "100",
+              timestep_ms: "120",
+              physics: true,
+              hidden_layers: "64,64",
+              learning_rate: "0.003",
+              batch_size: "16",
+              rollout_steps: "160",
+              random_starts: "0",
+            } as unknown as import("./types").TrainingConfig
+          }
+          hiddenLayerText="64,64"
+          metric={null}
+          busy={false}
+          training={false}
+          trained={false}
+          sessionId="s1"
+          hasUnsavedTimelineChanges={true}
+          onDatasetChange={() => {}}
+          onDemoChange={() => {}}
+          onConfigChange={() => {}}
+          onTrain={() => {}}
+        />
+      </MemoryRouter>,
     );
     expect(container.textContent).toContain("Timeline has unsaved changes");
   });
@@ -433,22 +458,46 @@ describe("training draft guard", () => {
     const { MemoryRouter } = await import("react-router-dom");
     const { render: r3 } = await import("@testing-library/react");
     const { container } = r3(
-      <MemoryRouter><EvaluatePage
-        robot={robot}
-        state={{ positions: [0] } as unknown as import("./types").SimulationState}
-        trained={true}
-        busy={false}
-        demonstrationsLength={1}
-        demonstrationName="demo"
-        demonstrationKind="gesture"
-        checkpointCount={2}
-        rolloutFrames={[{ timestamp: 0, positions: [0], expected: [0] } as unknown as import("./types").RolloutFrame, { timestamp: 120, positions: [0.1], expected: [0.1] } as unknown as import("./types").RolloutFrame]}
-        rolloutDiagnostics={{ density_ratio: 2, warnings: [{ type: "warning", message: "Gesture trimmed: approach consumed max_steps budget (2), 0 gesture steps emitted" }] }}
-        evaluation={{ target: [0], positions: [0], error: 0 }}
-        replaying={false}
-        onReplay={() => {}}
-        onEvaluate={() => {}}
-      /></MemoryRouter>
+      <MemoryRouter>
+        <EvaluatePage
+          robot={robot}
+          state={
+            { positions: [0] } as unknown as import("./types").SimulationState
+          }
+          trained={true}
+          busy={false}
+          demonstrationsLength={1}
+          demonstrationName="demo"
+          demonstrationKind="gesture"
+          checkpointCount={2}
+          rolloutFrames={[
+            {
+              timestamp: 0,
+              positions: [0],
+              expected: [0],
+            } as unknown as import("./types").RolloutFrame,
+            {
+              timestamp: 120,
+              positions: [0.1],
+              expected: [0.1],
+            } as unknown as import("./types").RolloutFrame,
+          ]}
+          rolloutDiagnostics={{
+            density_ratio: 2,
+            warnings: [
+              {
+                type: "warning",
+                message:
+                  "Gesture trimmed: approach consumed max_steps budget (2), 0 gesture steps emitted",
+              },
+            ],
+          }}
+          evaluation={{ target: [0], positions: [0], error: 0 }}
+          replaying={false}
+          onReplay={() => {}}
+          onEvaluate={() => {}}
+        />
+      </MemoryRouter>,
     );
     expect(container.textContent).toContain("Gesture trimmed");
   });

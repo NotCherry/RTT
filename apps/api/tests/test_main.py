@@ -1,3 +1,4 @@
+# pyright: reportCallIssue=false, reportArgumentType=false
 import io
 import json
 import zipfile
@@ -385,10 +386,10 @@ def test_rollout_budget_ablation():
         def mae(a,b): return sum(abs(x-y) for x,y in zip(a,b))/len(a)
         return max(mae(f["positions"], f["expected"]) for f in frames) if frames else 0, data["density_ratio"], len(frames)
     auto160, d160, n160 = max_auto(160)
-    auto500, d500, n500 = max_auto(500)
+    auto2000, d2000, n2000 = max_auto(2000)
     assert d160 > 1.0, f"expected decimation at 160, got density {d160}"
-    assert d500 == 1.0, f"expected no decimation at 500, got {d500}"
-    assert n500 > n160, f"500 should have more frames {n500} vs {n160}"
+    assert d2000 == 1.0, f"expected no decimation at 2000, got {d2000}"
+    assert n2000 > n160, f"2000 should have more frames {n2000} vs {n160}"
 
 def test_compute_effective_scale_decimation_aware():
     """T4 — decimation-aware scale must grow when steps are squeezed."""

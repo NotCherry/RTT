@@ -1021,7 +1021,9 @@ function Workbench() {
         setRolloutFrames(result.frames);
         setRolloutDiagnostics({
           density_ratio: (result as { density_ratio?: number }).density_ratio,
-          warnings: (result as { warnings?: { type: string; message: string }[] }).warnings,
+          warnings: (
+            result as { warnings?: { type: string; message: string }[] }
+          ).warnings,
           segment_diagnostics: (
             result as {
               segment_diagnostics?: {
@@ -1201,7 +1203,10 @@ function Workbench() {
           training={Boolean(state?.training)}
           trained={trained}
           sessionId={sessionId}
-          hasUnsavedTimelineChanges={hasUnsavedTimelineChanges(timelineDraft, timelineSourceFrames)}
+          hasUnsavedTimelineChanges={hasUnsavedTimelineChanges(
+            timelineDraft,
+            timelineSourceFrames,
+          )}
           onDatasetChange={setActiveDatasetId}
           onDemoChange={setSelectedDemoId}
           onConfigChange={updateConfig}
