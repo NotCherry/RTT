@@ -70,7 +70,14 @@ const initialConfig: TrainingConfig = {
   physics: true,
 };
 
-type TrainingMetric = { epoch: number; epochs: number; loss: number };
+type TrainingMetric = {
+  epoch: number;
+  epochs: number;
+  loss: number;
+  direction_alignment?: number;
+  simultaneity?: number;
+  multi_joint_fraction?: number;
+};
 type EvaluationResult = {
   target: number[];
   positions: number[];
@@ -105,6 +112,12 @@ function Workbench() {
       scaled_steps: number;
       density_ratio: number;
     }[];
+    coordination?: {
+      simultaneity: number;
+      direction_alignment: number;
+      multi_joint_steps: number;
+      sequential: boolean;
+    } | null;
   } | null>(null);
   const [trained, setTrained] = useState(false);
   const [message, setMessage] = useState(
@@ -145,7 +158,9 @@ function Workbench() {
   const [datasets, setDatasets] = useState<Dataset[]>([]);
   const [activeDatasetId, setActiveDatasetId] = useState<string | null>(null);
   const [replayingDemoId, setReplayingDemoId] = useState<string | null>(null);
-  const [previewPositions, setPreviewPositions] = useState<number[] | null>(null);
+  const [previewPositions, setPreviewPositions] = useState<number[] | null>(
+    null,
+  );
   const socketRef = useRef<WebSocket | null>(null);
   const replayTimerRef = useRef<number | null>(null);
 
@@ -251,6 +266,9 @@ function Workbench() {
         epochs?: number;
         loss?: number;
         message?: string;
+        direction_alignment?: number;
+        simultaneity?: number;
+        multi_joint_fraction?: number;
       };
       if (payload.type === "state" && payload.positions) {
         setState({
@@ -267,6 +285,9 @@ function Workbench() {
           epoch: payload.epoch,
           epochs: payload.epochs,
           loss: payload.loss,
+          direction_alignment: payload.direction_alignment,
+          simultaneity: payload.simultaneity,
+          multi_joint_fraction: payload.multi_joint_fraction,
         };
         setMetric(nextMetric);
         setMetricHistory((current) => [...current, nextMetric].slice(-80));
@@ -1041,6 +1062,16 @@ function Workbench() {
           ? Math.max(...gestureFrames.map(frameError))
           : error;
         setRolloutFrames(result.frames);
+        const coordination = (
+          result as {
+            coordination?: {
+              simultaneity: number;
+              direction_alignment: number;
+              multi_joint_steps: number;
+              sequential: boolean;
+            };
+          }
+        ).coordination;
         setRolloutDiagnostics({
           density_ratio: (result as { density_ratio?: number }).density_ratio,
           warnings: (
@@ -1056,6 +1087,7 @@ function Workbench() {
               }[];
             }
           ).segment_diagnostics,
+          coordination: coordination ?? null,
         });
         setEvaluation({
           target: finalFrame.expected,
@@ -1073,8 +1105,11 @@ function Workbench() {
         // be played forward instead of pasting only the finished pose.
         applyPositions([...result.frames[0].positions]);
         setActiveTab("testing");
+        const coordinationLabel = coordination
+          ? ` Simultaneity ${coordination.simultaneity.toFixed(2)}, direction ${coordination.direction_alignment.toFixed(2)}${coordination.sequential ? " — SEQUENTIAL MOTION DETECTED (joints moved one-at-a-time instead of together)" : ""}.`
+          : "";
         setMessage(
-          `Rolled out ${demonstration.name} (${physicsLabel}) through ${result.frames.length} incremental frames. Approach max error: ${approachError.toFixed(4)}, gesture max error: ${gestureError.toFixed(4)} native units. Contacts: ${result.collisions ?? 0}, max tracking error: ${maxTrack.toFixed(4)}, clipped steps: ${clipped}.`,
+          `Rolled out ${demonstration.name} (${physicsLabel}) through ${result.frames.length} incremental frames. Approach max error: ${approachError.toFixed(4)}, gesture max error: ${gestureError.toFixed(4)} native units. Contacts: ${result.collisions ?? 0}, max tracking error: ${maxTrack.toFixed(4)}, clipped steps: ${clipped}.${coordinationLabel}`,
         );
       } else {
         const result = await predictPose(
@@ -1138,7 +1173,7 @@ function Workbench() {
       return (
         <TeachingTimelinePage
           robot={robot}
-                state={displayState}
+          state={displayState}
           timelineFrames={timelineFrames}
           controllableJoints={controllableJoints}
           timelineFps={timelineFps}
@@ -1240,7 +1275,7 @@ function Workbench() {
       return (
         <EvaluatePage
           robot={robot}
-                state={displayState}
+          state={displayState}
           trained={trained}
           busy={busy}
           demonstrationsLength={demonstrations.length}
@@ -1279,7 +1314,7 @@ function Workbench() {
     return (
       <TeachingPosePage
         robot={robot}
-                state={displayState}
+        state={displayState}
         controllableJoints={controllableJoints}
         positions={positions}
         busy={busy}
@@ -2063,6 +2098,15 @@ function Workbench() {
                     <span>
                       Maximum <b>{evaluation.error.toFixed(4)}</b>
                     </span>
+                    {rolloutDiagnostics?.coordination ? (
+                      <span
+                        title={`Multi-joint steps: ${rolloutDiagnostics.coordination.multi_joint_steps}`}
+                      >
+                        Simultaneity{" "}
+                        <b>{rolloutDiagnostics.coordination.simultaneity.toFixed(2)}</b>
+                        {rolloutDiagnostics.coordination.sequential ? " — SEQUENTIAL" : ""}
+                      </span>
+                    ) : null}
                   </div>
                   <div className="error-list">
                     {evaluation.target.map((target, index) => {

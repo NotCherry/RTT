@@ -98,6 +98,14 @@ export type TrainingConfig = {
   random_seed: number;
   rollout_steps: number;
   physics?: boolean;
+  direction_weight?: number;
+  sync_weight?: number;
+};
+export type CoordinationDiagnostics = {
+  simultaneity: number;
+  direction_alignment: number;
+  multi_joint_steps: number;
+  sequential: boolean;
 };
 export type RolloutFrame = {
   timestamp: number;
@@ -126,4 +134,5 @@ export type RolloutResponse = {
   }[];
   density_ratio?: number;
   warnings?: { type: string; message: string }[];
+  coordination?: CoordinationDiagnostics;
 };

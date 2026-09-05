@@ -1,9 +1,11 @@
 import type {
+  CoordinationDiagnostics,
   Dataset,
   Demonstration,
   DemonstrationFrame,
   Robot,
   RolloutFrame,
+  RolloutResponse,
   SimulationState,
   TrainingConfig,
 } from "./types";
@@ -97,13 +99,14 @@ export function rolloutSession(
   timelineFps?: number | null,
   physics: boolean = true,
 ) {
-  return request<{
+  return request<RolloutResponse & {
     frames: RolloutFrame[];
     steps: number;
     collisions: number;
     max_tracking_error: number;
     clipped_steps: number;
     physics: boolean;
+    coordination?: CoordinationDiagnostics;
   }>(`/api/sessions/${sessionId}/rollout`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

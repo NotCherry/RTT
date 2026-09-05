@@ -348,6 +348,8 @@ class TrainConfig(BaseModel):
     random_seed: int = Field(7, ge=0, le=1_000_000)
     rollout_steps: int = Field(160, ge=1, le=2000)
     physics: bool = Field(True, description="When true, generate physics-feasible deltas; false uses kinematic teleport for fast training.")
+    direction_weight: float = Field(0.2, ge=0.0, le=5.0, description="Extra emphasis on samples where several joints move together (direction).")
+    sync_weight: float = Field(0.3, ge=0.0, le=5.0, description="Extra emphasis on samples where several joints move together (simultaneity).")
 
 
 class DemonstrationFrame(BaseModel):
@@ -984,6 +986,227 @@ def build_incremental_samples(
     return samples
 
 
+# --- Simultaneous-motion enforcement -------------------------------------
+# A pure per-joint regression loss (SmoothL1/MSE on deltas) cannot tell a
+# diagonal joint-space path (both joints together) from an L-shaped path
+# (one joint, then the other): both reach the same final pose, so the final
+# error looks low while the gesture is wrong. These helpers add two
+# coordination terms that stay MLP-simple (no recurrence, no new inputs):
+# a direction term (predicted delta must point the same way as the target
+# delta) and a simultaneity term (every jointly-moving target joint must
+# actually move in the prediction).
+COORDINATION_ABS_EPS = 0.005
+COORDINATION_REL_RATIO = 0.2
+COORDINATION_MAG_RATIO = 0.4
+
+
+def expected_active_mask(target_row: list[float] | Any) -> list[bool]:
+    """Joints the demonstration expects to move together on this step."""
+    try:
+        values = [float(v) for v in list(target_row)]
+    except Exception:
+        return []
+    if not values:
+        return []
+    peak = max((abs(v) for v in values), default=0.0)
+    if peak <= 1e-9:
+        return [False] * len(values)
+    return [
+        abs(v) >= COORDINATION_ABS_EPS and abs(v) >= COORDINATION_REL_RATIO * peak
+        for v in values
+    ]
+
+
+def coordination_sample_weights(
+    target: "torch.Tensor",
+    direction_weight: float = 0.2,
+    sync_weight: float = 0.3,
+) -> "torch.Tensor":
+    """Per-sample emphasis so combined motion dominates the training loss.
+
+    A pure per-joint regression loss lets the model settle into a sequential
+    shortcut (one joint, then the other): it reaches the same final pose, so
+    the averaged error looks low while the gesture path is wrong. Boosting
+    the weight of samples where several joints must move together makes that
+    shortcut more expensive than the diagonal fit. Weighting never moves the
+    optimum (every term is still zero at the exact fit), so single-joint and
+    pose-only training are unaffected.
+    """
+    try:
+        target_list = target.detach().cpu().tolist()
+    except Exception:
+        return torch.ones((target.shape[0],), dtype=torch.float32)
+    if not target_list:
+        return torch.ones((0,), dtype=torch.float32)
+    try:
+        boost = max(0.0, float(direction_weight)) + max(0.0, float(sync_weight))
+    except Exception:
+        boost = 0.0
+    weights: list[float] = []
+    for row in target_list:
+        try:
+            mask = expected_active_mask(row)
+            multi = sum(1 for flag in mask if flag) >= 2
+        except Exception:
+            multi = False
+        weights.append(1.0 + boost if multi else 1.0)
+    try:
+        return torch.tensor(weights, dtype=torch.float32)
+    except Exception:
+        return torch.ones((len(weights),), dtype=torch.float32)
+
+
+def coordination_diagnostics(
+    prediction: "torch.Tensor",
+    target: "torch.Tensor",
+) -> dict[str, float]:
+    """Direction alignment + simultaneity scores for training events.
+
+    Pure observation (no gradients): mean cosine between predicted and target
+    deltas, and the fraction of jointly-moving steps where every expected
+    joint actually moved. Both are 1.0 when training only moves single
+    joints or holds still.
+    """
+    try:
+        target_list = target.detach().cpu().tolist()
+        pred_list = prediction.detach().cpu().tolist()
+    except Exception:
+        return {"direction_alignment": 1.0, "simultaneity": 1.0, "multi_joint_fraction": 0.0}
+    if not target_list:
+        return {"direction_alignment": 1.0, "simultaneity": 1.0, "multi_joint_fraction": 0.0}
+    cosines: list[float] = []
+    sync_scores: list[float] = []
+    multi_joint_steps = 0
+    try:
+        row_count = int(prediction.shape[0])
+    except Exception:
+        return {"direction_alignment": 1.0, "simultaneity": 1.0, "multi_joint_fraction": 0.0}
+    for row in range(row_count):
+        try:
+            tgt_vals = [float(v) for v in target_list[row]]
+            prd_vals = [float(v) for v in pred_list[row]]
+        except Exception:
+            continue
+        try:
+            tgt_norm = math.sqrt(sum(v * v for v in tgt_vals))
+        except Exception:
+            continue
+        if tgt_norm <= 1e-9:
+            continue
+        try:
+            prd_norm = math.sqrt(sum(v * v for v in prd_vals))
+            denom = max(prd_norm * tgt_norm, 1e-9)
+            dot = sum(t * p for t, p in zip(tgt_vals, prd_vals))
+            cosines.append(max(-1.0, min(1.0, dot / denom)) if prd_norm > 1e-12 else -1.0)
+        except Exception:
+            pass
+        try:
+            mask = expected_active_mask(target_list[row])
+        except Exception:
+            mask = []
+        active = [i for i, flag in enumerate(mask) if flag]
+        if len(active) >= 2:
+            multi_joint_steps += 1
+            hits = 0
+            for i in active:
+                try:
+                    t_val = float(target_list[row][i])
+                    p_val = float(pred_list[row][i])
+                except Exception:
+                    continue
+                same_sign = (t_val * p_val) > 0
+                try:
+                    big_enough = abs(p_val) >= min(COORDINATION_ABS_EPS, COORDINATION_MAG_RATIO * abs(t_val))
+                except Exception:
+                    big_enough = False
+                if same_sign and big_enough:
+                    hits += 1
+            try:
+                sync_scores.append(hits / max(1, len(active)))
+            except Exception:
+                pass
+    try:
+        direction_alignment = float(sum(cosines) / len(cosines)) if cosines else 1.0
+    except Exception:
+        direction_alignment = 1.0
+    try:
+        simultaneity = float(sum(sync_scores) / len(sync_scores)) if sync_scores else 1.0
+    except Exception:
+        simultaneity = 1.0
+    try:
+        multi_joint_fraction = float(multi_joint_steps / max(1, row_count))
+    except Exception:
+        multi_joint_fraction = 0.0
+    return {
+        "direction_alignment": direction_alignment,
+        "simultaneity": simultaneity,
+        "multi_joint_fraction": multi_joint_fraction,
+    }
+
+
+def analyze_rollout_coordination(
+    gesture_frames: list[dict[str, Any]],
+    joints: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Detect sequential (one-joint-at-a-time) execution in a rollout.
+
+    Compares achieved per-step deltas against expected per-step deltas over
+    gesture-phase frames. Returns simultaneity/direction scores plus a
+    sequential flag so a low final-pose error can never hide a wrong path.
+    """
+    try:
+        if len(gesture_frames) < 2:
+            return {"simultaneity": 1.0, "direction_alignment": 1.0, "multi_joint_steps": 0, "sequential": False}
+        expected = [list(f.get("expected", [])) for f in gesture_frames]
+        achieved = [list(f.get("positions", [])) for f in gesture_frames]
+        joint_count = len(joints) or (len(expected[0]) if expected else 0)
+        if joint_count < 2:
+            return {"simultaneity": 1.0, "direction_alignment": 1.0, "multi_joint_steps": 0, "sequential": False}
+        exp_norm = [normalized(list(e), joints) if len(e) == joint_count else list(e) for e in expected]
+        ach_norm = [normalized(list(a), joints) if len(a) == joint_count else list(a) for a in achieved]
+        cosines: list[float] = []
+        sync_scores: list[float] = []
+        multi_joint_steps = 0
+        for prev_e, curr_e, prev_a, curr_a in zip(exp_norm[:-1], exp_norm[1:], ach_norm[:-1], ach_norm[1:]):
+            try:
+                exp_delta = [c - p for p, c in zip(prev_e, curr_e)]
+                ach_delta = [c - p for p, c in zip(prev_a, curr_a)]
+            except Exception:
+                continue
+            exp_norm_val = math.sqrt(sum(v * v for v in exp_delta))
+            if exp_norm_val <= 1e-9:
+                continue
+            ach_norm_val = math.sqrt(sum(v * v for v in ach_delta))
+            denom = max(exp_norm_val * ach_norm_val, 1e-9)
+            dot = sum(e * a for e, a in zip(exp_delta, ach_delta))
+            cosines.append(max(-1.0, min(1.0, dot / denom)) if ach_norm_val > 1e-12 else -1.0)
+            mask = expected_active_mask(exp_delta)
+            active = [i for i, flag in enumerate(mask) if flag]
+            if len(active) >= 2:
+                multi_joint_steps += 1
+                hits = 0
+                for i in active:
+                    try:
+                        t_val = float(exp_delta[i])
+                        p_val = float(ach_delta[i])
+                    except Exception:
+                        continue
+                    if (t_val * p_val) > 0 and abs(p_val) >= min(COORDINATION_ABS_EPS, COORDINATION_MAG_RATIO * abs(t_val)):
+                        hits += 1
+                sync_scores.append(hits / max(1, len(active)))
+        simultaneity = float(sum(sync_scores) / len(sync_scores)) if sync_scores else 1.0
+        direction = float(sum(cosines) / len(cosines)) if cosines else 1.0
+        sequential = bool(multi_joint_steps > 0 and (simultaneity < 0.6 or direction < 0.7))
+        return {
+            "simultaneity": simultaneity,
+            "direction_alignment": direction,
+            "multi_joint_steps": multi_joint_steps,
+            "sequential": sequential,
+        }
+    except Exception:
+        return {"simultaneity": 1.0, "direction_alignment": 1.0, "multi_joint_steps": 0, "sequential": False}
+
+
 def train_session(session: SimulationSession, request: TrainRequest) -> None:
     try:
         if not request.demonstrations:
@@ -1055,23 +1278,73 @@ def train_session(session: SimulationSession, request: TrainRequest) -> None:
         y = torch.tensor(targets, dtype=torch.float32)
         model = make_model(expected_input_size(joint_count), joint_count, request.config)
         optimizer = torch.optim.Adam(model.parameters(), lr=request.config.learning_rate)
-        loss_function = torch.nn.SmoothL1Loss()
+        loss_function = torch.nn.SmoothL1Loss(reduction="none")
         steps = request.config.epochs
+        try:
+            direction_weight = float(request.config.direction_weight)
+        except Exception:
+            direction_weight = 0.2
+        try:
+            sync_weight = float(request.config.sync_weight)
+        except Exception:
+            sync_weight = 0.3
+        try:
+            sample_weights = coordination_sample_weights(y, direction_weight, sync_weight)
+        except Exception:
+            sample_weights = torch.ones((y.shape[0],), dtype=torch.float32)
+        try:
+            weight_sum = float(sample_weights.sum().item())
+        except Exception:
+            weight_sum = float(y.shape[0])
+        if not weight_sum or weight_sum <= 0:
+            weight_sum = float(y.shape[0])
         loss = torch.tensor(float("nan"))
+        last_diagnostics: dict[str, float] = {"direction_alignment": 1.0, "simultaneity": 1.0, "multi_joint_fraction": 0.0}
         for epoch in range(steps):
             prediction = model(x)
-            loss = loss_function(prediction, y)
+            # Weighted regression: samples where several joints must move
+            # together count more, so the sequential shortcut (one joint,
+            # then the other) costs more than the diagonal fit. Weighting
+            # never moves the optimum (every term is still zero at the exact
+            # fit), unlike additive penalty terms that fight fine-tuning.
+            per_joint = loss_function(prediction, y)
+            try:
+                per_sample = per_joint.mean(dim=1)
+                loss = (per_sample * sample_weights).sum() / weight_sum
+            except Exception:
+                loss = per_joint.mean()
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+            try:
+                with torch.no_grad():
+                    last_diagnostics = coordination_diagnostics(model(x), y)
+            except Exception:
+                pass
             if epoch == 0 or (epoch + 1) % max(1, steps // 20) == 0 or epoch == steps - 1:
-                session.events.append({"type": "training", "epoch": epoch + 1, "epochs": steps, "loss": float(loss.item()), "samples": len(samples)})
+                try:
+                    event_diagnostics = {key: float(value) for key, value in last_diagnostics.items()}
+                except Exception:
+                    event_diagnostics = {"direction_alignment": 1.0, "simultaneity": 1.0, "multi_joint_fraction": 0.0}
+                try:
+                    reported_loss = float(loss.item())
+                except Exception:
+                    reported_loss = float("nan")
+                session.events.append({"type": "training", "epoch": epoch + 1, "epochs": steps, "loss": reported_loss, "samples": len(samples), **event_diagnostics})
         with session.lock:
             session.model = model.eval()
             session.model_config = request.config.model_dump()
             session.model_mode = "temporal"
             session.demonstrations = [item.model_dump() for item in request.demonstrations]
-            session.events.append({"type": "training_complete", "loss": float(loss.item()), "demonstrations": len(request.demonstrations), "samples": len(samples)})
+            try:
+                final_loss = float(loss.item())
+            except Exception:
+                final_loss = float("nan")
+            try:
+                final_diagnostics = {key: float(value) for key, value in last_diagnostics.items()}
+            except Exception:
+                final_diagnostics = {"direction_alignment": 1.0, "simultaneity": 1.0, "multi_joint_fraction": 0.0}
+            session.events.append({"type": "training_complete", "loss": final_loss, "demonstrations": len(request.demonstrations), "samples": len(samples), **final_diagnostics})
     except Exception as exc:
         session.events.append({"type": "error", "message": str(exc)})
     finally:
@@ -1397,7 +1670,25 @@ def rollout(session_id: str, request: RolloutRequest) -> dict[str, Any]:
                 except Exception:
                     pass
             collisions = len(unique_contacts)
-        return {"frames": result, "steps": total_steps, "collisions": collisions, "max_tracking_error": max_tracking_error, "clipped_steps": total_clipped, "physics": use_physics, "segment_diagnostics": segment_diagnostics, "density_ratio": density_ratio, "warnings": warnings}
+        try:
+            gesture_only = [frame for frame in result if (frame.get("phase", "gesture") == "gesture")]
+            coordination = analyze_rollout_coordination(gesture_only, session.joints)
+        except Exception:
+            coordination = {"simultaneity": 1.0, "direction_alignment": 1.0, "multi_joint_steps": 0, "sequential": False}
+        try:
+            if coordination.get("sequential"):
+                warnings.append({
+                    "type": "warning",
+                    "message": (
+                        "Sequential motion detected: joints moved one-at-a-time "
+                        f"(simultaneity {float(coordination.get('simultaneity', 0.0)):.2f}, "
+                        f"direction {float(coordination.get('direction_alignment', 0.0)):.2f}). "
+                        "The gesture requires simultaneous multi-joint motion."
+                    ),
+                })
+        except Exception:
+            pass
+        return {"frames": result, "steps": total_steps, "collisions": collisions, "max_tracking_error": max_tracking_error, "clipped_steps": total_clipped, "physics": use_physics, "segment_diagnostics": segment_diagnostics, "density_ratio": density_ratio, "warnings": warnings, "coordination": coordination}
     finally:
         if request.gravity is not None:
             try:

@@ -14,7 +14,14 @@ import { Separator } from "@/components/ui/separator";
 import { Card, CardContent } from "@/components/ui/card";
 import type { Dataset, Demonstration, Joint, TrainingConfig } from "@/types";
 
-type TrainingMetric = { epoch: number; epochs: number; loss: number };
+type TrainingMetric = {
+  epoch: number;
+  epochs: number;
+  loss: number;
+  direction_alignment?: number;
+  simultaneity?: number;
+  multi_joint_fraction?: number;
+};
 
 type TrainingPageProps = {
   demonstrations: Demonstration[];
@@ -266,6 +273,28 @@ export function TrainingPage({
               <PanelLabel>INPUTS</PanelLabel>
               <strong className="mt-2 block font-mono text-lg text-text-100">
                 {controllableJoints.length * 2 + 1}
+              </strong>
+            </CardContent>
+          </Card>
+          <Card className="rounded-none border-0 py-4 gap-0 bg-ink-850">
+            <CardContent className="p-4">
+              <PanelLabel>SIMULTANEITY</PanelLabel>
+              <strong
+                className="mt-2 block font-mono text-lg text-text-100"
+                title="Fraction of jointly-moving steps where every expected joint actually moved (1.0 = simultaneous)"
+              >
+                {metric?.simultaneity !== undefined ? metric.simultaneity.toFixed(2) : "—"}
+              </strong>
+            </CardContent>
+          </Card>
+          <Card className="rounded-none border-0 py-4 gap-0 bg-ink-850">
+            <CardContent className="p-4">
+              <PanelLabel>DIRECTION</PanelLabel>
+              <strong
+                className="mt-2 block font-mono text-lg text-text-100"
+                title="Mean cosine alignment between predicted and demonstrated motion direction (1.0 = same direction)"
+              >
+                {metric?.direction_alignment !== undefined ? metric.direction_alignment.toFixed(2) : "—"}
               </strong>
             </CardContent>
           </Card>

@@ -11,11 +11,16 @@ from app.main import (
     Demonstration,
     TrainConfig,
     TrainRequest,
+    analyze_rollout_coordination,
     app,
     build_incremental_samples,
+    coordination_diagnostics,
+    coordination_sample_weights,
     denormalized,
+    expected_active_mask,
     normalized,
     parse_urdf,
+    train_session,
 )
 
 client = TestClient(app)
@@ -405,6 +410,91 @@ def test_rollout_dense_grid_degrades_to_full_coverage_under_cap():
     gesture = [f for f in body["frames"] if f.get("phase") == "gesture"]
     assert len(gesture) == 161
     assert gesture[-1]["expected"] == [0.1, 0.1]
+
+def test_coordination_weights_emphasize_multi_joint_samples():
+    import torch
+    # One single-joint row and one two-joint row; only the latter is boosted.
+    targets = torch.tensor([[0.2, 0.0], [0.19, -0.09]], dtype=torch.float32)
+    weights = coordination_sample_weights(targets, 0.2, 0.3)
+    assert weights[0].item() == pytest.approx(1.0)
+    assert weights[1].item() == pytest.approx(1.5)
+    # Zero weights leave every sample equal; the optimum never moves.
+    flat = coordination_sample_weights(targets, 0.0, 0.0)
+    assert flat.tolist() == pytest.approx([1.0, 1.0])
+    assert expected_active_mask([0.19, -0.09]).count(True) == 2
+    assert expected_active_mask([0.2, 0.0]).count(True) == 1
+
+
+def test_coordination_diagnostics_scores_simultaneous_vs_sequential():
+    import torch
+    target = torch.tensor([[0.19, -0.09]], dtype=torch.float32)
+    simultaneous = torch.tensor([[0.19, -0.09]], dtype=torch.float32)
+    sequential = torch.tensor([[0.19, 0.0]], dtype=torch.float32)
+    good = coordination_diagnostics(simultaneous, target)
+    bad = coordination_diagnostics(sequential, target)
+    assert good["simultaneity"] == pytest.approx(1.0)
+    assert good["direction_alignment"] == pytest.approx(1.0)
+    assert bad["simultaneity"] < 0.6
+    assert bad["direction_alignment"] < good["direction_alignment"]
+    # Single-joint motion is never flagged.
+    single = coordination_diagnostics(
+        torch.tensor([[0.19, 0.0]], dtype=torch.float32),
+        torch.tensor([[0.2, 0.0]], dtype=torch.float32),
+    )
+    assert single["simultaneity"] == pytest.approx(1.0)
+
+
+def test_rollout_coordination_flags_sequential_path():
+    joints = [{"lower": -1.0, "upper": 1.0}, {"lower": -1.0, "upper": 1.0}]
+    diagonal = [
+        {"expected": [0.0, 0.0], "positions": [0.0, 0.0]},
+        {"expected": [0.3, -0.2], "positions": [0.3, -0.2]},
+        {"expected": [0.6, -0.4], "positions": [0.6, -0.4]},
+    ]
+    l_shaped = [
+        {"expected": [0.0, 0.0], "positions": [0.0, 0.0]},
+        {"expected": [0.3, -0.2], "positions": [0.6, 0.0]},
+        {"expected": [0.6, -0.4], "positions": [0.6, -0.4]},
+    ]
+    assert analyze_rollout_coordination(diagonal, joints)["sequential"] is False
+    flagged = analyze_rollout_coordination(l_shaped, joints)
+    assert flagged["sequential"] is True
+    assert flagged["simultaneity"] < 0.6
+
+
+def test_weighted_training_reports_coordination_and_stays_simultaneous():
+    import time
+    sid, _ = _demo_session()
+    demo = {
+        "id": "diag-coord",
+        "name": "diag-coord",
+        "kind": "gesture",
+        "current": [0, 0],
+        "target": [0.6, -0.4],
+        "frames": [
+            {"timestamp": 0, "positions": [0.0, 0.0]},
+            {"timestamp": 240, "positions": [0.6, -0.4]},
+        ],
+    }
+    r = client.post(f"/api/sessions/{sid}/train", json={"demonstrations": [demo], "config": {"epochs": 30, "timestep_ms": 120, "random_starts": 0, "random_seed": 7, "physics": False}})
+    assert r.json()["status"] == "started"
+    for _ in range(200):
+        sess = SESSIONS[sid]
+        done = [e for e in sess.events if e.get("type") == "training_complete"]
+        if done:
+            assert "simultaneity" in done[0]
+            assert "direction_alignment" in done[0]
+            break
+        time.sleep(0.05)
+    else:
+        pytest.fail("training did not complete")
+    r = client.post(f"/api/sessions/{sid}/rollout", json={"frames": demo["frames"], "current": [0, 0], "timestep_ms": 120, "max_steps": 160, "physics": False})
+    assert r.status_code == 200
+    coordination = r.json().get("coordination")
+    assert coordination is not None
+    assert coordination["multi_joint_steps"] > 0
+    assert coordination["sequential"] is False
+
 
 def test_save_demonstrations_accepts_timeline_fps_up_to_1000():
     sid, _ = _demo_session()

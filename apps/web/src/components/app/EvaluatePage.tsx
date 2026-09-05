@@ -36,6 +36,12 @@ type EvaluatePageProps = {
                         scaled_steps: number;
                         density_ratio: number;
                 }[];
+                coordination?: {
+                        simultaneity: number;
+                        direction_alignment: number;
+                        multi_joint_steps: number;
+                        sequential: boolean;
+                } | null;
         } | null;
         evaluation: EvaluationResult | null;
         replaying: boolean;
@@ -170,12 +176,28 @@ export function EvaluatePage({
                                                                         )}
                                                         </div>
                                                 ) : null}
+                                                {rolloutDiagnostics?.coordination ? (
+                                                        <div
+                                                                className={
+                                                                        rolloutDiagnostics.coordination.sequential
+                                                                                ? "warning-pill"
+                                                                                : "helper-text"
+                                                                }
+                                                                role={rolloutDiagnostics.coordination.sequential ? "alert" : "status"}
+                                                                title={`Multi-joint steps: ${rolloutDiagnostics.coordination.multi_joint_steps}`}
+                                                        >
+                                                                {rolloutDiagnostics.coordination.sequential
+                                                                        ? `Sequential motion: joints moved one-at-a-time (simultaneity ${rolloutDiagnostics.coordination.simultaneity.toFixed(2)}, direction ${rolloutDiagnostics.coordination.direction_alignment.toFixed(2)}). Retrain — the gesture needs simultaneous motion.`
+                                                                        : `Simultaneous motion: simultaneity ${rolloutDiagnostics.coordination.simultaneity.toFixed(2)}, direction ${rolloutDiagnostics.coordination.direction_alignment.toFixed(2)} over ${rolloutDiagnostics.coordination.multi_joint_steps} multi-joint steps.`}
+                                                        </div>
+                                                ) : null}
                                                 {evaluation ? (
                                                         <>
                                                                 <div className="route-metric-grid">
                                                                         <div>
                                                                                 <PanelLabel>
-                                                                                        FINAL MEAN
+                                                                                        FINAL
+                                                                                        MEAN
                                                                                 </PanelLabel>
                                                                                 <strong>
                                                                                         {meanError(
@@ -188,7 +210,8 @@ export function EvaluatePage({
                                                                         </div>
                                                                         <div>
                                                                                 <PanelLabel>
-                                                                                        FINAL MAX
+                                                                                        FINAL
+                                                                                        MAX
                                                                                 </PanelLabel>
                                                                                 <strong>
                                                                                         {evaluation.error.toFixed(
@@ -198,23 +221,49 @@ export function EvaluatePage({
                                                                         </div>
                                                                         <div>
                                                                                 <PanelLabel>
-                                                                                        TRAJECTORY MAX
+                                                                                        TRAJECTORY
+                                                                                        MAX
                                                                                 </PanelLabel>
                                                                                 <strong>
                                                                                         {(() => {
-                                                                                                const gestureFrames = rolloutFrames.filter(
-                                                                                                        (f) => (f.phase ?? "gesture") === "gesture",
-                                                                                                );
-                                                                                                const maxErr = gestureFrames.length
-                                                                                                        ? Math.max(
-                                                                                                                  ...gestureFrames.map((f) =>
-                                                                                                                          Math.max(
-                                                                                                                                  ...f.positions.map((p, i) => Math.abs(p - (f.expected[i] ?? p))),
+                                                                                                const gestureFrames =
+                                                                                                        rolloutFrames.filter(
+                                                                                                                (
+                                                                                                                        f,
+                                                                                                                ) =>
+                                                                                                                        (f.phase ??
+                                                                                                                                "gesture") ===
+                                                                                                                        "gesture",
+                                                                                                        );
+                                                                                                const maxErr =
+                                                                                                        gestureFrames.length
+                                                                                                                ? Math.max(
+                                                                                                                          ...gestureFrames.map(
+                                                                                                                                  (
+                                                                                                                                          f,
+                                                                                                                                  ) =>
+                                                                                                                                          Math.max(
+                                                                                                                                                  ...f.positions.map(
+                                                                                                                                                          (
+                                                                                                                                                                  p,
+                                                                                                                                                                  i,
+                                                                                                                                                          ) =>
+                                                                                                                                                                  Math.abs(
+                                                                                                                                                                          p -
+                                                                                                                                                                                  (f
+                                                                                                                                                                                          .expected[
+                                                                                                                                                                                          i
+                                                                                                                                                                                  ] ??
+                                                                                                                                                                                          p),
+                                                                                                                                                                  ),
+                                                                                                                                                  ),
+                                                                                                                                          ),
                                                                                                                           ),
-                                                                                                                  ),
-                                                                                                          )
-                                                                                                        : evaluation.error;
-                                                                                                return maxErr.toFixed(4);
+                                                                                                                  )
+                                                                                                                : evaluation.error;
+                                                                                                return maxErr.toFixed(
+                                                                                                        4,
+                                                                                                );
                                                                                         })()}
                                                                                 </strong>
                                                                         </div>
