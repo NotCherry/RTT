@@ -113,8 +113,14 @@ export function sanitizeFrames(
     .map((frame) => ({
       timestamp: Math.max(0, frame.timestamp),
       positions: [...frame.positions],
+      // Preserve interpolation when present (full-gesture fidelity)
+      // SAFETY: DemonstrationFrame may carry interpolation from Keyframe round-trip; optional field check is safe
+      ...((frame as unknown as { interpolation?: string }).interpolation
+        // SAFETY: DemonstrationFrame may carry interpolation from Keyframe round-trip; optional field check is safe
+        ? { interpolation: (frame as { interpolation?: string }).interpolation! }
+        : {}),
     }))
-    .sort((left, right) => left.timestamp - right.timestamp);
+    .sort((left, right) => left.timestamp - right.timestamp) as DemonstrationFrame[];
 }
 
 export function framesToKeyframes(
@@ -129,12 +135,17 @@ export function framesToKeyframes(
       Math.round(frame.timestamp / millisecondsPerFrame),
     );
     previousFrame = timelineFrame;
+    // SAFETY: DemonstrationFrame may carry interpolation from Keyframe round-trip; optional field check is safe
+    const interpolation = (frame as unknown as { interpolation?: string }).interpolation as
+      | "linear"
+      | "step"
+      | undefined;
     return {
       id: `keyframe-${index}-${timelineFrame}`,
       frame: timelineFrame,
       timestamp: frame.timestamp,
       positions: [...frame.positions],
-      interpolation: "linear" as const,
+      interpolation: interpolation === "step" ? "step" : "linear",
     };
   });
 }
@@ -164,15 +175,23 @@ export function normalizeFrames(frames: DemonstrationFrame[]) {
     .map((frame) => ({
       timestamp: Math.max(0, frame.timestamp),
       positions: [...frame.positions],
+      // SAFETY: DemonstrationFrame may carry interpolation from Keyframe round-trip; optional field check is safe
+      ...((frame as unknown as { interpolation?: string }).interpolation
+        // SAFETY: DemonstrationFrame may carry interpolation from Keyframe round-trip; optional field check is safe
+        ? { interpolation: (frame as { interpolation?: string }).interpolation! }
+        : {}),
     }))
-    .sort((left, right) => left.timestamp - right.timestamp);
+    .sort((left, right) => left.timestamp - right.timestamp) as DemonstrationFrame[];
 }
 
 export function interpolatePositions(
   frames: DemonstrationFrame[],
   timestamp: number,
 ) {
-  const ordered = normalizeFrames(frames);
+  // SAFETY: DemonstrationFrame may carry interpolation from Keyframe round-trip; optional field check is safe
+  const ordered = normalizeFrames(frames) as unknown as (DemonstrationFrame & {
+    interpolation?: string;
+  })[];
   if (!ordered.length) return [];
   if (timestamp <= ordered[0].timestamp) return [...ordered[0].positions];
 
@@ -181,7 +200,13 @@ export function interpolatePositions(
 
   const nextIndex = ordered.findIndex((frame) => frame.timestamp >= timestamp);
   const next = ordered[nextIndex];
-  const previous = ordered[Math.max(0, nextIndex - 1)];
+  const previous = ordered[Math.max(0, nextIndex - 1)] as DemonstrationFrame & {
+    interpolation?: string;
+  };
+  // Step interpolation: hold previous until next timestamp (full-gesture fidelity)
+  if ((previous as { interpolation?: string }).interpolation === "step") {
+    return [...previous.positions];
+  }
   const duration = Math.max(next.timestamp - previous.timestamp, 1);
   const progress = (timestamp - previous.timestamp) / duration;
   return previous.positions.map(

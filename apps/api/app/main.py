@@ -764,15 +764,36 @@ def _compute_rollout_density_bundled(budget: RolloutBudget) -> dict[str, Any]:
     raw_steps = [max(1, math.ceil(max(seg_ms, budget.grid_ms) / budget.grid_ms)) for seg_ms in budget.segment_ms_list]
     remaining = max(0, budget.max_steps - budget.total_steps)
     if sum(raw_steps) > remaining:
-        scaled = [math.floor(steps * remaining / sum(raw_steps)) for steps in raw_steps] if remaining else [0] * len(raw_steps)
-        leftover = remaining - sum(scaled)
-        largest_first = sorted(range(len(raw_steps)), key=lambda i: raw_steps[i], reverse=True)
-        idx = 0
-        while leftover > 0 and largest_first:
-            scaled[largest_first[idx % len(largest_first)]] += 1
-            leftover -= 1
-            idx += 1
-        scaled_steps = scaled
+        if remaining >= len(raw_steps) and len(raw_steps) > 0:
+            # Guarantee at least 1 step per segment to preserve interior checkpoints
+            scaled = [1] * len(raw_steps)
+            remaining_after_min = remaining - len(raw_steps)
+            if remaining_after_min > 0:
+                extra_weights = [max(0, r - 1) for r in raw_steps]
+                total_extra = sum(extra_weights) or len(raw_steps)
+                try:
+                    extra = [math.floor(w * remaining_after_min / total_extra) for w in extra_weights]
+                except Exception:
+                    extra = [0] * len(raw_steps)
+                scaled = [s + e for s, e in zip(scaled, extra)]
+                leftover = remaining - sum(scaled)
+                largest_first = sorted(range(len(raw_steps)), key=lambda i: raw_steps[i], reverse=True)
+                idx = 0
+                while leftover > 0 and largest_first:
+                    scaled[largest_first[idx % len(largest_first)]] += 1
+                    leftover -= 1
+                    idx += 1
+            scaled_steps = scaled
+        else:
+            scaled = [math.floor(steps * remaining / sum(raw_steps)) for steps in raw_steps] if remaining else [0] * len(raw_steps)
+            leftover = remaining - sum(scaled)
+            largest_first = sorted(range(len(raw_steps)), key=lambda i: raw_steps[i], reverse=True)
+            idx = 0
+            while leftover > 0 and largest_first:
+                scaled[largest_first[idx % len(largest_first)]] += 1
+                leftover -= 1
+                idx += 1
+            scaled_steps = scaled
     else:
         scaled_steps = list(raw_steps)
     density_ratio = sum(raw_steps) / max(1, sum(scaled_steps)) if scaled_steps and sum(scaled_steps) else 1.0
@@ -809,6 +830,9 @@ def _compute_effective_scale_bundled(params: SegmentScaleParams) -> float:
         scale = effective_ms_per_step / float(params.step_ms)
         if not math.isfinite(scale) or scale <= 0:
             return 1.0
+        max_scale = 3.0
+        if scale > max_scale:
+            scale = max_scale
         return float(scale)
     except (TypeError, ValueError, ZeroDivisionError):
         return 1.0
@@ -1733,6 +1757,45 @@ def rollout(session_id: str, request: RolloutRequest) -> dict[str, Any]:
                         "The gesture requires simultaneous multi-joint motion."
                     ),
                 })
+        except Exception:
+            pass
+        try:
+            missed: list[int] = []
+            try:
+                gesture_hit = [f for f in result if f.get("phase") == "gesture"]
+            except Exception:
+                gesture_hit = []
+            for idx_cp, cp in enumerate(ordered):
+                try:
+                    cp_pos = list(cp.positions)
+                except Exception:
+                    continue
+                best = float("inf")
+                for gf in gesture_hit:
+                    try:
+                        ach = list(gf.get("positions", []))
+                        if len(ach) != len(cp_pos):
+                            continue
+                        err = sum(abs(a - b) for a, b in zip(ach, cp_pos)) / max(1, len(cp_pos))
+                        if err < best:
+                            best = err
+                    except Exception:
+                        continue
+                if idx_cp == 0:
+                    try:
+                        init_err = sum(abs(a - b) for a, b in zip(list(result[0].get("positions", [])), cp_pos)) / max(1, len(cp_pos))
+                        best = min(best, init_err)
+                    except Exception:
+                        pass
+                if best == float("inf"):
+                    continue
+                if best > 0.12:
+                    missed.append(idx_cp)
+            if missed:
+                interior = [i for i in missed if 0 < i < len(ordered) - 1]
+                target_list = interior if interior else missed
+                if target_list:
+                    warnings.append({"type": "warning", "message": f"Interior checkpoints missed: {target_list} (MAE >0.12). Gesture not fully learned — increase epochs or check segment timing."})
         except Exception:
             pass
         return {"frames": result, "steps": total_steps, "collisions": collisions, "max_tracking_error": max_tracking_error, "clipped_steps": total_clipped, "physics": use_physics, "segment_diagnostics": segment_diagnostics, "density_ratio": density_ratio, "warnings": warnings, "coordination": coordination}
