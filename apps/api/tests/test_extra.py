@@ -515,3 +515,81 @@ def test_save_demonstrations_accepts_timeline_fps_up_to_1000():
     r = client.put(f"/api/sessions/{sid}/demonstrations", json={"demonstrations": [demo]})
     assert r.status_code == 200
     assert r.json()["demonstrations"] == 1
+
+# --- Edge cases added for fix hardening (coordination/density) ---
+def test_expected_active_mask_edge_cases():
+    # zero peak => all false
+    assert expected_active_mask([0.0, 0.0]) == [False, False]
+    assert expected_active_mask([1e-10, -1e-10]) == [False, False]
+    # empty
+    assert expected_active_mask([]) == []
+    assert expected_active_mask(None) == []  # type: ignore[arg-type]
+    # single joint below abs eps still false even if peak large
+    assert expected_active_mask([0.1, 0.001]) == [True, False]  # 0.001 < 0.005 and < 0.2*0.1
+    # both above thresholds
+    assert expected_active_mask([0.19, -0.09]) == [True, True]
+
+
+def test_coordination_hit_and_cosine_helpers():
+    from app.main import _coordination_hit, _cosine_similarity
+    # hit requires same sign and magnitude threshold
+    assert _coordination_hit(0.19, 0.19) is True
+    assert _coordination_hit(0.19, 0.0) is False
+    assert _coordination_hit(0.19, -0.19) is False  # wrong sign
+    assert _coordination_hit(0.19, 0.001) is False  # too small: min(0.005, 0.076)=0.005
+    assert _coordination_hit(-0.09, -0.09) is True
+    # cosine degenerate
+    assert _cosine_similarity([0.0, 0.0], [0.0, 0.0]) is None
+    assert _cosine_similarity([0.1, 0.0], [0.0, 0.0]) is None
+    assert _cosine_similarity([1.0, 0.0], [1.0, 0.0]) == pytest.approx(1.0)
+    assert _cosine_similarity([1.0, 0.0], [-1.0, 0.0]) == pytest.approx(-1.0)
+
+
+def test_density_boundary_and_bundled_equivalence():
+    from app.main import RolloutBudget, _compute_rollout_density_bundled, compute_rollout_density, compute_effective_scale, SegmentScaleParams, _compute_effective_scale_bundled
+    # boundary 1.01: should not warn below, should warn above
+    from app.main import check_budget_exhaustion
+    assert check_budget_exhaustion(5, 160, 1.009) is None
+    assert check_budget_exhaustion(5, 160, 1.011) is not None
+    assert check_budget_exhaustion(5, 160, 1.02) is not None
+    assert check_budget_exhaustion(0, 160, 1.0) is not None  # trimmed
+    assert check_budget_exhaustion(1, 160, 1.0) is None
+    # bundled equivalence
+    budget = RolloutBudget(segment_ms_list=[100, 240], grid_ms=120, max_steps=160, total_steps=0)
+    via_bundled = _compute_rollout_density_bundled(budget)
+    via_wrapper = compute_rollout_density([100, 240], 120, 160, 0)
+    assert via_bundled == via_wrapper
+    # effective scale bundled equivalence
+    params = SegmentScaleParams(segment_ms=240, segment_steps=1, step_ms=120, grid_ms=120)
+    assert _compute_effective_scale_bundled(params) == pytest.approx(2.0)
+    assert compute_effective_scale(240, 1, 120, 120) == pytest.approx(2.0)
+    # zero steps returns 1.0 without exception
+    assert compute_effective_scale(240, 0, 120, 120) == 1.0
+    assert _compute_effective_scale_bundled(SegmentScaleParams(segment_ms=240, segment_steps=0, step_ms=120, grid_ms=120)) == 1.0
+
+
+def test_compute_rollout_density_zero_remaining():
+    from app.main import compute_rollout_density, check_budget_exhaustion
+    d = compute_rollout_density([240, 240], grid_ms=120, max_steps=2, total_steps=2)
+    assert d["remaining"] == 0
+    assert d["scaled_steps"] == [0, 0]
+    assert d["density_ratio"] == pytest.approx(1.0)  # empty scaled guard
+    warn = check_budget_exhaustion(d["remaining"], 2, d["density_ratio"])
+    assert warn is not None and "trimmed" in warn["message"].lower()
+
+
+def test_coordination_weights_empty_and_invalid():
+    import torch
+    # empty tensor
+    empty = torch.tensor([], dtype=torch.float32).reshape(0, 2)
+    # should not crash, returns empty weight vector
+    w = coordination_sample_weights(empty, 0.5)
+    assert w.shape[0] == 0
+    # invalid object fallback — should return ones
+    class Fake:
+        shape = (2,)
+        def detach(self): raise RuntimeError("no")
+    fake = Fake()
+    fallback = coordination_sample_weights(fake, 0.5)  # type: ignore[arg-type]
+    assert fallback.shape[0] == 2
+

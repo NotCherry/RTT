@@ -76,6 +76,16 @@ _Avoid_: Kinematic teleport replay, pure visual interpolation
 The per-step difference between a model-predicted target position and the physics-achieved position after stepping, reported alongside contact count and clip count as a realism diagnostic.
 _Avoid_: Training loss, native MAE vs expected
 
+## Coordination
+
+**Simultaneous motion**:
+A gesture where two or more controllable joints must move together (diagonal in joint space) rather than sequentially (L-shaped, one joint then the other). Coordination is measured per step via direction alignment (cosine between predicted and expected deltas) and simultaneity (fraction of expected active joints that actually move).
+_Avoid_: Sequential one-joint-at-a-time execution, final-pose-only evaluation
+
+**Coordination weight**:
+A scalar multiplier (TrainConfig `coordination_weight`) that emphasizes training samples where several joints must move together. Weighting raises the loss of the sequential shortcut without moving the optimum (zero at exact fit) and keeps the model MLP-simple (no recurrence, no new inputs).
+_Avoid_: Additive penalty term, recurrent architecture
+
 ## Model Exploration
 
 **MLP**:

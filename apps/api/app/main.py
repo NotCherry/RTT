@@ -348,7 +348,7 @@ class TrainConfig(BaseModel):
     random_seed: int = Field(7, ge=0, le=1_000_000)
     rollout_steps: int = Field(160, ge=1, le=2000)
     physics: bool = Field(True, description="When true, generate physics-feasible deltas; false uses kinematic teleport for fast training.")
-    coordination_weight: float = Field(0.5, ge=0.0, le=5.0, description="Extra emphasis on samples where several joints must move together.")
+    coordination_weight: float = Field(0.5, ge=0.0, le=5.0, description="Emphasis on simultaneous-motion samples — see CONTEXT.md Coordination.")
 
 
 class DemonstrationFrame(BaseModel):
@@ -743,20 +743,26 @@ def _lerp_positions(start: list[float], end: list[float], progress: float) -> li
         for index, value in enumerate(start)
     ]
 
-def compute_rollout_density(
-    segment_ms_list: list[float],
-    grid_ms: float,
-    max_steps: int,
-    total_steps: int,
-) -> dict[str, Any]:
-    """Deep module: pure density computation behind small interface.
+# --- Rollout density (deep module: budget-aware step scaling) ---
+class RolloutBudget(BaseModel):
+    """Bundle for rollout density inputs — resolves Data Clumps smell."""
+    segment_ms_list: list[float]
+    grid_ms: float
+    max_steps: int
+    total_steps: int
 
-    Inputs: segment durations in ms, grid in ms, budget max_steps and already-consumed total_steps.
-    Outputs: {raw_steps, scaled_steps, scale, remaining, density_ratio} for testability.
-    No side effects — test via interface, not implementation.
-    """
-    raw_steps = [max(1, math.ceil(max(seg_ms, grid_ms) / grid_ms)) for seg_ms in segment_ms_list]
-    remaining = max(0, max_steps - total_steps)
+
+class SegmentScaleParams(BaseModel):
+    """Bundle for per-segment scale computation."""
+    segment_ms: float
+    segment_steps: int
+    step_ms: int
+    grid_ms: float
+
+
+def _compute_rollout_density_bundled(budget: RolloutBudget) -> dict[str, Any]:
+    raw_steps = [max(1, math.ceil(max(seg_ms, budget.grid_ms) / budget.grid_ms)) for seg_ms in budget.segment_ms_list]
+    remaining = max(0, budget.max_steps - budget.total_steps)
     if sum(raw_steps) > remaining:
         scaled = [math.floor(steps * remaining / sum(raw_steps)) for steps in raw_steps] if remaining else [0] * len(raw_steps)
         leftover = remaining - sum(scaled)
@@ -775,8 +781,38 @@ def compute_rollout_density(
         "scaled_steps": scaled_steps,
         "remaining": remaining,
         "density_ratio": density_ratio,
-        "grid_ms": grid_ms,
+        "grid_ms": budget.grid_ms,
     }
+
+
+def compute_rollout_density(
+    segment_ms_list: list[float],
+    grid_ms: float,
+    max_steps: int,
+    total_steps: int,
+) -> dict[str, Any]:
+    """Deep module: pure density computation behind small interface.
+
+    Inputs: segment durations in ms, grid in ms, budget max_steps and already-consumed total_steps.
+    Outputs: {raw_steps, scaled_steps, scale, remaining, density_ratio} for testability.
+    No side effects — test via interface, not implementation.
+    """
+    return _compute_rollout_density_bundled(
+        RolloutBudget(segment_ms_list=segment_ms_list, grid_ms=grid_ms, max_steps=max_steps, total_steps=total_steps)
+    )
+
+def _compute_effective_scale_bundled(params: SegmentScaleParams) -> float:
+    if params.segment_steps <= 0 or params.step_ms <= 0:
+        return 1.0
+    try:
+        effective_ms_per_step = float(params.segment_ms) / float(params.segment_steps)
+        scale = effective_ms_per_step / float(params.step_ms)
+        if not math.isfinite(scale) or scale <= 0:
+            return 1.0
+        return float(scale)
+    except (TypeError, ValueError, ZeroDivisionError):
+        return 1.0
+
 
 def compute_effective_scale(
     segment_ms: float,
@@ -785,16 +821,9 @@ def compute_effective_scale(
     grid_ms: float,
 ) -> float:
     """Deep module: decimation-aware scale."""
-    try:
-        if segment_steps <= 0 or step_ms <= 0:
-            return 1.0
-        effective_ms_per_step = float(segment_ms) / float(segment_steps)
-        scale = effective_ms_per_step / float(step_ms)
-        if not math.isfinite(scale) or scale <= 0:
-            return 1.0
-        return float(scale)
-    except Exception:
-        return 1.0
+    return _compute_effective_scale_bundled(
+        SegmentScaleParams(segment_ms=segment_ms, segment_steps=segment_steps, step_ms=step_ms, grid_ms=grid_ms)
+    )
 
 
 def check_budget_exhaustion(remaining: int, max_steps: int, density_ratio: float | None = None) -> dict[str, str] | None:
@@ -811,7 +840,7 @@ def check_budget_exhaustion(remaining: int, max_steps: int, density_ratio: float
                 "message": f"Gesture decimated: density {density_ratio:.2f}x (budget {max_steps} < raw steps), trajectory sparsified",
             }
         return None
-    except Exception:
+    except (TypeError, ValueError):
         return None
 
 def _interpolate_frame_positions(frames: list[DemonstrationFrame], timestamp: float) -> list[float]:
@@ -994,16 +1023,47 @@ def build_incremental_samples(
 # a direction term (predicted delta must point the same way as the target
 # delta) and a simultaneity term (every jointly-moving target joint must
 # actually move in the prediction).
+# --- Coordination (simultaneous motion — see CONTEXT.md) ---
 COORDINATION_ABS_EPS = 0.005
 COORDINATION_REL_RATIO = 0.2
 COORDINATION_MAG_RATIO = 0.4
+COORDINATION_SIMULTANEITY_THRESHOLD = 0.6
+COORDINATION_DIRECTION_THRESHOLD = 0.7
+
+
+def _coordination_hit(t_val: float, p_val: float) -> bool:
+    """Shared predicate: predicted joint moved enough in the same direction as target."""
+    if (t_val * p_val) <= 0:
+        return False
+    try:
+        threshold = min(COORDINATION_ABS_EPS, COORDINATION_MAG_RATIO * abs(t_val))
+    except (TypeError, ValueError):
+        return False
+    return abs(p_val) >= threshold
+
+
+def _cosine_similarity(a_vals: list[float], b_vals: list[float]) -> float | None:
+    """Cosine between two delta vectors; None if degenerate."""
+    try:
+        a_norm = math.sqrt(sum(v * v for v in a_vals))
+        b_norm = math.sqrt(sum(v * v for v in b_vals))
+    except (TypeError, ValueError):
+        return None
+    if a_norm <= 1e-9 or b_norm <= 1e-12:
+        return None
+    try:
+        dot = sum(x * y for x, y in zip(a_vals, b_vals))
+        denom = max(a_norm * b_norm, 1e-9)
+        return max(-1.0, min(1.0, dot / denom))
+    except (TypeError, ValueError, ZeroDivisionError):
+        return None
 
 
 def expected_active_mask(target_row: list[float] | Any) -> list[bool]:
     """Joints the demonstration expects to move together on this step."""
     try:
         values = [float(v) for v in list(target_row)]
-    except Exception:
+    except (TypeError, ValueError):
         return []
     if not values:
         return []
@@ -1032,25 +1092,25 @@ def coordination_sample_weights(
     """
     try:
         target_list = target.detach().cpu().tolist()
-    except Exception:
+    except (AttributeError, RuntimeError, ValueError, TypeError):
         return torch.ones((target.shape[0],), dtype=torch.float32)
     if not target_list:
         return torch.ones((0,), dtype=torch.float32)
     try:
         boost = max(0.0, float(coordination_weight))
-    except Exception:
+    except (TypeError, ValueError):
         boost = 0.0
     weights: list[float] = []
     for row in target_list:
         try:
             mask = expected_active_mask(row)
             multi = sum(1 for flag in mask if flag) >= 2
-        except Exception:
+        except (TypeError, ValueError):
             multi = False
         weights.append(1.0 + boost if multi else 1.0)
     try:
         return torch.tensor(weights, dtype=torch.float32)
-    except Exception:
+    except (TypeError, ValueError, RuntimeError):
         return torch.ones((len(weights),), dtype=torch.float32)
 
 
@@ -1068,7 +1128,7 @@ def coordination_diagnostics(
     try:
         target_list = target.detach().cpu().tolist()
         pred_list = prediction.detach().cpu().tolist()
-    except Exception:
+    except (AttributeError, RuntimeError, ValueError, TypeError):
         return {"direction_alignment": 1.0, "simultaneity": 1.0, "multi_joint_fraction": 0.0}
     if not target_list:
         return {"direction_alignment": 1.0, "simultaneity": 1.0, "multi_joint_fraction": 0.0}
@@ -1077,30 +1137,24 @@ def coordination_diagnostics(
     multi_joint_steps = 0
     try:
         row_count = int(prediction.shape[0])
-    except Exception:
+    except (TypeError, ValueError):
         return {"direction_alignment": 1.0, "simultaneity": 1.0, "multi_joint_fraction": 0.0}
     for row in range(row_count):
         try:
             tgt_vals = [float(v) for v in target_list[row]]
             prd_vals = [float(v) for v in pred_list[row]]
-        except Exception:
+        except (TypeError, ValueError, IndexError):
             continue
-        try:
-            tgt_norm = math.sqrt(sum(v * v for v in tgt_vals))
-        except Exception:
+        if math.sqrt(sum(v * v for v in tgt_vals)) <= 1e-9:
             continue
-        if tgt_norm <= 1e-9:
-            continue
-        try:
-            prd_norm = math.sqrt(sum(v * v for v in prd_vals))
-            denom = max(prd_norm * tgt_norm, 1e-9)
-            dot = sum(t * p for t, p in zip(tgt_vals, prd_vals))
-            cosines.append(max(-1.0, min(1.0, dot / denom)) if prd_norm > 1e-12 else -1.0)
-        except Exception:
-            pass
+        cos = _cosine_similarity(tgt_vals, prd_vals)
+        if cos is not None:
+            cosines.append(cos)
+        elif math.sqrt(sum(v * v for v in prd_vals)) <= 1e-12:
+            cosines.append(-1.0)
         try:
             mask = expected_active_mask(target_list[row])
-        except Exception:
+        except (TypeError, ValueError):
             mask = []
         active = [i for i, flag in enumerate(mask) if flag]
         if len(active) >= 2:
@@ -1110,30 +1164,25 @@ def coordination_diagnostics(
                 try:
                     t_val = float(target_list[row][i])
                     p_val = float(pred_list[row][i])
-                except Exception:
+                except (TypeError, ValueError, IndexError):
                     continue
-                same_sign = (t_val * p_val) > 0
-                try:
-                    big_enough = abs(p_val) >= min(COORDINATION_ABS_EPS, COORDINATION_MAG_RATIO * abs(t_val))
-                except Exception:
-                    big_enough = False
-                if same_sign and big_enough:
+                if _coordination_hit(t_val, p_val):
                     hits += 1
             try:
                 sync_scores.append(hits / max(1, len(active)))
-            except Exception:
+            except (TypeError, ValueError, ZeroDivisionError):
                 pass
     try:
         direction_alignment = float(sum(cosines) / len(cosines)) if cosines else 1.0
-    except Exception:
+    except (TypeError, ValueError, ZeroDivisionError):
         direction_alignment = 1.0
     try:
         simultaneity = float(sum(sync_scores) / len(sync_scores)) if sync_scores else 1.0
-    except Exception:
+    except (TypeError, ValueError, ZeroDivisionError):
         simultaneity = 1.0
     try:
         multi_joint_fraction = float(multi_joint_steps / max(1, row_count))
-    except Exception:
+    except (TypeError, ValueError, ZeroDivisionError):
         multi_joint_fraction = 0.0
     return {
         "direction_alignment": direction_alignment,
@@ -1169,39 +1218,43 @@ def analyze_rollout_coordination(
             try:
                 exp_delta = [c - p for p, c in zip(prev_e, curr_e)]
                 ach_delta = [c - p for p, c in zip(prev_a, curr_a)]
-            except Exception:
+            except (TypeError, ValueError):
                 continue
-            exp_norm_val = math.sqrt(sum(v * v for v in exp_delta))
-            if exp_norm_val <= 1e-9:
+            if math.sqrt(sum(v * v for v in exp_delta)) <= 1e-9:
                 continue
-            ach_norm_val = math.sqrt(sum(v * v for v in ach_delta))
-            denom = max(exp_norm_val * ach_norm_val, 1e-9)
-            dot = sum(e * a for e, a in zip(exp_delta, ach_delta))
-            cosines.append(max(-1.0, min(1.0, dot / denom)) if ach_norm_val > 1e-12 else -1.0)
+            cos = _cosine_similarity(exp_delta, ach_delta)
+            if cos is not None:
+                cosines.append(cos)
+            elif math.sqrt(sum(v * v for v in ach_delta)) <= 1e-12:
+                cosines.append(-1.0)
             mask = expected_active_mask(exp_delta)
             active = [i for i, flag in enumerate(mask) if flag]
             if len(active) >= 2:
                 multi_joint_steps += 1
-                hits = 0
-                for i in active:
-                    try:
-                        t_val = float(exp_delta[i])
-                        p_val = float(ach_delta[i])
-                    except Exception:
-                        continue
-                    if (t_val * p_val) > 0 and abs(p_val) >= min(COORDINATION_ABS_EPS, COORDINATION_MAG_RATIO * abs(t_val)):
-                        hits += 1
-                sync_scores.append(hits / max(1, len(active)))
-        simultaneity = float(sum(sync_scores) / len(sync_scores)) if sync_scores else 1.0
-        direction = float(sum(cosines) / len(cosines)) if cosines else 1.0
-        sequential = bool(multi_joint_steps > 0 and (simultaneity < 0.6 or direction < 0.7))
+                try:
+                    hits = sum(1 for i in active if _coordination_hit(float(exp_delta[i]), float(ach_delta[i])))
+                except (TypeError, ValueError, IndexError):
+                    hits = 0
+                try:
+                    sync_scores.append(hits / max(1, len(active)))
+                except (TypeError, ValueError, ZeroDivisionError):
+                    pass
+        try:
+            simultaneity = float(sum(sync_scores) / len(sync_scores)) if sync_scores else 1.0
+        except (TypeError, ValueError, ZeroDivisionError):
+            simultaneity = 1.0
+        try:
+            direction = float(sum(cosines) / len(cosines)) if cosines else 1.0
+        except (TypeError, ValueError, ZeroDivisionError):
+            direction = 1.0
+        sequential = bool(multi_joint_steps > 0 and (simultaneity < COORDINATION_SIMULTANEITY_THRESHOLD or direction < COORDINATION_DIRECTION_THRESHOLD))
         return {
             "simultaneity": simultaneity,
             "direction_alignment": direction,
             "multi_joint_steps": multi_joint_steps,
             "sequential": sequential,
         }
-    except Exception:
+    except (TypeError, ValueError, AttributeError, IndexError, RuntimeError):
         return {"simultaneity": 1.0, "direction_alignment": 1.0, "multi_joint_steps": 0, "sequential": False}
 
 
