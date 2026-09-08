@@ -116,11 +116,15 @@ export function sanitizeFrames(
       // Preserve interpolation when present (full-gesture fidelity)
       // SAFETY: DemonstrationFrame may carry interpolation from Keyframe round-trip; optional field check is safe
       ...((frame as unknown as { interpolation?: string }).interpolation
-        // SAFETY: DemonstrationFrame may carry interpolation from Keyframe round-trip; optional field check is safe
-        ? { interpolation: (frame as { interpolation?: string }).interpolation! }
+        ? // SAFETY: DemonstrationFrame may carry interpolation from Keyframe round-trip; optional field check is safe
+          {
+            interpolation: (frame as { interpolation?: string }).interpolation!,
+          }
         : {}),
     }))
-    .sort((left, right) => left.timestamp - right.timestamp) as DemonstrationFrame[];
+    .sort(
+      (left, right) => left.timestamp - right.timestamp,
+    ) as DemonstrationFrame[];
 }
 
 export function framesToKeyframes(
@@ -136,10 +140,8 @@ export function framesToKeyframes(
     );
     previousFrame = timelineFrame;
     // SAFETY: DemonstrationFrame may carry interpolation from Keyframe round-trip; optional field check is safe
-    const interpolation = (frame as unknown as { interpolation?: string }).interpolation as
-      | "linear"
-      | "step"
-      | undefined;
+    const interpolation = (frame as unknown as { interpolation?: string })
+      .interpolation as "linear" | "step" | undefined;
     return {
       id: `keyframe-${index}-${timelineFrame}`,
       frame: timelineFrame,
@@ -177,11 +179,15 @@ export function normalizeFrames(frames: DemonstrationFrame[]) {
       positions: [...frame.positions],
       // SAFETY: DemonstrationFrame may carry interpolation from Keyframe round-trip; optional field check is safe
       ...((frame as unknown as { interpolation?: string }).interpolation
-        // SAFETY: DemonstrationFrame may carry interpolation from Keyframe round-trip; optional field check is safe
-        ? { interpolation: (frame as { interpolation?: string }).interpolation! }
+        ? // SAFETY: DemonstrationFrame may carry interpolation from Keyframe round-trip; optional field check is safe
+          {
+            interpolation: (frame as { interpolation?: string }).interpolation!,
+          }
         : {}),
     }))
-    .sort((left, right) => left.timestamp - right.timestamp) as DemonstrationFrame[];
+    .sort(
+      (left, right) => left.timestamp - right.timestamp,
+    ) as DemonstrationFrame[];
 }
 
 export function interpolatePositions(

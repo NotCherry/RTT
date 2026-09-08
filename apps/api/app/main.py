@@ -354,6 +354,7 @@ class TrainConfig(BaseModel):
 class DemonstrationFrame(BaseModel):
     timestamp: float = Field(ge=0)
     positions: list[float]
+    interpolation: Literal["linear", "step"] = "linear"
 
 
 class Keyframe(BaseModel):
@@ -878,6 +879,12 @@ def _interpolate_frame_positions(frames: list[DemonstrationFrame], timestamp: fl
     next_index = next(index for index, frame in enumerate(ordered) if frame.timestamp >= timestamp)
     next_frame = ordered[next_index]
     previous = ordered[max(0, next_index - 1)]
+    # Step interpolation: hold previous until next timestamp
+    try:
+        if getattr(previous, "interpolation", "linear") == "step":
+            return list(previous.positions)
+    except Exception:
+        pass
     duration = max(next_frame.timestamp - previous.timestamp, 1.0)
     progress = (timestamp - previous.timestamp) / duration
     return _lerp_positions(previous.positions, next_frame.positions, progress)
@@ -886,7 +893,7 @@ def _interpolate_frame_positions(frames: list[DemonstrationFrame], timestamp: fl
 def authored_frames(demonstration: Demonstration) -> list[DemonstrationFrame]:
     if demonstration.keyframes:
         return [
-            DemonstrationFrame(timestamp=keyframe.timestamp, positions=keyframe.positions)
+            DemonstrationFrame(timestamp=keyframe.timestamp, positions=list(keyframe.positions), interpolation=getattr(keyframe, "interpolation", "linear") or "linear")
             for keyframe in sorted(demonstration.keyframes, key=lambda item: item.frame)
         ]
     return sorted(demonstration.frames, key=lambda frame: frame.timestamp)
@@ -1002,18 +1009,26 @@ def build_incremental_samples(
                     previous_delta = list(delta)
                     previous = waypoint
             route = frames
+            # Carry previous_delta across segments to preserve momentum through interior checkpoints
+            # (reset only at gesture start, not each segment).
+            # Segment-aware interpolation: step holds previous until end.
+            carry_delta: list[float] = [0.0] * joint_count
             for segment_index in range(len(route) - 1):
                 segment_start = route[segment_index]
                 segment_end = route[segment_index + 1]
                 duration = max(segment_end.timestamp - segment_start.timestamp, step)
-                # Previous-step delta disambiguates phase within a segment;
-                # zeros at each segment start (still MLP-simple, no recurrence).
-                previous_delta = [0.0] * joint_count
+                previous_delta = list(carry_delta) if segment_index > 0 else [0.0] * joint_count
+                is_step = getattr(segment_start, "interpolation", "linear") == "step"
                 for elapsed in np.arange(0, duration, step):
                     progress = min(1.0, elapsed / duration)
                     next_progress = min(1.0, (elapsed + step) / duration)
-                    current = _lerp_positions(segment_start.positions, segment_end.positions, progress)
-                    next_state = _lerp_positions(segment_start.positions, segment_end.positions, next_progress)
+                    if is_step:
+                        # Step: hold start, jump at end
+                        current = list(segment_start.positions) if progress < 1.0 else list(segment_start.positions)
+                        next_state = list(segment_start.positions) if next_progress < 1.0 else list(segment_end.positions)
+                    else:
+                        current = _lerp_positions(segment_start.positions, segment_end.positions, progress)
+                        next_state = _lerp_positions(segment_start.positions, segment_end.positions, next_progress)
                     current_normalized = normalized(current, joints)
                     next_normalized = normalized(next_state, joints)
                     delta = [next_value - current_value for next_value, current_value in zip(next_normalized, current_normalized)]
@@ -1035,6 +1050,8 @@ def build_incremental_samples(
                     except Exception:
                         pass
                     previous_delta = list(delta)
+                # Preserve momentum into next segment
+                carry_delta = list(previous_delta)
     return samples
 
 
@@ -1683,33 +1700,51 @@ def rollout(session_id: str, request: RolloutRequest) -> dict[str, Any]:
         warning = check_budget_exhaustion(int(density["remaining"]), int(request.max_steps), float(density_ratio))
         warnings: list[dict[str, str]] = [warning] if warning else []
         expected_size = model_expected_size(session.model, joint_count)
+        # Carry previous_delta across gesture segments to avoid momentum loss at interior checkpoints
+        rollout_prev_delta: list[float] = [0.0] * joint_count
         for checkpoint_index, segment_steps in zip(range(1, len(ordered)), raw_steps):
             checkpoint = ordered[checkpoint_index]
+            prev_checkpoint = ordered[checkpoint_index - 1]
             # Decimation-aware scale per segment: when budget squeezes steps, per-step delta must grow
-            segment_ms = float(ordered[checkpoint_index].timestamp - ordered[checkpoint_index - 1].timestamp)
+            segment_ms = float(prev_checkpoint.timestamp - checkpoint.timestamp) * -1.0 if checkpoint.timestamp < prev_checkpoint.timestamp else float(checkpoint.timestamp - prev_checkpoint.timestamp)
+            # Use absolute segment duration
+            try:
+                segment_ms = abs(float(checkpoint.timestamp) - float(prev_checkpoint.timestamp))
+            except Exception:
+                segment_ms = float(ordered[checkpoint_index].timestamp - ordered[checkpoint_index - 1].timestamp)
             effective_scale = compute_effective_scale(segment_ms, segment_steps, canonical_step, grid_ms)
-            previous_delta = [0.0] * joint_count
+            is_step = False
+            try:
+                is_step = getattr(prev_checkpoint, "interpolation", "linear") == "step"
+                # Also check if checkpoint carries interpolation (fallback)
+                if not is_step:
+                    is_step = getattr(checkpoint, "interpolation", None) == "step"
+            except Exception:
+                is_step = False
             for step_index in range(segment_steps):
                 if total_steps >= request.max_steps:
                     break
                 progress = min(1.0, (step_index + 1) / segment_steps)
                 current_normalized = normalized(current, session.joints)
                 target_normalized = normalized(checkpoint.positions, session.joints)
-                features = build_features(current_normalized, target_normalized, progress, previous_delta, expected_size)
+                features = build_features(current_normalized, target_normalized, progress, rollout_prev_delta, expected_size)
                 with torch.no_grad():
                     delta = session.model(features)[0].tolist()
                 scaled_delta = [value * effective_scale for value in delta]
-                previous_delta = list(delta)
+                rollout_prev_delta = list(delta)
                 predicted = denormalized([value + change for value, change in zip(current_normalized, scaled_delta)], session.joints)
                 current, entry_error, entry_clipped = _resolve_rollout_step(session, predicted, int(grid_ms), use_physics)
                 max_tracking_error = max(max_tracking_error, entry_error)
                 total_clipped += entry_clipped
                 current_timestamp += grid_ms
-                expected = _lerp_positions(
-                    ordered[checkpoint_index - 1].positions,
-                    checkpoint.positions,
-                    progress,
-                )
+                if is_step:
+                    expected = list(prev_checkpoint.positions) if progress < 1.0 else list(checkpoint.positions)
+                else:
+                    expected = _lerp_positions(
+                        prev_checkpoint.positions,
+                        checkpoint.positions,
+                        progress,
+                    )
                 result.append({"timestamp": current_timestamp, "positions": list(current), "expected": expected, "phase": "gesture", "tracking_error": entry_error, "clipped": entry_clipped})
                 total_steps += 1
             if total_steps >= request.max_steps:
@@ -1765,28 +1800,69 @@ def rollout(session_id: str, request: RolloutRequest) -> dict[str, Any]:
                 gesture_hit = [f for f in result if f.get("phase") == "gesture"]
             except Exception:
                 gesture_hit = []
+            # Time-aligned check: for each checkpoint, find its segment-end frame (expected == checkpoint)
+            # and measure achieved vs expected at that exact time, not "best ever" (brief hit would hide drift).
+            # Build map from checkpoint index to its segment-end gesture frame error.
+            # Gesture frames are ordered by segments; last frame of each segment has expected == checkpoint.
+            # Handle decimation where a segment may have 0 steps -> use min-distance fallback for that cp.
+            # First checkpoint is covered by initial result[0].
+            checkpoint_errors: dict[int, float] = {}
+            # Index tracker for gesture_hit segments
+            # Reconstruct expected segment boundaries using raw_steps (scaled steps per segment)
+            try:
+                seg_pointer = 0
+                for seg_idx, seg_steps in enumerate(raw_steps):
+                    cp_idx = seg_idx + 1  # checkpoint index for this segment
+                    if seg_steps <= 0:
+                        # No steps for this segment -> will fallback to min-distance
+                        continue
+                    # Last frame of this segment is at seg_pointer + seg_steps -1 in gesture_hit
+                    end_pos = min(seg_pointer + seg_steps - 1, len(gesture_hit) - 1)
+                    if end_pos < 0:
+                        seg_pointer += seg_steps
+                        continue
+                    gf = gesture_hit[end_pos]
+                    try:
+                        cp_pos = list(ordered[cp_idx].positions)
+                        ach = list(gf.get("positions", []))
+                        if len(ach) == len(cp_pos):
+                            err = sum(abs(a - b) for a, b in zip(ach, cp_pos)) / max(1, len(cp_pos))
+                            checkpoint_errors[cp_idx] = err
+                        else:
+                            checkpoint_errors[cp_idx] = float("inf")
+                    except Exception:
+                        checkpoint_errors[cp_idx] = float("inf")
+                    seg_pointer += seg_steps
+            except Exception:
+                pass
             for idx_cp, cp in enumerate(ordered):
                 try:
                     cp_pos = list(cp.positions)
                 except Exception:
                     continue
-                best = float("inf")
-                for gf in gesture_hit:
-                    try:
-                        ach = list(gf.get("positions", []))
-                        if len(ach) != len(cp_pos):
+                # Check time-aligned error if available, else fallback to min-distance
+                aligned_err = checkpoint_errors.get(idx_cp, None)
+                if aligned_err is not None:
+                    best = aligned_err
+                else:
+                    # Fallback for cp 0 or segments with 0 steps: min distance
+                    best = float("inf")
+                    for gf in gesture_hit:
+                        try:
+                            ach = list(gf.get("positions", []))
+                            if len(ach) != len(cp_pos):
+                                continue
+                            err = sum(abs(a - b) for a, b in zip(ach, cp_pos)) / max(1, len(cp_pos))
+                            if err < best:
+                                best = err
+                        except Exception:
                             continue
-                        err = sum(abs(a - b) for a, b in zip(ach, cp_pos)) / max(1, len(cp_pos))
-                        if err < best:
-                            best = err
-                    except Exception:
-                        continue
-                if idx_cp == 0:
-                    try:
-                        init_err = sum(abs(a - b) for a, b in zip(list(result[0].get("positions", [])), cp_pos)) / max(1, len(cp_pos))
-                        best = min(best, init_err)
-                    except Exception:
-                        pass
+                    if idx_cp == 0:
+                        try:
+                            init_err = sum(abs(a - b) for a, b in zip(list(result[0].get("positions", [])), cp_pos)) / max(1, len(cp_pos))
+                            best = min(best, init_err)
+                        except Exception:
+                            pass
                 if best == float("inf"):
                     continue
                 if best > 0.12:
@@ -1795,7 +1871,15 @@ def rollout(session_id: str, request: RolloutRequest) -> dict[str, Any]:
                 interior = [i for i in missed if 0 < i < len(ordered) - 1]
                 target_list = interior if interior else missed
                 if target_list:
-                    warnings.append({"type": "warning", "message": f"Interior checkpoints missed: {target_list} (MAE >0.12). Gesture not fully learned — increase epochs or check segment timing."})
+                    # Also include per-checkpoint errors for observability
+                    details_parts: list[str] = []
+                    for i in target_list:
+                        if i in checkpoint_errors:
+                            details_parts.append(f"{i}:{checkpoint_errors[i]:.3f}")
+                        else:
+                            details_parts.append(f"{i}:min")
+                    details = ", ".join(details_parts)
+                    warnings.append({"type": "warning", "message": f"Interior checkpoints missed: {target_list} (MAE >0.12). Detail {details}. Gesture not fully learned — increase epochs or check segment timing."})
         except Exception:
             pass
         return {"frames": result, "steps": total_steps, "collisions": collisions, "max_tracking_error": max_tracking_error, "clipped_steps": total_clipped, "physics": use_physics, "segment_diagnostics": segment_diagnostics, "density_ratio": density_ratio, "warnings": warnings, "coordination": coordination}

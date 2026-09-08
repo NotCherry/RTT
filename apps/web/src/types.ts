@@ -58,6 +58,7 @@ export type SimulationState = { positions: number[]; training: boolean };
 export type DemonstrationFrame = {
   timestamp: number;
   positions: number[];
+  interpolation?: KeyframeInterpolation;
 };
 export type KeyframeInterpolation = "linear" | "step";
 export type Keyframe = {
