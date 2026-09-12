@@ -66,7 +66,7 @@ const initialConfig: TrainingConfig = {
   timestep_ms: 120,
   random_starts: 4,
   random_seed: 7,
-  rollout_steps: 160,
+  rollout_steps: 0,
   physics: true,
 };
 
@@ -283,7 +283,7 @@ function Workbench() {
     const socket = new WebSocket(websocketUrl(sessionId));
     socketRef.current = socket;
     socket.onmessage = (event) => {
-      const payload = JSON.parse(event.data) as {
+      let payload: {
         type: string;
         positions?: number[];
         training?: boolean;
@@ -295,6 +295,23 @@ function Workbench() {
         simultaneity?: number;
         multi_joint_fraction?: number;
       };
+      try {
+        payload = JSON.parse(event.data) as {
+          type: string;
+          positions?: number[];
+          training?: boolean;
+          epoch?: number;
+          epochs?: number;
+          loss?: number;
+          message?: string;
+          direction_alignment?: number;
+          simultaneity?: number;
+          multi_joint_fraction?: number;
+        };
+      } catch {
+        // Malformed stream message: ignore rather than tear down the socket.
+        return;
+      }
       if (payload.type === "state" && payload.positions) {
         setState({
           positions: payload.positions,
@@ -1045,11 +1062,11 @@ function Workbench() {
     setBusy(true);
     setError(null);
     try {
-      if (demonstration.kind === "gesture" && demonstration.frames.length > 1) {
+      const rolloutArgs = buildRolloutArgs(demonstration, config);
+      if (demonstration.kind === "gesture" && rolloutArgs.frames.length > 1) {
         // Stage 1 uses the scripted bounded-interpolation controller to reach
         // the first checkpoint; the learned model only follows the gesture.
         // Density follows the authored timeline fps (timestep as fallback).
-        const rolloutArgs = buildRolloutArgs(demonstration, config);
         const result = await rolloutSession(
           sessionId,
           rolloutArgs.frames,
@@ -1068,7 +1085,6 @@ function Workbench() {
               Math.abs(position - (frame.expected[index] ?? position)),
             ),
           );
-        const error = frameError(finalFrame);
         const approachFrames = result.frames.filter(
           (frame) => (frame.phase ?? "gesture") !== "gesture",
         );
@@ -1080,7 +1096,7 @@ function Workbench() {
           : 0;
         const gestureError = gestureFrames.length
           ? Math.max(...gestureFrames.map(frameError))
-          : error;
+          : 0;
         setRolloutFrames(result.frames);
         const coordination = (
           result as {
@@ -1112,7 +1128,7 @@ function Workbench() {
         setEvaluation({
           target: finalFrame.expected,
           positions: finalFrame.positions,
-          error,
+          error: gestureError,
         });
         const clipped =
           (result as { clipped_steps?: number }).clipped_steps ?? 0;
@@ -1715,10 +1731,10 @@ function Workbench() {
                   />
                 </label>
                 <label>
-                  <span>Rollout steps</span>
+                  <span>Rollout steps (0 = auto)</span>
                   <input
                     type="number"
-                    min="1"
+                    min="0"
                     max="2000"
                     value={config.rollout_steps}
                     onChange={(event) =>
@@ -2123,8 +2139,14 @@ function Workbench() {
                         title={`Multi-joint steps: ${rolloutDiagnostics.coordination.multi_joint_steps}`}
                       >
                         Simultaneity{" "}
-                        <b>{rolloutDiagnostics.coordination.simultaneity.toFixed(2)}</b>
-                        {rolloutDiagnostics.coordination.sequential ? " — SEQUENTIAL" : ""}
+                        <b>
+                          {rolloutDiagnostics.coordination.simultaneity.toFixed(
+                            2,
+                          )}
+                        </b>
+                        {rolloutDiagnostics.coordination.sequential
+                          ? " — SEQUENTIAL"
+                          : ""}
                       </span>
                     ) : null}
                   </div>

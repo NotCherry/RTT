@@ -185,19 +185,20 @@ export function TrainingPage({
             />
           </Label>
           <Label>
-            Rollout steps
+            Rollout steps (0 = auto)
             <Input
               type="number"
-              min="1"
+              min="0"
               max="2000"
               value={config.rollout_steps}
               onChange={(e) => onConfigChange("rollout_steps", e.target.value)}
             />
           </Label>
           <p className="helper-text">
-            Gesture rollout density follows the demonstration timeline fps
-            (capped by rollout steps); Increment (ms) applies to the scripted
-            approach and the timestep fallback.
+            Rollout density follows the demonstration timeline fps; 0 sizes the
+            step budget to the full gesture automatically (no decimation),
+            capped at 2000. Increment (ms) applies to the scripted approach and
+            the timestep fallback.
           </p>
           <Label>
             Epochs
