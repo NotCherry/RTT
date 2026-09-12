@@ -415,7 +415,7 @@ class RolloutRequest(BaseModel):
     frames: list[DemonstrationFrame]
     current: list[float] | None = None
     timestep_ms: int = Field(120, ge=10, le=2000)
-    max_steps: int = Field(160, ge=1, le=2000)
+    max_steps: int = Field(160, ge=0, le=2000, description="Step budget; 0 = auto-size to the authored gesture (approach + grid steps, capped at 2000).")
     approach_mode: Literal["scripted", "learned"] = "scripted"
     timeline_fps: int | None = Field(default=None, ge=1, le=1000)
     physics: bool = Field(True, description="When true, rollout servos through PyBullet with substeps; false uses kinematic assign.")
@@ -868,6 +868,57 @@ def check_budget_exhaustion(remaining: int, max_steps: int, density_ratio: float
     except (TypeError, ValueError):
         return None
 
+def velocity_feasibility_findings(
+    frames: list[DemonstrationFrame],
+    joints: list[dict[str, Any]],
+) -> list[dict[str, str]]:
+    """Per-segment check that authored checkpoint timing is physically feasible.
+
+    The demanded joint speed |Δpos|/segment_duration must stay within the
+    URDF velocity limit; otherwise no model can put the robot at the middle
+    checkpoint on time under physics-realistic replay (see
+    docs/research/training-middle-frame-revalidation.md, RC2). One finding per
+    infeasible segment, naming the worst offending joints.
+    """
+    ordered = sorted(frames, key=lambda frame: frame.timestamp)
+    findings: list[dict[str, str]] = []
+    for segment_index in range(len(ordered) - 1):
+        start = ordered[segment_index]
+        end = ordered[segment_index + 1]
+        try:
+            duration_ms = float(end.timestamp) - float(start.timestamp)
+            end_timestamp = float(end.timestamp)
+        except (TypeError, ValueError):
+            continue
+        if duration_ms <= 0:
+            continue
+        offenders: list[str] = []
+        for joint_index, joint in enumerate(joints):
+            try:
+                delta = abs(float(end.positions[joint_index]) - float(start.positions[joint_index]))
+                limit = joint_velocity_limit(joint)
+                demanded = delta / (duration_ms / 1000.0)
+            except (IndexError, TypeError, ValueError, ZeroDivisionError):
+                continue
+            if demanded > limit * 1.001:
+                name = str(joint.get("name", f"joint {joint_index}"))
+                offenders.append(f"{name}: {demanded:.2f} needed vs {limit:.2f} limit")
+        if offenders:
+            try:
+                findings.append({
+                    "type": "warning",
+                    "message": (
+                        f"Checkpoint timing infeasible: segment {segment_index + 1} "
+                        f"(checkpoint at {end_timestamp:.0f} ms) demands more than the joint "
+                        f"velocity limit — {'; '.join(offenders)}. The robot cannot be there on "
+                        "time; slow the gesture timing or raise the joint velocity limit."
+                    ),
+                })
+            except (TypeError, ValueError):
+                continue
+    return findings
+
+
 def _interpolate_frame_positions(frames: list[DemonstrationFrame], timestamp: float) -> list[float]:
     ordered = sorted(frames, key=lambda frame: frame.timestamp)
     if not ordered:
@@ -1023,9 +1074,9 @@ def build_incremental_samples(
                     progress = min(1.0, elapsed / duration)
                     next_progress = min(1.0, (elapsed + step) / duration)
                     if is_step:
-                        # Step: hold start, jump at end
-                        current = list(segment_start.positions) if progress < 1.0 else list(segment_start.positions)
-                        next_state = list(segment_start.positions) if next_progress < 1.0 else list(segment_end.positions)
+                        # Step interpolation: hold previous until the segment end
+                        current = list(segment_start.positions)
+                        next_state = list(segment_end.positions) if next_progress >= 1.0 else list(segment_start.positions)
                     else:
                         current = _lerp_positions(segment_start.positions, segment_end.positions, progress)
                         next_state = _lerp_positions(segment_start.positions, segment_end.positions, next_progress)
@@ -1299,6 +1350,88 @@ def analyze_rollout_coordination(
         return {"simultaneity": 1.0, "direction_alignment": 1.0, "multi_joint_steps": 0, "sequential": False}
 
 
+# --- Gesture convergence & checkpoint probe (full-gesture fidelity) ---------
+# Per-step training loss stays low long before an autoregressive replay
+# reproduces interior checkpoints (see
+# docs/research/training-middle-frame-revalidation.md), so multi-segment
+# gestures get an epoch floor and every gesture training ends with a cheap
+# kinematic checkpoint probe that reports per-checkpoint replay error.
+
+GESTURE_MIN_EPOCHS = 1200
+CHECKPOINT_MISS_MAE = 0.12
+# Hard ceiling for rollout step budgets, including auto-sized budgets.
+MAX_ROLLOUT_STEP_CAP = 2000
+
+
+def _effective_training_epochs(demonstrations: list[Demonstration], epochs: int) -> int:
+    """Raise the epoch budget for multi-segment gestures.
+
+    Static poses converge quickly; multi-segment gestures with direction
+    reversals need more optimization before the model reproduces interior
+    checkpoints instead of averaging through them. Poses and 1-segment
+    gestures keep the user-configured budget.
+    """
+    for item in demonstrations:
+        if item.kind != "gesture":
+            continue
+        try:
+            frames = authored_frames(item)
+        except Exception:
+            continue
+        if len(frames) >= 3:
+            try:
+                return max(int(epochs), GESTURE_MIN_EPOCHS)
+            except (TypeError, ValueError):
+                return GESTURE_MIN_EPOCHS
+    try:
+        return int(epochs)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("The training epoch budget must be an integer.") from exc
+
+
+def probe_gesture_checkpoint_errors(
+    model: torch.nn.Module,
+    joints: list[dict[str, Any]],
+    demonstration: Demonstration,
+    step_ms: int,
+) -> list[dict[str, Any]] | None:
+    """Roll the model through the authored checkpoints kinematically.
+
+    Compounding (autoregressive) execution without physics: the per-checkpoint
+    MAE at its scheduled step is the honest "did it learn the full gesture"
+    signal, unlike the teacher-forced per-step loss.
+    """
+    try:
+        frames = authored_frames(demonstration)
+        if len(frames) < 2:
+            return None
+        joint_count = len(joints)
+        ordered = sorted(frames, key=lambda frame: frame.timestamp)
+        step = max(1, int(step_ms))
+        expected_size = model_expected_size(model, joint_count)
+        current = list(ordered[0].positions)
+        previous_delta = [0.0] * joint_count
+        report: list[dict[str, Any]] = []
+        for segment_index in range(len(ordered) - 1):
+            end = ordered[segment_index + 1]
+            duration = max(end.timestamp - ordered[segment_index].timestamp, step)
+            steps = max(1, int(round(duration / step)))
+            for index in range(steps):
+                progress = min(1.0, (index + 1) / steps)
+                current_normalized = normalized(current, joints)
+                goal_normalized = normalized(end.positions, joints)
+                features = build_features(current_normalized, goal_normalized, progress, previous_delta, expected_size)
+                with torch.no_grad():
+                    delta = model(features)[0].tolist()
+                previous_delta = list(delta)
+                current = denormalized([value + change for value, change in zip(current_normalized, delta)], joints)
+            mae = sum(abs(a - b) for a, b in zip(current, end.positions)) / max(1, joint_count)
+            report.append({"checkpoint": segment_index + 1, "timestamp": float(end.timestamp), "mae": float(mae)})
+        return report
+    except Exception:
+        return None
+
+
 def train_session(session: SimulationSession, request: TrainRequest) -> None:
     try:
         if not request.demonstrations:
@@ -1359,6 +1492,16 @@ def train_session(session: SimulationSession, request: TrainRequest) -> None:
                     session.events.append({"type": "training", "message": "physics-feasible samples enabled", "samples": len(samples)})
                 except Exception as exc:
                     session.events.append({"type": "warning", "message": f"physics-feasible sampling fallback to kinematic: {exc}"})
+        if request.config.physics and session.body is not None:
+            for item in request.demonstrations:
+                if item.kind != "gesture":
+                    continue
+                try:
+                    frames = authored_frames(item)
+                except Exception:
+                    continue
+                for finding in velocity_feasibility_findings(frames, session.joints):
+                    session.events.append({"type": "warning", "message": finding["message"]})
         if not samples:
             raise ValueError("Capture at least two timeline checkpoints before training.")
         inputs = [
@@ -1371,7 +1514,7 @@ def train_session(session: SimulationSession, request: TrainRequest) -> None:
         model = make_model(expected_input_size(joint_count), joint_count, request.config)
         optimizer = torch.optim.Adam(model.parameters(), lr=request.config.learning_rate)
         loss_function = torch.nn.SmoothL1Loss(reduction="none")
-        steps = request.config.epochs
+        steps = _effective_training_epochs(request.demonstrations, request.config.epochs)
         try:
             coordination_weight = float(request.config.coordination_weight)
         except Exception:
@@ -1419,6 +1562,28 @@ def train_session(session: SimulationSession, request: TrainRequest) -> None:
                 except Exception:
                     reported_loss = float("nan")
                 session.events.append({"type": "training", "epoch": epoch + 1, "epochs": steps, "loss": reported_loss, "samples": len(samples), **event_diagnostics})
+        # Kinematic checkpoint probe — full-gesture signal beyond the per-step loss.
+        checkpoint_probes: list[dict[str, Any]] = []
+        for item in request.demonstrations:
+            try:
+                frames = authored_frames(item)
+            except Exception:
+                continue
+            if item.kind != "gesture" or len(frames) < 2:
+                continue
+            fps_val = float(getattr(item, "timeline_fps", 0) or 0)
+            probe_step = max(10, min(int(round(1000.0 / fps_val)), 2000)) if fps_val > 0 else max(1, int(request.config.timestep_ms))
+            try:
+                report = probe_gesture_checkpoint_errors(model, session.joints, item, probe_step)
+            except Exception:
+                report = None
+            if not report:
+                continue
+            missed = [entry["checkpoint"] for entry in report if entry["mae"] > CHECKPOINT_MISS_MAE]
+            probe_entry = {"demonstration": item.name, "checkpoints": report}
+            if missed:
+                probe_entry["missed"] = missed
+            checkpoint_probes.append(probe_entry)
         with session.lock:
             session.model = model.eval()
             session.model_config = request.config.model_dump()
@@ -1432,7 +1597,17 @@ def train_session(session: SimulationSession, request: TrainRequest) -> None:
                 final_diagnostics = {key: float(value) for key, value in last_diagnostics.items()}
             except Exception:
                 final_diagnostics = {"direction_alignment": 1.0, "simultaneity": 1.0, "multi_joint_fraction": 0.0}
-            session.events.append({"type": "training_complete", "loss": final_loss, "demonstrations": len(request.demonstrations), "samples": len(samples), **final_diagnostics})
+            session.events.append({"type": "training_complete", "loss": final_loss, "demonstrations": len(request.demonstrations), "samples": len(samples), "checkpoint_probe": checkpoint_probes, **final_diagnostics})
+            for probe in checkpoint_probes:
+                missed = probe.get("missed") or []
+                if not missed:
+                    continue
+                details = ", ".join(
+                    f"{entry['checkpoint']}:{entry['mae']:.3f}"
+                    for entry in probe["checkpoints"]
+                    if entry["checkpoint"] in missed
+                )
+                session.events.append({"type": "warning", "message": f"Gesture '{probe['demonstration']}' not fully learned: checkpoints {missed} missed (MAE > {CHECKPOINT_MISS_MAE}; {details}). The replay will skip those middle frames — try more epochs or check segment timing."})
     except Exception as exc:
         session.events.append({"type": "error", "message": str(exc)})
     finally:
@@ -1620,6 +1795,19 @@ def rollout(session_id: str, request: RolloutRequest) -> dict[str, Any]:
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
     use_physics = bool(request.physics) and session.body is not None
+    # Timing grid first: the auto budget needs grid_ms before the approach runs.
+    try:
+        grid_ms = 1000.0 / request.timeline_fps if request.timeline_fps else float(request.timestep_ms)
+        step_ms = int(request.timestep_ms)
+        if step_ms < 1 or grid_ms < 1:
+            raise ValueError("timing must be positive")
+    except (TypeError, ValueError, ZeroDivisionError) as exc:
+        raise HTTPException(422, f"Invalid timing parameter: {exc}") from exc
+    try:
+        auto_budget = int(request.max_steps) <= 0
+        approach_cap = MAX_ROLLOUT_STEP_CAP if auto_budget else int(request.max_steps)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(422, f"Invalid max_steps budget: {exc}") from exc
     try:
         if use_physics:
             try:
@@ -1636,7 +1824,7 @@ def rollout(session_id: str, request: RolloutRequest) -> dict[str, Any]:
         if any(abs(a - b) > 1e-9 for a, b in zip(approach_start, ordered[0].positions)):
             if request.approach_mode == "scripted":
                 for waypoint in build_approach_plan(approach_start, list(ordered[0].positions), session.joints, request.timestep_ms):
-                    if total_steps >= request.max_steps:
+                    if total_steps >= approach_cap:
                         break
                     current, entry_error, entry_clipped = _resolve_rollout_step(session, list(waypoint), request.timestep_ms, use_physics)
                     max_tracking_error = max(max_tracking_error, entry_error)
@@ -1649,7 +1837,7 @@ def rollout(session_id: str, request: RolloutRequest) -> dict[str, Any]:
                 expected_size = model_expected_size(session.model, joint_count)
                 previous_delta = [0.0] * joint_count
                 for approach_index in range(approach_steps):
-                    if total_steps >= request.max_steps:
+                    if total_steps >= approach_cap:
                         break
                     progress = min(1.0, (approach_index + 1) / approach_steps)
                     current_normalized = normalized(current, session.joints)
@@ -1666,19 +1854,22 @@ def rollout(session_id: str, request: RolloutRequest) -> dict[str, Any]:
                     expected = _lerp_positions(approach_start, ordered[0].positions, progress)
                     result.append({"timestamp": current_timestamp, "positions": list(current), "expected": expected, "phase": "approach", "tracking_error": entry_error, "clipped": entry_clipped})
                     total_steps += 1
-        try:
-            grid_ms = 1000.0 / request.timeline_fps if request.timeline_fps else float(request.timestep_ms)
-            step_ms = int(request.timestep_ms)
-            if step_ms < 1 or grid_ms < 1:
-                raise ValueError("timing must be positive")
-        except (TypeError, ValueError, ZeroDivisionError) as exc:
-            raise HTTPException(422, f"Invalid timing parameter: {exc}") from exc
         # Canonical training step is grid when timeline_fps present
         canonical_step = int(round(grid_ms)) if request.timeline_fps else step_ms
         canonical_step = max(1, min(canonical_step, 2000))
         scale = grid_ms / canonical_step if request.timeline_fps else 1.0
         segment_ms_list = [ordered[i].timestamp - ordered[i-1].timestamp for i in range(1, len(ordered))]
-        density = compute_rollout_density(segment_ms_list, grid_ms, request.max_steps, total_steps)
+        # Auto budget: cover the full authored gesture (approach + every grid
+        # step) instead of decimating interior checkpoints into sparse jumps.
+        if auto_budget:
+            raw_total = sum(max(1, math.ceil(max(float(seg), grid_ms) / grid_ms)) for seg in segment_ms_list)
+            effective_max_steps = min(total_steps + int(raw_total), MAX_ROLLOUT_STEP_CAP)
+        else:
+            try:
+                effective_max_steps = int(request.max_steps)
+            except (TypeError, ValueError) as exc:
+                raise HTTPException(422, f"Invalid max_steps budget: {exc}") from exc
+        density = compute_rollout_density(segment_ms_list, grid_ms, effective_max_steps, total_steps)
         raw_steps = density["scaled_steps"]
         # Keep raw for diagnostics, scaled is the budget-aware steps
         raw_steps_for_diag = density["raw_steps"]
@@ -1697,8 +1888,13 @@ def rollout(session_id: str, request: RolloutRequest) -> dict[str, Any]:
             }
             for idx in range(len(segment_ms_list))
         ]
-        warning = check_budget_exhaustion(int(density["remaining"]), int(request.max_steps), float(density_ratio))
+        warning = check_budget_exhaustion(int(density["remaining"]), effective_max_steps, float(density_ratio))
         warnings: list[dict[str, str]] = [warning] if warning else []
+        # Physics feasibility: authored timing that exceeds joint velocity
+        # limits cannot be hit on time by any model — say so instead of
+        # letting a low error hide it.
+        if use_physics:
+            warnings.extend(velocity_feasibility_findings(ordered, session.joints))
         expected_size = model_expected_size(session.model, joint_count)
         # Carry previous_delta across gesture segments to avoid momentum loss at interior checkpoints
         rollout_prev_delta: list[float] = [0.0] * joint_count
@@ -1722,7 +1918,7 @@ def rollout(session_id: str, request: RolloutRequest) -> dict[str, Any]:
             except Exception:
                 is_step = False
             for step_index in range(segment_steps):
-                if total_steps >= request.max_steps:
+                if total_steps >= effective_max_steps:
                     break
                 progress = min(1.0, (step_index + 1) / segment_steps)
                 current_normalized = normalized(current, session.joints)
@@ -1747,7 +1943,7 @@ def rollout(session_id: str, request: RolloutRequest) -> dict[str, Any]:
                     )
                 result.append({"timestamp": current_timestamp, "positions": list(current), "expected": expected, "phase": "gesture", "tracking_error": entry_error, "clipped": entry_clipped})
                 total_steps += 1
-            if total_steps >= request.max_steps:
+            if total_steps >= effective_max_steps:
                 break
         if session.body is None:
             collisions = 0

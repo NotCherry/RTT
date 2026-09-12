@@ -477,3 +477,302 @@ def test_rollout_budget_exhaustion_warns():
     if data["warnings"]:
         assert "Gesture trimmed" in data["warnings"][0]["message"]
     # check pure module separately already
+
+
+def test_multisegment_gesture_auto_scales_epochs_and_reports_checkpoint_probe():
+    """P1 — multi-segment gestures get an epoch floor and a train-end
+    kinematic checkpoint probe so low per-step loss cannot hide skipped
+    interior checkpoints."""
+    session_id, _ = create_sample_session()
+    session = SESSIONS[session_id]
+    demo = Demonstration(
+        id="gesture-probe",
+        name="probe",
+        kind="gesture",
+        current=[0.0, 0.0],
+        target=[0.0, 0.4],
+        frames=[
+            {"timestamp": 0, "positions": [0.0, 0.0]},
+            {"timestamp": 1000, "positions": [0.6, -0.6]},
+            {"timestamp": 2000, "positions": [0.0, 0.4]},
+        ],
+        timeline_fps=60,
+    )
+    train_session(
+        session,
+        TrainRequest(
+            demonstrations=[demo],
+            config=TrainConfig(epochs=50, timestep_ms=120, random_starts=0, physics=False),
+        ),
+    )
+    training_events = [e for e in session.events if e.get("type") == "training"]
+    assert training_events, "training progress events expected"
+    assert max(e["epochs"] for e in training_events) == 1200  # floored, not 50
+    complete = [e for e in session.events if e.get("type") == "training_complete"]
+    assert complete, "training_complete event expected"
+    probes = complete[0].get("checkpoint_probe")
+    assert probes, "gesture training must report a checkpoint probe"
+    report = probes[0]["checkpoints"]
+    assert [entry["checkpoint"] for entry in report] == [1, 2]
+    assert probes[0].get("missed") is None  # converged: nothing missed
+    assert report[0]["mae"] < 0.12  # interior checkpoint learned
+
+
+def test_pose_training_keeps_user_epoch_budget():
+    """P1 — poses and 1-segment gestures keep the user-configured epochs."""
+    session_id, _ = create_sample_session()
+    session = SESSIONS[session_id]
+    demo = Demonstration(
+        id="pose-budget",
+        name="pose",
+        kind="pose",
+        current=[0.0, 0.0],
+        target=[0.4, -0.2],
+        frames=[{"timestamp": 0, "positions": [0.4, -0.2]}],
+    )
+    train_session(
+        session,
+        TrainRequest(
+            demonstrations=[demo],
+            config=TrainConfig(epochs=20, timestep_ms=120, random_starts=0, physics=False),
+        ),
+    )
+    training_events = [e for e in session.events if e.get("type") == "training"]
+    assert training_events
+    assert max(e["epochs"] for e in training_events) == 20
+    complete = [e for e in session.events if e.get("type") == "training_complete"]
+    assert complete
+    assert complete[0].get("checkpoint_probe") == []
+
+
+def test_undertrained_gesture_probe_warns_missed_checkpoints():
+    """P1 — an essentially untrained model must surface the skipped
+    checkpoints as a warning instead of a silent low loss."""
+    session_id, _ = create_sample_session()
+    session = SESSIONS[session_id]
+    demo = Demonstration(
+        id="gesture-miss",
+        name="miss",
+        kind="gesture",
+        current=[0.0, 0.0],
+        target=[0.6, 0.6],
+        frames=[
+            {"timestamp": 0, "positions": [0.0, 0.0]},
+            {"timestamp": 1000, "positions": [0.6, 0.6]},
+        ],
+        timeline_fps=60,
+    )
+    # 1 segment -> no epoch floor; a single epoch leaves the model near random.
+    train_session(
+        session,
+        TrainRequest(
+            demonstrations=[demo],
+            config=TrainConfig(epochs=1, timestep_ms=120, random_starts=0, random_seed=7, physics=False),
+        ),
+    )
+    complete = [e for e in session.events if e.get("type") == "training_complete"]
+    assert complete
+    probe = complete[0]["checkpoint_probe"][0]
+    assert probe.get("missed") == [1]
+    warnings = [
+        e
+        for e in session.events
+        if e.get("type") == "warning" and "not fully learned" in e.get("message", "")
+    ]
+    assert warnings, "missed checkpoints must produce a warning event"
+
+
+def test_velocity_feasibility_warning_names_infeasible_segment():
+    """P2 — checkpoint timing exceeding the joint velocity limit must produce
+    an actionable warning naming the segment and joint, in both physics
+    training and physics rollout."""
+    session_id, _ = create_sample_session()
+    # demo arm velocity limit is 5.0/s; demanding 1.5 rad in 0.2s = 7.5/s.
+    demo = Demonstration(
+        id="gesture-infeasible",
+        name="infeasible",
+        kind="gesture",
+        current=[0.0, 0.0],
+        target=[1.5, -1.5],
+        frames=[
+            {"timestamp": 0, "positions": [0.0, 0.0]},
+            {"timestamp": 200, "positions": [1.5, -1.5]},
+        ],
+        timeline_fps=60,
+    )
+    session = SESSIONS[session_id]
+    train_session(
+        session,
+        TrainRequest(
+            demonstrations=[demo],
+            config=TrainConfig(epochs=2, timestep_ms=120, random_starts=0, physics=True),
+        ),
+    )
+    train_warnings = [
+        e
+        for e in session.events
+        if e.get("type") == "warning" and "velocity limit" in e.get("message", "")
+    ]
+    assert train_warnings, "physics training must warn about infeasible timing"
+    assert "shoulder_joint" in train_warnings[0]["message"]
+
+    resp = client.post(
+        f"/api/sessions/{session_id}/rollout",
+        json={
+            "frames": [f.model_dump() for f in demo.frames],
+            "current": [0.0, 0.0],
+            "timestep_ms": 120,
+            "max_steps": 40,
+            "timeline_fps": 60,
+            "physics": True,
+        },
+    )
+    assert resp.status_code == 200
+    rollout_warnings = [
+        w for w in resp.json().get("warnings", []) if "velocity limit" in w["message"]
+    ]
+    assert rollout_warnings, "physics rollout must warn about infeasible timing"
+    assert "segment 1" in rollout_warnings[0]["message"]
+
+
+def test_feasible_timing_produces_no_velocity_warning():
+    """P2 — timing within joint velocity limits must stay silent."""
+    session_id, _ = create_sample_session()
+    demo = Demonstration(
+        id="gesture-feasible",
+        name="feasible",
+        kind="gesture",
+        current=[0.0, 0.0],
+        target=[1.5, -1.5],
+        frames=[
+            {"timestamp": 0, "positions": [0.0, 0.0]},
+            {"timestamp": 1000, "positions": [1.5, -1.5]},
+        ],
+        timeline_fps=60,
+    )
+    session = SESSIONS[session_id]
+    train_session(
+        session,
+        TrainRequest(
+            demonstrations=[demo],
+            config=TrainConfig(epochs=2, timestep_ms=120, random_starts=0, physics=True),
+        ),
+    )
+    assert not [
+        e
+        for e in session.events
+        if e.get("type") == "warning" and "velocity limit" in e.get("message", "")
+    ]
+    resp = client.post(
+        f"/api/sessions/{session_id}/rollout",
+        json={
+            "frames": [f.model_dump() for f in demo.frames],
+            "current": [0.0, 0.0],
+            "timestep_ms": 120,
+            "max_steps": 40,
+            "timeline_fps": 60,
+            "physics": True,
+        },
+    )
+    assert resp.status_code == 200
+    assert not [
+        w for w in resp.json().get("warnings", []) if "velocity limit" in w["message"]
+    ]
+
+
+def _train_minimal_gesture_model(session_id: str) -> None:
+    """Train any model quickly (2-checkpoint gesture: no epoch floor)."""
+    session = SESSIONS[session_id]
+    train_demo = Demonstration(
+        id="train-min",
+        name="train-min",
+        kind="gesture",
+        current=[0.0, 0.0],
+        target=[0.5, -0.5],
+        frames=[
+            {"timestamp": 0, "positions": [0.0, 0.0]},
+            {"timestamp": 120, "positions": [0.5, -0.5]},
+        ],
+        timeline_fps=60,
+    )
+    train_session(
+        session,
+        TrainRequest(
+            demonstrations=[train_demo],
+            config=TrainConfig(epochs=2, timestep_ms=120, random_starts=0, physics=False),
+        ),
+    )
+    assert session.model is not None
+
+
+def test_auto_rollout_budget_covers_full_gesture_without_decimation():
+    """P3 — max_steps=0 sizes the budget to the authored gesture: density 1.0,
+    every grid step executed, no decimation warning."""
+    session_id, _ = create_sample_session()
+    _train_minimal_gesture_model(session_id)
+    frames = [
+        {"timestamp": 0, "positions": [0.0, 0.0]},
+        {"timestamp": 1500, "positions": [0.5, -0.5]},
+        {"timestamp": 3000, "positions": [0.0, 0.4]},
+    ]
+    # Auto budget: 3s at 60fps grid = ~180 steps > the old 160 default.
+    resp = client.post(
+        f"/api/sessions/{session_id}/rollout",
+        json={
+            "frames": frames,
+            "current": [0.0, 0.0],
+            "timestep_ms": 120,
+            "max_steps": 0,
+            "timeline_fps": 60,
+            "physics": False,
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["density_ratio"] == 1.0
+    assert not [w for w in data.get("warnings", []) if "decimated" in w["message"]]
+    gesture_frames = [f for f in data["frames"] if f.get("phase") == "gesture"]
+    assert len(gesture_frames) == 181  # initial frame + 180 grid steps
+    # Same gesture under the old fixed budget decimates.
+    resp = client.post(
+        f"/api/sessions/{session_id}/rollout",
+        json={
+            "frames": frames,
+            "current": [0.0, 0.0],
+            "timestep_ms": 120,
+            "max_steps": 160,
+            "timeline_fps": 60,
+            "physics": False,
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["density_ratio"] > 1.0
+    assert [w for w in data.get("warnings", []) if "decimated" in w["message"]]
+
+
+def test_auto_rollout_budget_caps_at_step_ceiling():
+    """P3 — very long gestures hit the 2000-step cap and say so."""
+    session_id, _ = create_sample_session()
+    _train_minimal_gesture_model(session_id)
+    frames = [
+        {"timestamp": 0, "positions": [0.0, 0.0]},
+        {"timestamp": 20000, "positions": [0.5, -0.5]},
+        {"timestamp": 40000, "positions": [0.0, 0.4]},
+    ]
+    resp = client.post(
+        f"/api/sessions/{session_id}/rollout",
+        json={
+            "frames": frames,
+            "current": [0.0, 0.0],
+            "timestep_ms": 120,
+            "max_steps": 0,
+            "timeline_fps": 60,
+            "physics": False,
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["steps"] <= 2000
+    assert data["density_ratio"] > 1.0
+    assert [w for w in data.get("warnings", []) if "decimated" in w["message"]]
