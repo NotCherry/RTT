@@ -112,6 +112,7 @@ export type RolloutFrame = {
   positions: number[];
   expected: number[];
   phase?: "approach" | "gesture";
+  source?: "model-rollout" | "derived-preview" | "model-prediction";
   tracking_error?: number;
   clipped?: number;
 };

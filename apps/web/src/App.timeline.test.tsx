@@ -65,6 +65,7 @@ afterEach(cleanup);
 
 beforeEach(() => {
   vi.clearAllMocks();
+  window.localStorage.clear();
   vi.stubGlobal("WebSocket", MockWebSocket);
   vi.mocked(api.loadDemoRobot).mockResolvedValue(robot);
   vi.mocked(api.createSession).mockResolvedValue({
@@ -76,6 +77,37 @@ beforeEach(() => {
 });
 
 describe("production timeline keypose flow", () => {
+  it("restores an authored gesture from browser storage after remounting", async () => {
+    const firstView = render(<App />);
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Capture pose" }),
+      ).toBeEnabled(),
+    );
+    fireEvent.click(screen.getByRole("link", { name: "Timeline" }));
+    await waitFor(() =>
+      expect(screen.getByLabelText("FPS")).toBeInTheDocument(),
+    );
+    fireEvent.change(screen.getByLabelText("Gesture name"), {
+      target: { value: "Persistent wave" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Insert full-pose key" }),
+    );
+    await waitFor(() =>
+      expect(screen.getByText(/authored keyframe/)).toBeInTheDocument(),
+    );
+
+    firstView.unmount();
+    window.history.replaceState({}, "", "/archive");
+    render(<App />);
+
+    expect(await screen.findAllByText("Persistent wave")).toHaveLength(2);
+    expect(
+      screen.getByText(/saved automatically in this browser/i),
+    ).toBeInTheDocument();
+  });
+
   it("inserts at the scrubbed playhead and typed targets without touching frame 0", async () => {
     render(<App />);
     // Sample robot now auto-loads; still allow manual open if button present

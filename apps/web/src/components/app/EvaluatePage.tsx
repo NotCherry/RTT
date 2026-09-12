@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import {
         Button,
         Panel,
@@ -65,6 +66,21 @@ export function EvaluatePage({
         onReplay,
         onEvaluate,
 }: EvaluatePageProps) {
+        const lastAutoPlayedRollout = useRef<RolloutFrame[] | null>(null);
+        const derivedPreviewCount = rolloutFrames.filter(
+                (frame) => frame.source === "derived-preview",
+        ).length;
+
+        useEffect(() => {
+                if (rolloutFrames.length < 2) {
+                        lastAutoPlayedRollout.current = null;
+                        return;
+                }
+                if (lastAutoPlayedRollout.current === rolloutFrames) return;
+                lastAutoPlayedRollout.current = rolloutFrames;
+                onReplay();
+        }, [onReplay, rolloutFrames]);
+
         return (
                 <div className="route-page">
                         <div className="route-heading">
@@ -72,10 +88,10 @@ export function EvaluatePage({
                                         <Kicker>EVALUATE / TRAJECTORY</Kicker>
                                         <H2>Inspect the learned motion.</H2>
                                         <IntroCopy>
-                                                Compare the predicted rollout
-                                                against every authored keyframe
-                                                instead of only checking the
-                                                final pose.
+                                                Watch the model result in the
+                                                viewport and compare gesture
+                                                rollouts against every authored
+                                                keyframe.
                                         </IntroCopy>
                                 </div>
                                 <StatusPill online={trained}>
@@ -102,7 +118,10 @@ export function EvaluatePage({
                                                 >
                                                         {replaying
                                                                 ? "Replaying"
-                                                                : "Play rollout"}
+                                                                : demonstrationKind ===
+                                                                    "pose"
+                                                                  ? "Play prediction preview"
+                                                                  : "Play rollout"}
                                                 </Button>
                                         }
                                 />
@@ -139,7 +158,9 @@ export function EvaluatePage({
                                                                                 : "s"}
                                                                         {rolloutFrames.length >
                                                                                 0 &&
-                                                                                ` · ${rolloutFrames.length} predicted frames`}
+                                                                                (derivedPreviewCount
+                                                                                        ? ` · ${derivedPreviewCount} derived preview frame${derivedPreviewCount === 1 ? "" : "s"} · 1 model prediction`
+                                                                                        : ` · ${rolloutFrames.length} model rollout frames`)}
                                                                 </p>
                                                         )}
                                                 </div>
@@ -278,7 +299,9 @@ export function EvaluatePage({
                                                                                 </strong>
                                                                         </div>
                                                                 </div>
-                                                                <div className="physics-metrics helper-text">
+                                                                {derivedPreviewCount ===
+                                                                0 ? (
+                                                                        <div className="physics-metrics helper-text">
                                                                         {(() => {
                                                                                 const maxTrack =
                                                                                         Math.max(
@@ -308,7 +331,8 @@ export function EvaluatePage({
                                                                                                 : "—";
                                                                                 return `Physics: max tracking error ${maxTrack.toFixed(4)}, clipped steps ${clipped}, ${collisions}`;
                                                                         })()}
-                                                                </div>
+                                                                        </div>
+                                                                ) : null}
                                                                 {rolloutDiagnostics?.density_ratio !==
                                                                         undefined &&
                                                                         rolloutDiagnostics.density_ratio >
@@ -359,7 +383,13 @@ export function EvaluatePage({
                                                                                                 }
                                                                                         >
                                                                                                 <span>
-                                                                                                        Frame{" "}
+                                                                                                        {frame.source ===
+                                                                                                        "derived-preview"
+                                                                                                                ? "Derived preview"
+                                                                                                                : frame.source ===
+                                                                                                                    "model-prediction"
+                                                                                                                  ? "Model prediction"
+                                                                                                                  : "Rollout frame"}{" "}
                                                                                                         {index +
                                                                                                                 1}{" "}
                                                                                                         ·{" "}

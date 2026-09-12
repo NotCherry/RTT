@@ -11,9 +11,11 @@ type ArchivePageProps = {
   onSelectDataset: (id: string) => void;
   onCreateDataset: () => void;
   onRenameDataset: (id: string, name: string) => void;
+  onDeleteDataset: (id: string) => void;
   onMoveDemonstration: (demoId: string, datasetId: string) => void;
   onPreview: (demo: Demonstration) => void;
   onSelectDemo: (id: string) => void;
+  onDeleteDemo: (id: string) => void;
 };
 
 export function ArchivePage({
@@ -23,9 +25,11 @@ export function ArchivePage({
   onSelectDataset,
   onCreateDataset,
   onRenameDataset,
+  onDeleteDataset,
   onMoveDemonstration,
   onPreview,
   onSelectDemo,
+  onDeleteDemo,
 }: ArchivePageProps) {
   return (
     <div className="route-page">
@@ -48,6 +52,7 @@ export function ArchivePage({
             onSelect={onSelectDataset}
             onCreate={onCreateDataset}
             onRename={onRenameDataset}
+            onDelete={onDeleteDataset}
             onMoveDemonstration={onMoveDemonstration}
           />
         </Panel>
@@ -95,6 +100,14 @@ export function ArchivePage({
                         </Link>
                       </Button>
                     )}
+                    <Button
+                      variant="ghost"
+                      size="small"
+                      aria-label={`Delete ${demonstration.name}`}
+                      onClick={() => onDeleteDemo(demonstration.id)}
+                    >
+                      Delete
+                    </Button>
                   </div>
                 </article>
               ))

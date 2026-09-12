@@ -1,10 +1,13 @@
 import type {
   Demonstration,
   DemonstrationFrame,
+  RolloutFrame,
   TrainingConfig,
 } from "../types";
 
 const DEFAULT_ROLLOUT_STEPS = 160;
+const POSE_PREVIEW_STEPS = 12;
+const POSE_PREVIEW_STEP_MS = 60;
 
 export type RolloutArgs = {
   frames: DemonstrationFrame[];
@@ -54,4 +57,29 @@ export function buildRolloutArgs(
     approachMode: "scripted",
     timelineFps: demonstration.timeline_fps ?? null,
   };
+}
+
+export function buildPosePredictionPreviewFrames(
+  current: number[],
+  predicted: number[],
+  target: number[],
+): RolloutFrame[] {
+  const frameCount = POSE_PREVIEW_STEPS;
+  return Array.from({ length: frameCount + 1 }, (_, step) => {
+    const progress = step / frameCount;
+    const interpolate = (start: number, end: number) =>
+      start + (end - start) * progress;
+    return {
+      timestamp: step * POSE_PREVIEW_STEP_MS,
+      positions: predicted.map((value, index) =>
+        interpolate(current[index] ?? value, value),
+      ),
+      expected: target.map((value, index) =>
+        interpolate(current[index] ?? value, value),
+      ),
+      phase: step === 0 ? "approach" : "gesture",
+      source:
+        step === frameCount ? "model-prediction" : "derived-preview",
+    };
+  });
 }

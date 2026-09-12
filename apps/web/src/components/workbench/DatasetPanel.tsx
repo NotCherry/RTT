@@ -9,6 +9,7 @@ type DatasetPanelProps = {
   onSelect: (datasetId: string) => void;
   onCreate: () => void;
   onRename: (datasetId: string, name: string) => void;
+  onDelete: (datasetId: string) => void;
   onMoveDemonstration: (demonstrationId: string, datasetId: string) => void;
 };
 
@@ -19,6 +20,7 @@ export function DatasetPanel({
   onSelect,
   onCreate,
   onRename,
+  onDelete,
   onMoveDemonstration,
 }: DatasetPanelProps) {
   return (
@@ -35,8 +37,8 @@ export function DatasetPanel({
         </Button>
       </div>
       <p className="helper-text">
-        Datasets organize the current robot&apos;s captured poses and gestures. The active dataset receives new
-        demonstrations.
+        Datasets and demonstrations are saved automatically in this browser for
+        the current robot. The active dataset receives new demonstrations.
       </p>
       <Separator className="my-3" />
       {datasets.length ? (
@@ -53,6 +55,14 @@ export function DatasetPanel({
                 value={dataset.name}
                 onChange={(event) => onRename(dataset.id, event.target.value)}
               />
+              <Button
+                variant="ghost"
+                size="small"
+                aria-label={`Delete ${dataset.name}`}
+                onClick={() => onDelete(dataset.id)}
+              >
+                Delete
+              </Button>
             </article>
           ))}
         </div>

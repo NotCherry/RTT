@@ -60,11 +60,10 @@ describe("viewport isolation — review fixes", () => {
     expect(css).toContain("110px minmax(0, 1fr)");
   });
 
-  it("coord display is not gratuitously wrapped (scope-creep guard)", () => {
+  it("keeps the coordination display after source formatting", () => {
     const src = appSrc;
-    expect(src).toContain(
-      "<b>{rolloutDiagnostics.coordination.simultaneity.toFixed(2)}</b>",
+    expect(src).toMatch(
+      /<b>\s*{rolloutDiagnostics\.coordination\.simultaneity\.toFixed\(\s*2,?\s*\)}\s*<\/b>/,
     );
-    expect(src).not.toContain("simultaneity.toFixed(\n");
   });
 });

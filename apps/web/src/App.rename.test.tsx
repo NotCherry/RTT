@@ -56,6 +56,7 @@ class MockWebSocket {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  window.localStorage.clear();
   vi.stubGlobal("WebSocket", MockWebSocket);
   vi.mocked(api.loadDemoRobot).mockResolvedValue(robot);
   vi.mocked(api.createSession).mockResolvedValue({

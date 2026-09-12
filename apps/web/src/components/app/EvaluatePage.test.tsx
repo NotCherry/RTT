@@ -85,8 +85,9 @@ describe("EvaluatePage identity", () => {
         });
         const playButton = screen.getByRole("button", { name: "Play rollout" });
         expect(playButton).toBeEnabled();
-        playButton.click();
         expect(onReplay).toHaveBeenCalledTimes(1);
+        playButton.click();
+        expect(onReplay).toHaveBeenCalledTimes(2);
         cleanup();
         renderEvaluate({
             rolloutFrames: [
@@ -97,5 +98,66 @@ describe("EvaluatePage identity", () => {
             onReplay,
         });
         expect(screen.getByRole("button", { name: "Replaying" })).toBeEnabled();
+    });
+
+    it("automatically plays a newly completed neural-network rollout", () => {
+        const onReplay = vi.fn();
+        const view = renderEvaluate({ onReplay });
+
+        view.rerender(
+            <EvaluatePage
+                robot={null}
+                state={null}
+                trained
+                busy={false}
+                demonstrationsLength={1}
+                demonstrationName="Wave"
+                demonstrationKind="gesture"
+                checkpointCount={3}
+                rolloutFrames={[
+                    { timestamp: 0, positions: [0], expected: [0] },
+                    { timestamp: 120, positions: [0.5], expected: [0.4] },
+                    { timestamp: 240, positions: [1], expected: [0.9] },
+                ]}
+                evaluation={{ target: [0.9], positions: [1], error: 0.1 }}
+                replaying={false}
+                onReplay={onReplay}
+                onEvaluate={() => {}}
+            />,
+        );
+
+        expect(onReplay).toHaveBeenCalledTimes(1);
+    });
+
+    it("distinguishes a derived pose preview from the model prediction", () => {
+        renderEvaluate({
+            demonstrationKind: "pose",
+            checkpointCount: 1,
+            rolloutFrames: [
+                {
+                    timestamp: 0,
+                    positions: [0],
+                    expected: [0],
+                    source: "derived-preview",
+                },
+                {
+                    timestamp: 60,
+                    positions: [0.5],
+                    expected: [0.4],
+                    source: "model-prediction",
+                },
+            ],
+            evaluation: { target: [0.4], positions: [0.5], error: 0.1 },
+        });
+
+        expect(
+            screen.getByRole("button", { name: "Play prediction preview" }),
+        ).toBeEnabled();
+        expect(screen.getByRole("status")).toHaveTextContent(
+            "1 derived preview frame · 1 model prediction",
+        );
+        expect(screen.getByText(/Derived preview 1/)).toBeInTheDocument();
+        expect(screen.getByText(/Model prediction 2/)).toBeInTheDocument();
+        expect(screen.queryByText(/Physics:/)).not.toBeInTheDocument();
     });
 });

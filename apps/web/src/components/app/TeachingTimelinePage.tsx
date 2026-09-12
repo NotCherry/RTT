@@ -82,7 +82,8 @@ export function TeachingTimelinePage({
           <H2>Author the robot motion.</H2>
           <IntroCopy>
             Insert full-pose keyframes on a Blender-style timeline, then preview
-            the interpolated gesture.
+            the interpolated gesture. Saved timelines stay in this browser until
+            you delete them from the Archive.
           </IntroCopy>
         </div>
         <StatusPill online={hasSelection || timelineFrames.length > 0}>

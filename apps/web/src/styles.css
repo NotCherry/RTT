@@ -310,6 +310,17 @@
   .demonstrations-panel { @apply px-[18px] pt-[17px]; }
   .demo-toolbar { @apply flex items-center justify-between pb-[13px]; }
   .demo-toolbar strong { @apply mt-[5px] block text-[13px] text-text-100; }
+  .dataset-list { @apply grid gap-2; }
+  .dataset-card { @apply grid min-w-0 items-center gap-2 rounded border border-line-650 bg-ink-850 p-3; grid-template-columns: minmax(0, 1fr) auto; }
+  .dataset-card.selected { @apply border-accent-500 bg-surface-selected; }
+  .dataset-select { @apply min-w-0 cursor-pointer border-0 bg-transparent p-0 text-left; }
+  .dataset-select strong { @apply block overflow-hidden text-ellipsis whitespace-nowrap text-sm text-text-100; }
+  .dataset-select small { @apply mt-1 block font-mono text-[9px] text-text-600; }
+  .dataset-card > input { @apply min-w-0 rounded border border-line-600 bg-ink-800 p-2 font-mono text-[11px] text-text-100 outline-none focus:border-accent-500; }
+  .dataset-card > [data-slot='button'] { grid-column: 2; grid-row: 1 / span 2; }
+  .dataset-members { @apply mt-4 grid gap-2 border-t border-line-650 pt-4; }
+  .dataset-members label { @apply grid items-center gap-2 text-xs text-text-300; grid-template-columns: minmax(0, 1fr) minmax(130px, .8fr); }
+  .dataset-members select { @apply min-w-0 rounded border border-line-600 bg-ink-800 p-2 font-mono text-[10px] text-text-100 outline-none focus:border-accent-500; }
   .demo-list { @apply grid max-h-[474px] gap-[9px] overflow-auto pr-0.5; }
   .demo-card { @apply cursor-pointer rounded-md border border-line-650 bg-ink-850 p-[10px] transition hover:border-border-hover hover:bg-surface-hover; }
   .demo-card.selected { @apply border-accent-500 bg-surface-selected shadow-[inset_3px_0_#4e9cf5]; }

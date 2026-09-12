@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { buildRolloutArgs } from "./evaluate";
+import {
+  buildPosePredictionPreviewFrames,
+  buildRolloutArgs,
+} from "./evaluate";
 import type { Demonstration, TrainingConfig } from "../types";
 
 const config: TrainingConfig = {
@@ -71,5 +74,31 @@ describe("rollout request", () => {
     expect(args.maxSteps).toBe(160);
     expect(args.frames).toHaveLength(2);
     expect(args.frames[1].positions).toEqual([0.5, 0.5]);
+  });
+});
+
+describe("pose evaluation replay", () => {
+  it("turns a static prediction into a visible transition", () => {
+    const frames = buildPosePredictionPreviewFrames(
+      [0, 0],
+      [0.6, -0.4],
+      [0.5, -0.5],
+    );
+
+    expect(frames).toHaveLength(13);
+    expect(frames[0]).toMatchObject({
+      timestamp: 0,
+      positions: [0, 0],
+      expected: [0, 0],
+      phase: "approach",
+      source: "derived-preview",
+    });
+    expect(frames.at(-1)).toMatchObject({
+      timestamp: 720,
+      positions: [0.6, -0.4],
+      expected: [0.5, -0.5],
+      phase: "gesture",
+      source: "model-prediction",
+    });
   });
 });

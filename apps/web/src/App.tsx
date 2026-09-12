@@ -29,7 +29,15 @@ import {
   timestampToFrame,
   upsertFrameAtFrame,
 } from "./domain/timeline";
-import { buildRolloutArgs } from "./domain/evaluate";
+import {
+  buildPosePredictionPreviewFrames,
+  buildRolloutArgs,
+} from "./domain/evaluate";
+import {
+  loadBrowserArchive,
+  saveBrowserArchive,
+  type BrowserArchive,
+} from "./domain/browserArchive";
 import {
   Button,
   Panel,
@@ -362,13 +370,40 @@ function Workbench() {
       socketRef.current.send(JSON.stringify(payload));
   }
 
-  function persistDatasets(next: Dataset[]) {
-    setDatasets(next);
-    if (!sessionId) return;
-    void saveDatasets(sessionId, next).catch((cause) => {
+  function persistBrowserSnapshot(
+    archive: BrowserArchive,
+    robotId = robot?.id,
+  ) {
+    if (!robotId) return;
+    if (!saveBrowserArchive(window.localStorage, robotId, archive)) {
       setError(
-        cause instanceof Error ? cause.message : "Unable to save datasets.",
+        "Browser storage is unavailable, so archive changes may not survive a reload.",
       );
+    }
+  }
+
+  function persistArchive(archive: BrowserArchive) {
+    setDemonstrations(archive.demonstrations);
+    setDatasets(archive.datasets);
+    setActiveDatasetId(archive.activeDatasetId);
+    persistBrowserSnapshot(archive);
+    if (!sessionId) return;
+    void Promise.all([
+      saveDemonstrations(sessionId, archive.demonstrations),
+      saveDatasets(sessionId, archive.datasets),
+    ]).catch((cause) => {
+      setError(cause instanceof Error ? cause.message : "Unable to save archive.");
+    });
+  }
+
+  function persistDatasets(
+    nextDatasets: Dataset[],
+    nextActiveDatasetId = activeDatasetId,
+  ) {
+    persistArchive({
+      demonstrations,
+      datasets: nextDatasets,
+      activeDatasetId: nextActiveDatasetId,
     });
   }
 
@@ -394,21 +429,11 @@ function Workbench() {
         updated_at: new Date().toISOString(),
       };
     });
-    if (!sessionId) {
-      if (nextDatasets.length) setDatasets(nextDatasets);
-      return;
-    }
-    void saveDemonstrations(sessionId, next)
-      .then(() => {
-        if (nextDatasets.length) persistDatasets(nextDatasets);
-      })
-      .catch((cause) => {
-        setError(
-          cause instanceof Error
-            ? cause.message
-            : "Unable to save demonstrations.",
-        );
-      });
+    persistArchive({
+      demonstrations: next,
+      datasets: nextDatasets,
+      activeDatasetId,
+    });
   }
 
   function moveDemonstration(demonstrationId: string, datasetId: string) {
@@ -425,22 +450,53 @@ function Workbench() {
           : dataset.demonstration_ids.filter((id) => id !== demonstrationId),
       updated_at: new Date().toISOString(),
     }));
-    setDemonstrations(nextDemonstrations);
-    if (sessionId) {
-      void saveDemonstrations(sessionId, nextDemonstrations)
-        .then(() => persistDatasets(nextDatasets))
-        .catch((cause) => {
-          setError(
-            cause instanceof Error
-              ? cause.message
-              : "Unable to move demonstration.",
-          );
-        });
-    } else {
-      persistDatasets(nextDatasets);
-    }
-    setActiveDatasetId(datasetId);
+    persistArchive({
+      demonstrations: nextDemonstrations,
+      datasets: nextDatasets,
+      activeDatasetId: datasetId,
+    });
     setMessage("Demonstration moved to the selected dataset.");
+  }
+
+  function deleteDataset(datasetId: string) {
+    const dataset = datasets.find((item) => item.id === datasetId);
+    if (
+      !dataset ||
+      !window.confirm(
+        `Delete dataset “${dataset.name}”? Demonstrations will remain in the archive.`,
+      )
+    )
+      return;
+    const nextDatasets = datasets.filter((item) => item.id !== datasetId);
+    const nextDemonstrations = demonstrations.map((demonstration) =>
+      demonstration.dataset_id === datasetId
+        ? { ...demonstration, dataset_id: undefined }
+        : demonstration,
+    );
+    const nextActiveDatasetId =
+      activeDatasetId === datasetId
+        ? (nextDatasets[0]?.id ?? null)
+        : activeDatasetId;
+    persistArchive({
+      demonstrations: nextDemonstrations,
+      datasets: nextDatasets,
+      activeDatasetId: nextActiveDatasetId,
+    });
+    setMessage(
+      `Deleted ${dataset.name}. Its demonstrations remain in the archive.`,
+    );
+  }
+
+  function selectDataset(datasetId: string) {
+    const dataset = datasets.find((item) => item.id === datasetId);
+    if (!dataset) return;
+    setActiveDatasetId(datasetId);
+    persistBrowserSnapshot({
+      demonstrations,
+      datasets,
+      activeDatasetId: datasetId,
+    });
+    setMessage(`Selected ${dataset.name}.`);
   }
 
   function applyPositions(next: number[]) {
@@ -747,8 +803,14 @@ function Workbench() {
       applyPreviewPositions([...frame.positions]);
       frameIndex += 1;
       if (frameIndex >= frames.length) {
+        replayTimerRef.current = null;
         setReplayingDemoId(null);
-        clearPreview();
+        setState((current) => ({
+          positions: [...frame.positions],
+          training: current?.training ?? false,
+        }));
+        setPreviewPositions(null);
+        send({ type: "set_positions", positions: frame.positions });
         setMessage(`Finished replaying ${label}.`);
         return;
       }
@@ -826,19 +888,43 @@ function Workbench() {
       setSessionId(session.session_id);
       setState(session.state);
       stopReplay();
-      setDemonstrations([]);
-      const datasetId = `dataset-${Date.now()}`;
+      const savedArchive = loadBrowserArchive(window.localStorage, nextRobot.id);
       const now = new Date().toISOString();
-      setDatasets([
+      const defaultDataset: Dataset = {
+        id: `dataset-${Date.now()}`,
+        name: "Untitled dataset",
+        demonstration_ids: [],
+        created_at: now,
+        updated_at: now,
+      };
+      const restoredDemonstrations = savedArchive?.demonstrations ?? [];
+      const restoredDatasets = savedArchive?.datasets ?? [defaultDataset];
+      const restoredActiveDatasetId = restoredDatasets.some(
+        (dataset) => dataset.id === savedArchive?.activeDatasetId,
+      )
+        ? (savedArchive?.activeDatasetId ?? null)
+        : (restoredDatasets[0]?.id ?? null);
+      setDemonstrations(restoredDemonstrations);
+      setDatasets(restoredDatasets);
+      setActiveDatasetId(restoredActiveDatasetId);
+      persistBrowserSnapshot(
         {
-          id: datasetId,
-          name: "Untitled dataset",
-          demonstration_ids: [],
-          created_at: now,
-          updated_at: now,
+          demonstrations: restoredDemonstrations,
+          datasets: restoredDatasets,
+          activeDatasetId: restoredActiveDatasetId,
         },
-      ]);
-      setActiveDatasetId(datasetId);
+        nextRobot.id,
+      );
+      void Promise.all([
+        saveDemonstrations(session.session_id, restoredDemonstrations),
+        saveDatasets(session.session_id, restoredDatasets),
+      ]).catch((cause) => {
+        setError(
+          cause instanceof Error
+            ? cause.message
+            : "Unable to restore the browser archive to this session.",
+        );
+      });
       setSelectedDemoId(null);
       setSelectedFrameIndex(0);
       setEditingDemoId(null);
@@ -849,7 +935,9 @@ function Workbench() {
       setEvaluation(null);
       setTrained(false);
       setMessage(
-        `${nextRobot.name} is ready. Move the joints to create a demonstration.`,
+        savedArchive
+          ? `${nextRobot.name} is ready. Restored ${restoredDemonstrations.length} browser-saved demonstration${restoredDemonstrations.length === 1 ? "" : "s"}.`
+          : `${nextRobot.name} is ready. Move the joints to create a demonstration.`,
       );
     } catch (cause) {
       setError(
@@ -1155,13 +1243,18 @@ function Workbench() {
           demonstration.target,
           demonstration.current,
         );
-        setRolloutFrames([]);
+        const poseReplayFrames = buildPosePredictionPreviewFrames(
+          demonstration.current,
+          result.positions,
+          result.target,
+        );
+        setRolloutFrames(poseReplayFrames);
         setRolloutDiagnostics(null);
         setEvaluation(result);
-        applyPositions(result.positions);
+        applyPositions([...poseReplayFrames[0].positions]);
         setActiveTab("testing");
         setMessage(
-          `Evaluated ${demonstration.name}. Maximum joint error: ${result.error.toFixed(4)} native units.`,
+          `Evaluated ${demonstration.name}. Replaying the predicted pose transition; maximum joint error: ${result.error.toFixed(4)} native units.`,
         );
       }
     } catch (cause) {
@@ -1255,7 +1348,7 @@ function Workbench() {
           demonstrations={demonstrations}
           datasets={datasets}
           activeDatasetId={activeDatasetId}
-          onSelectDataset={setActiveDatasetId}
+          onSelectDataset={selectDataset}
           onCreateDataset={() => {
             const now = new Date().toISOString();
             const dataset = {
@@ -1265,8 +1358,7 @@ function Workbench() {
               created_at: now,
               updated_at: now,
             };
-            persistDatasets([...datasets, dataset]);
-            setActiveDatasetId(dataset.id);
+            persistDatasets([...datasets, dataset], dataset.id);
           }}
           onRenameDataset={(datasetId, name) =>
             persistDatasets(
@@ -1277,9 +1369,11 @@ function Workbench() {
               ),
             )
           }
+          onDeleteDataset={deleteDataset}
           onMoveDemonstration={moveDemonstration}
           onPreview={replayDemonstration}
           onSelectDemo={setSelectedDemoId}
+          onDeleteDemo={deleteDemonstration}
         />
       );
     }
@@ -1302,7 +1396,7 @@ function Workbench() {
             timelineDraft,
             timelineSourceFrames,
           )}
-          onDatasetChange={setActiveDatasetId}
+          onDatasetChange={selectDataset}
           onDemoChange={setSelectedDemoId}
           onConfigChange={updateConfig}
           onTrain={startTraining}
@@ -2007,13 +2101,7 @@ function Workbench() {
               datasets={datasets}
               activeDatasetId={activeDatasetId}
               demonstrations={demonstrations}
-              onSelect={(datasetId) => {
-                setActiveDatasetId(datasetId);
-                const dataset = datasets.find((item) => item.id === datasetId);
-                if (dataset) {
-                  setMessage(`Selected ${dataset.name}.`);
-                }
-              }}
+              onSelect={selectDataset}
               onCreate={() => {
                 const now = new Date().toISOString();
                 const dataset = {
@@ -2023,8 +2111,7 @@ function Workbench() {
                   created_at: now,
                   updated_at: now,
                 };
-                persistDatasets([...datasets, dataset]);
-                setActiveDatasetId(dataset.id);
+                persistDatasets([...datasets, dataset], dataset.id);
               }}
               onRename={(datasetId, name) =>
                 persistDatasets(
@@ -2039,6 +2126,7 @@ function Workbench() {
                   ),
                 )
               }
+              onDelete={deleteDataset}
               onMoveDemonstration={moveDemonstration}
             />
           ) : (
@@ -2141,7 +2229,11 @@ function Workbench() {
                         title={`Multi-joint steps: ${rolloutDiagnostics.coordination.multi_joint_steps}`}
                       >
                         Simultaneity{" "}
-                        <b>{rolloutDiagnostics.coordination.simultaneity.toFixed(2)}</b>
+                        <b>
+                          {rolloutDiagnostics.coordination.simultaneity.toFixed(
+                            2,
+                          )}
+                        </b>
                         {rolloutDiagnostics.coordination.sequential
                           ? " — SEQUENTIAL"
                           : ""}
