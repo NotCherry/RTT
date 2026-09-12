@@ -4,6 +4,8 @@ import type {
   TrainingConfig,
 } from "../types";
 
+const DEFAULT_ROLLOUT_STEPS = 160;
+
 export type RolloutArgs = {
   frames: DemonstrationFrame[];
   current: number[];
@@ -45,7 +47,10 @@ export function buildRolloutArgs(
     frames: framesWithInterpolation(demonstration),
     current: demonstration.current,
     timestepMs: config.timestep_ms,
-    maxSteps: config.rollout_steps,
+    // Keep the public API contract positive. A stale config saved with the
+    // former 0=auto sentinel must not make evaluation fail with 422.
+    maxSteps:
+      config.rollout_steps > 0 ? config.rollout_steps : DEFAULT_ROLLOUT_STEPS,
     approachMode: "scripted",
     timelineFps: demonstration.timeline_fps ?? null,
   };

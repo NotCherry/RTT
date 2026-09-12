@@ -43,4 +43,33 @@ describe("rollout request", () => {
   it("falls back to null fps when the demonstration has none", () => {
     expect(buildRolloutArgs(gesture(), config).timelineFps).toBeNull();
   });
+
+  it("keeps legacy zero budgets positive and prefers keyframes for playback", () => {
+    const args = buildRolloutArgs(
+      {
+        ...gesture(60),
+        frames: [],
+        keyframes: [
+          {
+            id: "k0",
+            frame: 0,
+            timestamp: 0,
+            positions: [0, 0],
+            interpolation: "linear",
+          },
+          {
+            id: "k1",
+            frame: 30,
+            timestamp: 500,
+            positions: [0.5, 0.5],
+            interpolation: "linear",
+          },
+        ],
+      },
+      { ...config, rollout_steps: 0 },
+    );
+    expect(args.maxSteps).toBe(160);
+    expect(args.frames).toHaveLength(2);
+    expect(args.frames[1].positions).toEqual([0.5, 0.5]);
+  });
 });

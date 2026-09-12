@@ -66,7 +66,7 @@ const initialConfig: TrainingConfig = {
   timestep_ms: 120,
   random_starts: 4,
   random_seed: 7,
-  rollout_steps: 0,
+  rollout_steps: 160,
   physics: true,
 };
 
@@ -767,7 +767,9 @@ function Workbench() {
 
   function replayDemonstration(demonstration: Demonstration) {
     stopReplay();
-    const ordered = normalizeFrames(demonstration.frames);
+    const ordered = normalizeFrames(
+      buildRolloutArgs(demonstration, config).frames,
+    );
     if (ordered.length < 2) {
       selectDemonstration(demonstration);
       setMessage(`${demonstration.name} is a static pose.`);
@@ -1731,10 +1733,10 @@ function Workbench() {
                   />
                 </label>
                 <label>
-                  <span>Rollout steps (0 = auto)</span>
+                  <span>Rollout steps</span>
                   <input
                     type="number"
-                    min="0"
+                    min="1"
                     max="2000"
                     value={config.rollout_steps}
                     onChange={(event) =>
@@ -2139,11 +2141,7 @@ function Workbench() {
                         title={`Multi-joint steps: ${rolloutDiagnostics.coordination.multi_joint_steps}`}
                       >
                         Simultaneity{" "}
-                        <b>
-                          {rolloutDiagnostics.coordination.simultaneity.toFixed(
-                            2,
-                          )}
-                        </b>
+                        <b>{rolloutDiagnostics.coordination.simultaneity.toFixed(2)}</b>
                         {rolloutDiagnostics.coordination.sequential
                           ? " — SEQUENTIAL"
                           : ""}

@@ -415,7 +415,7 @@ class RolloutRequest(BaseModel):
     frames: list[DemonstrationFrame]
     current: list[float] | None = None
     timestep_ms: int = Field(120, ge=10, le=2000)
-    max_steps: int = Field(160, ge=0, le=2000, description="Step budget; 0 = auto-size to the authored gesture (approach + grid steps, capped at 2000).")
+    max_steps: int = Field(160, ge=1, le=2000)
     approach_mode: Literal["scripted", "learned"] = "scripted"
     timeline_fps: int | None = Field(default=None, ge=1, le=1000)
     physics: bool = Field(True, description="When true, rollout servos through PyBullet with substeps; false uses kinematic assign.")
@@ -1359,8 +1359,6 @@ def analyze_rollout_coordination(
 
 GESTURE_MIN_EPOCHS = 1200
 CHECKPOINT_MISS_MAE = 0.12
-# Hard ceiling for rollout step budgets, including auto-sized budgets.
-MAX_ROLLOUT_STEP_CAP = 2000
 
 
 def _effective_training_epochs(demonstrations: list[Demonstration], epochs: int) -> int:
@@ -1795,19 +1793,6 @@ def rollout(session_id: str, request: RolloutRequest) -> dict[str, Any]:
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
     use_physics = bool(request.physics) and session.body is not None
-    # Timing grid first: the auto budget needs grid_ms before the approach runs.
-    try:
-        grid_ms = 1000.0 / request.timeline_fps if request.timeline_fps else float(request.timestep_ms)
-        step_ms = int(request.timestep_ms)
-        if step_ms < 1 or grid_ms < 1:
-            raise ValueError("timing must be positive")
-    except (TypeError, ValueError, ZeroDivisionError) as exc:
-        raise HTTPException(422, f"Invalid timing parameter: {exc}") from exc
-    try:
-        auto_budget = int(request.max_steps) <= 0
-        approach_cap = MAX_ROLLOUT_STEP_CAP if auto_budget else int(request.max_steps)
-    except (TypeError, ValueError) as exc:
-        raise HTTPException(422, f"Invalid max_steps budget: {exc}") from exc
     try:
         if use_physics:
             try:
@@ -1824,7 +1809,7 @@ def rollout(session_id: str, request: RolloutRequest) -> dict[str, Any]:
         if any(abs(a - b) > 1e-9 for a, b in zip(approach_start, ordered[0].positions)):
             if request.approach_mode == "scripted":
                 for waypoint in build_approach_plan(approach_start, list(ordered[0].positions), session.joints, request.timestep_ms):
-                    if total_steps >= approach_cap:
+                    if total_steps >= request.max_steps:
                         break
                     current, entry_error, entry_clipped = _resolve_rollout_step(session, list(waypoint), request.timestep_ms, use_physics)
                     max_tracking_error = max(max_tracking_error, entry_error)
@@ -1837,7 +1822,7 @@ def rollout(session_id: str, request: RolloutRequest) -> dict[str, Any]:
                 expected_size = model_expected_size(session.model, joint_count)
                 previous_delta = [0.0] * joint_count
                 for approach_index in range(approach_steps):
-                    if total_steps >= approach_cap:
+                    if total_steps >= request.max_steps:
                         break
                     progress = min(1.0, (approach_index + 1) / approach_steps)
                     current_normalized = normalized(current, session.joints)
@@ -1854,22 +1839,19 @@ def rollout(session_id: str, request: RolloutRequest) -> dict[str, Any]:
                     expected = _lerp_positions(approach_start, ordered[0].positions, progress)
                     result.append({"timestamp": current_timestamp, "positions": list(current), "expected": expected, "phase": "approach", "tracking_error": entry_error, "clipped": entry_clipped})
                     total_steps += 1
+        try:
+            grid_ms = 1000.0 / request.timeline_fps if request.timeline_fps else float(request.timestep_ms)
+            step_ms = int(request.timestep_ms)
+            if step_ms < 1 or grid_ms < 1:
+                raise ValueError("timing must be positive")
+        except (TypeError, ValueError, ZeroDivisionError) as exc:
+            raise HTTPException(422, f"Invalid timing parameter: {exc}") from exc
         # Canonical training step is grid when timeline_fps present
         canonical_step = int(round(grid_ms)) if request.timeline_fps else step_ms
         canonical_step = max(1, min(canonical_step, 2000))
         scale = grid_ms / canonical_step if request.timeline_fps else 1.0
         segment_ms_list = [ordered[i].timestamp - ordered[i-1].timestamp for i in range(1, len(ordered))]
-        # Auto budget: cover the full authored gesture (approach + every grid
-        # step) instead of decimating interior checkpoints into sparse jumps.
-        if auto_budget:
-            raw_total = sum(max(1, math.ceil(max(float(seg), grid_ms) / grid_ms)) for seg in segment_ms_list)
-            effective_max_steps = min(total_steps + int(raw_total), MAX_ROLLOUT_STEP_CAP)
-        else:
-            try:
-                effective_max_steps = int(request.max_steps)
-            except (TypeError, ValueError) as exc:
-                raise HTTPException(422, f"Invalid max_steps budget: {exc}") from exc
-        density = compute_rollout_density(segment_ms_list, grid_ms, effective_max_steps, total_steps)
+        density = compute_rollout_density(segment_ms_list, grid_ms, request.max_steps, total_steps)
         raw_steps = density["scaled_steps"]
         # Keep raw for diagnostics, scaled is the budget-aware steps
         raw_steps_for_diag = density["raw_steps"]
@@ -1888,7 +1870,7 @@ def rollout(session_id: str, request: RolloutRequest) -> dict[str, Any]:
             }
             for idx in range(len(segment_ms_list))
         ]
-        warning = check_budget_exhaustion(int(density["remaining"]), effective_max_steps, float(density_ratio))
+        warning = check_budget_exhaustion(int(density["remaining"]), int(request.max_steps), float(density_ratio))
         warnings: list[dict[str, str]] = [warning] if warning else []
         # Physics feasibility: authored timing that exceeds joint velocity
         # limits cannot be hit on time by any model — say so instead of
@@ -1918,7 +1900,7 @@ def rollout(session_id: str, request: RolloutRequest) -> dict[str, Any]:
             except Exception:
                 is_step = False
             for step_index in range(segment_steps):
-                if total_steps >= effective_max_steps:
+                if total_steps >= request.max_steps:
                     break
                 progress = min(1.0, (step_index + 1) / segment_steps)
                 current_normalized = normalized(current, session.joints)
@@ -1943,7 +1925,7 @@ def rollout(session_id: str, request: RolloutRequest) -> dict[str, Any]:
                     )
                 result.append({"timestamp": current_timestamp, "positions": list(current), "expected": expected, "phase": "gesture", "tracking_error": entry_error, "clipped": entry_clipped})
                 total_steps += 1
-            if total_steps >= effective_max_steps:
+            if total_steps >= request.max_steps:
                 break
         if session.body is None:
             collisions = 0
