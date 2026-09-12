@@ -19,11 +19,15 @@ export type RolloutArgs = {
  * gesture density follows the authored timeline fps so the predicted
  * trajectory covers the motion faithfully (timestep stays as fallback).
  */
-function framesWithInterpolation(demonstration: Demonstration): DemonstrationFrame[] {
+function framesWithInterpolation(
+  demonstration: Demonstration,
+): DemonstrationFrame[] {
   // Prefer keyframes so step vs linear interpolation is preserved through rollout.
   // Mirrors backend authored_frames() preference.
   if (demonstration.keyframes && demonstration.keyframes.length) {
-    const ordered = [...demonstration.keyframes].sort((a, b) => a.frame - b.frame);
+    const ordered = [...demonstration.keyframes].sort(
+      (a, b) => a.frame - b.frame,
+    );
     return ordered.map((k) => ({
       timestamp: k.timestamp,
       positions: [...k.positions],
