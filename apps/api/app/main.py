@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import io
 import json
 import math
 import threading
+import time
 import uuid
 import zipfile
 from pathlib import Path
@@ -18,6 +20,7 @@ from fastapi import FastAPI, File, HTTPException, UploadFile, WebSocket, WebSock
 from fastapi.middleware.cors import CORSMiddleware  # type: ignore[import-not-found]
 from fastapi.responses import StreamingResponse  # type: ignore[import-not-found]
 from pydantic import BaseModel, Field  # type: ignore[import-not-found]
+from .session_runtime import SessionEvents, serialized
 
 DATA_DIR = Path(__file__).resolve().parents[1] / "data"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -25,6 +28,7 @@ MAX_UPLOAD_BYTES = 5 * 1024 * 1024
 MAX_JOINTS = 32
 MAX_DEMONSTRATIONS = 2000
 MAX_EPOCHS = 5000
+SESSION_IDLE_SECONDS = 30 * 60
 
 app = FastAPI(title="Robot Learning Workbench", version="0.1.0")
 app.add_middleware(
@@ -37,6 +41,16 @@ app.add_middleware(
 
 ROBOTS: dict[str, dict[str, Any]] = {}
 SESSIONS: dict[str, "SimulationSession"] = {}
+
+
+def active_session(session_id: str) -> "SimulationSession | None":
+    session = SESSIONS.get(session_id)
+    if session is not None:
+        with session.lock:
+            if session.closed:
+                return None
+            session.last_activity = time.monotonic()
+    return session
 
 DEMO_URDF = """<?xml version="1.0"?>
 <robot name="slider-arm">
@@ -240,6 +254,9 @@ def parse_urdf(raw: bytes, filename: str, stored_path: Path) -> dict[str, Any]:
                         raise ValueError(f"Link '{name}' has non-finite inertia.")
                     if ixx <= 0 or iyy <= 0 or izz <= 0:
                         raise ValueError(f"Link '{name}' has non-positive principal inertia (ixx,iyy,izz must be >0).")
+                    tensor = np.array([[ixx, ixy, ixz], [ixy, iyy, iyz], [ixz, iyz, izz]])
+                    if np.any(np.linalg.eigvalsh(tensor) <= 0):
+                        raise ValueError(f"Link '{name}' inertia must be positive-definite.")
                     inertia = {"ixx": ixx, "iyy": iyy, "izz": izz, "ixy": ixy, "ixz": ixz, "iyz": iyz}
             else:
                 base_geom = collisions[0]["geometry"] if collisions else (visuals[0]["geometry"] if visuals else {"type": "box", "size": [0.2, 0.2, 0.2]})
@@ -426,10 +443,14 @@ class RolloutRequest(BaseModel):
 class SimulationSession:
     def __init__(self, session_id: str, robot: dict[str, Any], gravity: list[float] | None = None, use_fixed_base: bool | None = None):
         self.id = session_id
+        self.last_activity = time.monotonic()
+        self.closed = False
         self.robot = robot
-        self.lock = threading.Lock()
-        self.events: list[dict[str, Any]] = []
+        self.lock = threading.RLock()
+        self.events = SessionEvents()
         self.training = False
+        self.training_thread: threading.Thread | None = None
+        self.cancel_training = threading.Event()
         self.model: torch.nn.Module | None = None
         self.model_config: dict[str, Any] | None = None
         self.model_mode = "temporal"
@@ -517,6 +538,7 @@ class SimulationSession:
         for position, index in zip(self.positions, self.pybullet_indices):
             p.resetJointState(self.body, index, position, physicsClientId=self.client)
 
+    @serialized
     def set_positions(self, values: list[float]) -> None:
         if len(values) != len(self.joints):
             raise ValueError("The number of joint positions does not match the robot.")
@@ -526,6 +548,7 @@ class SimulationSession:
             raise ValueError("Joint positions must be numeric.") from exc
         self._apply_positions()
 
+    @serialized
     def servo_to_positions(self, targets: list[float], timestep_ms: int) -> dict[str, Any]:
         """Physics-realistic servo: POSITION_CONTROL with effort/velocity limits + substeps."""
         if self.body is None or not self.pybullet_indices:
@@ -546,8 +569,8 @@ class SimulationSession:
                     maxVelocity=float(joint.get("velocity", 2.0)),
                     physicsClientId=self.client,
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                raise RuntimeError("Unable to command the physics joint.") from exc
         try:
             substeps = max(1, int(round(float(timestep_ms) / 1000.0 / PHYSICS_TIMESTEP))) if timestep_ms else 1
         except (TypeError, ValueError, ZeroDivisionError):
@@ -559,14 +582,15 @@ class SimulationSession:
         for index, joint in zip(self.pybullet_indices, self.joints):
             try:
                 achieved.append(float(p.getJointState(self.body, index, physicsClientId=self.client)[0]))
-            except Exception:
-                achieved.append(clamped[len(achieved)])
+            except Exception as exc:
+                raise RuntimeError("Unable to read the achieved physics position.") from exc
         self.positions = achieved
         errors = [abs(a - t) for a, t in zip(achieved, clamped)]
         tracking_error = max(errors) if errors else 0.0
         clipped = sum(1 for e in errors if e > 1e-4)
         return {"achieved": achieved, "tracking_error": tracking_error, "clipped": clipped}
 
+    @serialized
     def set_gravity(self, gravity: list[float]) -> None:
         try:
             gx, gy, gz = float(gravity[0]), float(gravity[1]), float(gravity[2])
@@ -575,6 +599,7 @@ class SimulationSession:
         self.gravity = [gx, gy, gz]
         p.setGravity(gx, gy, gz, physicsClientId=self.client)
 
+    @serialized
     def step(self) -> None:
         if self.body is not None:
             p.stepSimulation(physicsClientId=self.client)
@@ -587,12 +612,41 @@ class SimulationSession:
             if values:
                 self.positions = values
 
+    @serialized
     def state(self) -> dict[str, Any]:
-        return {"type": "state", "positions": self.positions, "training": self.training}
+        self.last_activity = time.monotonic()
+        return {"type": "state", "positions": list(self.positions), "training": self.training}
 
+    @serialized(allow_closed=True)
     def close(self) -> None:
+        if self.closed:
+            return
+        self.closed = True
         if p.isConnected(self.client):
             p.disconnect(self.client)
+
+    @serialized
+    def begin_training(self) -> None:
+        self.check_training_cancelled()
+        if self.training:
+            raise ValueError("Training is already running.")
+        self.training = True
+        self.last_activity = time.monotonic()
+
+    def check_training_cancelled(self) -> None:
+        if self.cancel_training.is_set():
+            raise ValueError("Training cancelled because the session is shutting down.")
+
+    @serialized
+    def start_training(self, request: TrainRequest) -> None:
+        self.begin_training()
+        self.training_thread = threading.Thread(target=train_session, args=(self, request), daemon=True)
+        try:
+            self.training_thread.start()
+        except Exception:
+            self.training = False
+            self.training_thread = None
+            raise
 
 def _resolve_rollout_step(session: "SimulationSession", predicted: list[float], timestep_ms: int, use_physics: bool) -> tuple[list[float], float, int]:
     """Apply predicted positions via physics servo or kinematic assign; returns (achieved, tracking_error, clipped)."""
@@ -603,24 +657,12 @@ def _resolve_rollout_step(session: "SimulationSession", predicted: list[float], 
             step_ms = 0
         try:
             servo = session.servo_to_positions(list(predicted), step_ms)
-            try:
-                achieved = list(servo["achieved"])
-            except Exception:
-                achieved = list(predicted)
-            try:
-                tracking_error = float(servo["tracking_error"])
-            except Exception:
-                tracking_error = 0.0
-            try:
-                clipped = int(servo["clipped"])
-            except Exception:
-                clipped = 0
+            achieved = list(servo["achieved"])
+            tracking_error = float(servo["tracking_error"])
+            clipped = int(servo["clipped"])
             return achieved, tracking_error, clipped
-        except Exception:
-            try:
-                return list(predicted), 0.0, 0
-            except Exception:
-                return [], 0.0, 0
+        except Exception as exc:
+            raise HTTPException(503, "Physics simulation failed; no achieved trajectory is available.") from exc
     try:
         return list(predicted), 0.0, 0
     except Exception:
@@ -956,15 +998,22 @@ def build_physics_feasible_samples(
     timestep_ms: int,
     session: "SimulationSession",
 ) -> list[dict[str, Any]]:
+    with session.lock:
+        return _build_physics_feasible_samples(samples, joints, timestep_ms, session)
+
+
+def _build_physics_feasible_samples(samples, joints, timestep_ms, session):
     """Convert kinematic deltas to physics-feasible deltas via POSITION_CONTROL servo."""
     if session.body is None or not session.pybullet_indices:
         return samples
     saved = list(session.positions)
     feasible: list[dict[str, Any]] = []
+    fallbacks = 0
     joint_count = len(joints)
     prev_corrected: list[float] | None = None
     try:
         for sample in samples:
+            session.check_training_cancelled()
             current_norm = sample["current"]
             # Update stale previous_delta to physics-corrected previous step
             if prev_corrected is not None:
@@ -992,6 +1041,7 @@ def build_physics_feasible_samples(
                 feasible.append(new_sample)
                 prev_corrected = list(corrected_delta)
             except Exception:
+                fallbacks += 1
                 feasible.append(sample)
                 try:
                     prev_corrected = list(sample["delta"])
@@ -1002,6 +1052,11 @@ def build_physics_feasible_samples(
             session.set_positions(saved)
         except Exception:
             pass
+    if fallbacks:
+        session.events.append({
+            "type": "warning",
+            "message": f"Physics sampling failed for {fallbacks} of {len(samples)} samples; those samples use kinematic targets.",
+        })
     return feasible
 
 def build_incremental_samples(
@@ -1432,6 +1487,7 @@ def probe_gesture_checkpoint_errors(
 
 def train_session(session: SimulationSession, request: TrainRequest) -> None:
     try:
+        session.check_training_cancelled()
         if not request.demonstrations:
             raise ValueError("Capture at least one demonstration before training.")
         joint_count = len(session.joints)
@@ -1472,8 +1528,8 @@ def train_session(session: SimulationSession, request: TrainRequest) -> None:
                             demo_grid = build_incremental_samples([demo], session.joints, eff_step, request.config.random_starts, request.config.random_seed)
                             try:
                                 demo_grid = build_physics_feasible_samples(demo_grid, session.joints, eff_step, session)
-                            except Exception:
-                                pass
+                            except Exception as exc:
+                                session.events.append({"type": "warning", "message": f"Physics grid sampling failed for '{demo.name}' at {eff_step} ms; using kinematic targets: {exc}"})
                             grid_phys.extend(demo_grid)
                 # Use base+grid_phys to avoid double-counting grid without physics
                 samples = base_samples + grid_phys
@@ -1530,6 +1586,7 @@ def train_session(session: SimulationSession, request: TrainRequest) -> None:
         loss = torch.tensor(float("nan"))
         last_diagnostics: dict[str, float] = {"direction_alignment": 1.0, "simultaneity": 1.0, "multi_joint_fraction": 0.0}
         for epoch in range(steps):
+            session.check_training_cancelled()
             prediction = model(x)
             # Weighted regression: samples where several joints must move
             # together count more, so the sequential shortcut (one joint,
@@ -1583,10 +1640,10 @@ def train_session(session: SimulationSession, request: TrainRequest) -> None:
                 probe_entry["missed"] = missed
             checkpoint_probes.append(probe_entry)
         with session.lock:
+            session.check_training_cancelled()
             session.model = model.eval()
             session.model_config = request.config.model_dump()
             session.model_mode = "temporal"
-            session.demonstrations = [item.model_dump() for item in request.demonstrations]
             try:
                 final_loss = float(loss.item())
             except Exception:
@@ -1610,6 +1667,8 @@ def train_session(session: SimulationSession, request: TrainRequest) -> None:
         session.events.append({"type": "error", "message": str(exc)})
     finally:
         session.training = False
+        if session.cancel_training.is_set():
+            session.close()
 
 
 @app.get("/api/health")
@@ -1633,7 +1692,7 @@ async def upload_robot(file: UploadFile = File(...)) -> dict[str, Any]:
     raw = await file.read()
     if len(raw) > MAX_UPLOAD_BYTES:
         raise HTTPException(413, f"URDF upload exceeds the {MAX_UPLOAD_BYTES // 1024 // 1024} MB limit.")
-    robot_id = uuid.uuid4().hex
+    robot_id = hashlib.sha256(raw).hexdigest()
     path = robot_file_path(robot_id)
     try:
         robot = parse_urdf(raw, file.filename or "robot.urdf", path)
@@ -1677,7 +1736,7 @@ def create_session(request: SessionRequest) -> dict[str, Any]:
 
 @app.put("/api/sessions/{session_id}/demonstrations")
 def save_demonstrations(session_id: str, request: DemonstrationsRequest) -> dict[str, Any]:
-    session = SESSIONS.get(session_id)
+    session = active_session(session_id)
     if session is None:
         raise HTTPException(404, "Session not found.")
     if len(request.demonstrations) > MAX_DEMONSTRATIONS:
@@ -1707,9 +1766,42 @@ def save_demonstrations(session_id: str, request: DemonstrationsRequest) -> dict
     return {"status": "saved", "demonstrations": len(session.demonstrations)}
 
 
+@app.delete("/api/sessions/{session_id}")
+def delete_session(session_id: str) -> dict[str, str]:
+    session = active_session(session_id)
+    if session is None:
+        return {"status": "closed"}
+    with session.lock:
+        if session.training:
+            raise HTTPException(409, "Cannot close a session while training is running.")
+        SESSIONS.pop(session_id, None)
+        session.close()
+    return {"status": "closed"}
+
+
+def expire_idle_sessions(now: float) -> None:
+    for session_id, session in list(SESSIONS.items()):
+        if not session.training and now - session.last_activity >= SESSION_IDLE_SECONDS:
+            with session.lock:
+                if not session.training and now - session.last_activity >= SESSION_IDLE_SECONDS:
+                    SESSIONS.pop(session_id, None)
+                    session.close()
+
+
+async def reap_idle_sessions() -> None:
+    while True:
+        await asyncio.sleep(60)
+        await asyncio.to_thread(expire_idle_sessions, time.monotonic())
+
+
+@app.on_event("startup")
+async def start_session_cleanup() -> None:
+    app.state.session_cleanup = asyncio.create_task(reap_idle_sessions())
+
+
 @app.put("/api/sessions/{session_id}/datasets")
 def save_datasets(session_id: str, request: DatasetsRequest) -> dict[str, Any]:
-    session = SESSIONS.get(session_id)
+    session = active_session(session_id)
     if session is None:
         raise HTTPException(404, "Session not found.")
     if len(request.datasets) > MAX_DEMONSTRATIONS:
@@ -1727,21 +1819,21 @@ def save_datasets(session_id: str, request: DatasetsRequest) -> dict[str, Any]:
 
 @app.post("/api/sessions/{session_id}/train")
 async def train(session_id: str, request: TrainRequest) -> dict[str, str]:
-    session = SESSIONS.get(session_id)
+    session = await asyncio.to_thread(active_session, session_id)
     if session is None:
         raise HTTPException(404, "Session not found.")
-    if session.training:
-        raise HTTPException(409, "Training is already running.")
     if len(request.demonstrations) > MAX_DEMONSTRATIONS:
         raise HTTPException(413, f"A maximum of {MAX_DEMONSTRATIONS} demonstrations is supported.")
-    session.training = True
-    asyncio.create_task(asyncio.to_thread(train_session, session, request))
+    try:
+        await asyncio.to_thread(session.start_training, request)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
     return {"status": "started"}
 
 
 @app.post("/api/sessions/{session_id}/predict")
 def predict(session_id: str, request: PredictRequest) -> dict[str, Any]:
-    session = SESSIONS.get(session_id)
+    session = active_session(session_id)
     if session is None:
         raise HTTPException(404, "Session not found.")
     if session.model is None:
@@ -1769,7 +1861,16 @@ def predict(session_id: str, request: PredictRequest) -> dict[str, Any]:
 
 @app.post("/api/sessions/{session_id}/rollout")
 def rollout(session_id: str, request: RolloutRequest) -> dict[str, Any]:
-    session = SESSIONS.get(session_id)
+    session = active_session(session_id)
+    if session is None:
+        raise HTTPException(404, "Session not found.")
+    with session.lock:
+        session.last_activity = time.monotonic()
+        return _rollout(session_id, request)
+
+
+def _rollout(session_id: str, request: RolloutRequest) -> dict[str, Any]:
+    session = active_session(session_id)
     if session is None:
         raise HTTPException(404, "Session not found.")
     if session.model is None:
@@ -2073,7 +2174,7 @@ def rollout(session_id: str, request: RolloutRequest) -> dict[str, Any]:
             pass
 @app.get("/api/sessions/{session_id}/export")
 def export_session(session_id: str) -> StreamingResponse:
-    session = SESSIONS.get(session_id)
+    session = active_session(session_id)
     if session is None:
         raise HTTPException(404, "Session not found.")
     snapshot = {
@@ -2097,7 +2198,7 @@ def export_session(session_id: str) -> StreamingResponse:
 
 @app.websocket("/ws/sessions/{session_id}")
 async def session_socket(websocket: WebSocket, session_id: str) -> None:
-    session = SESSIONS.get(session_id)
+    session = await asyncio.to_thread(active_session, session_id)
     if session is None:
         await websocket.close(code=4404)
         return
@@ -2108,22 +2209,19 @@ async def session_socket(websocket: WebSocket, session_id: str) -> None:
                 message = await asyncio.wait_for(websocket.receive_json(), timeout=0.04)
                 message_type = message.get("type")
                 if message_type == "set_positions":
-                    session.set_positions(message.get("positions", []))
+                    await asyncio.to_thread(session.set_positions, message.get("positions", []))
                 elif message_type == "reset":
-                    session.set_positions([0.0] * len(session.joints))
+                    await asyncio.to_thread(session.set_positions, [0.0] * len(session.joints))
                 elif message_type == "step":
-                    session.step()
+                    await asyncio.to_thread(session.step)
             except asyncio.TimeoutError:
                 pass
             except ValueError as exc:
                 await websocket.send_json({"type": "error", "message": str(exc)})
-            session.step()
-            await websocket.send_json(session.state())
-            if session.events:
-                events = session.events[:]
-                session.events.clear()
-                for event in events:
-                    await websocket.send_json(event)
+            await asyncio.to_thread(session.step)
+            await websocket.send_json(await asyncio.to_thread(session.state))
+            for event in session.events.drain():
+                await websocket.send_json(event)
     except WebSocketDisconnect:
         return
     except Exception:
@@ -2132,5 +2230,17 @@ async def session_socket(websocket: WebSocket, session_id: str) -> None:
 
 @app.on_event("shutdown")
 def shutdown() -> None:
-    for session in SESSIONS.values():
-        session.close()
+    cleanup = getattr(app.state, "session_cleanup", None)
+    if cleanup is not None:
+        cleanup.cancel()
+    sessions = list(SESSIONS.values())
+    for session in sessions:
+        session.cancel_training.set()
+    for session in sessions:
+        with session.lock:
+            worker = session.training_thread
+        if worker is not None:
+            worker.join(timeout=5)
+        # A worker still exiting owns final client cleanup in train_session.
+        if worker is None or not worker.is_alive():
+            session.close()

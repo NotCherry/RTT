@@ -22,6 +22,7 @@ vi.mock("./components/workbench/RobotViewport", () => ({
 }));
 vi.mock("./api", () => ({
   createSession: vi.fn(),
+  closeSession: vi.fn(() => Promise.resolve()),
   exportUrl: vi.fn(() => "#export"),
   loadDemoRobot: vi.fn(),
   predictPose: vi.fn(),
@@ -77,6 +78,37 @@ beforeEach(() => {
 });
 
 describe("production timeline keypose flow", () => {
+  it("creates empty datasets and lets training show all archived demonstrations", async () => {
+    render(<App />);
+    const capture = await screen.findByRole("button", { name: "Capture pose" });
+    await waitFor(() => expect(capture).toBeEnabled());
+    fireEvent.click(capture);
+    fireEvent.click(screen.getByRole("link", { name: "Archive" }));
+    fireEvent.click(screen.getByRole("button", { name: "New dataset" }));
+    fireEvent.click(screen.getByRole("link", { name: "Train" }));
+    expect(screen.queryByRole("radio")).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Dataset"), { target: { value: "" } });
+    expect(await screen.findByRole("radio")).toBeInTheDocument();
+    expect(screen.getByLabelText("Dataset")).toHaveValue("");
+  });
+
+  it("keeps a demonstration when deletion is cancelled", async () => {
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    render(<App />);
+    const capture = await screen.findByRole("button", { name: "Capture pose" });
+    await waitFor(() => expect(capture).toBeEnabled());
+    fireEvent.click(capture);
+    fireEvent.click(screen.getByRole("link", { name: "Archive" }));
+    const deleteButton = screen.getByRole("button", { name: "Delete Pose 01" });
+    fireEvent.click(deleteButton);
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining("Pose 01"));
+    expect(deleteButton).toBeInTheDocument();
+    confirm.mockReturnValue(true);
+    fireEvent.click(deleteButton);
+    expect(screen.queryByRole("button", { name: "Delete Pose 01" })).not.toBeInTheDocument();
+    confirm.mockRestore();
+  });
+
   it("restores an authored gesture from browser storage after remounting", async () => {
     const firstView = render(<App />);
     await waitFor(() =>

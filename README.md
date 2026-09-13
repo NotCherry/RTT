@@ -74,7 +74,7 @@ Open `http://localhost:5173/teach/pose`. The sample arm works without an upload.
 - `/train` — temporal MLP training from authored keyframes and incremental next-state deltas.
 - `/evaluate` — expected-versus-predicted trajectory playback and per-keyframe diagnostics.
 
-Authored keyframes are the source of truth. Derived playback/training samples are not presented as editable timeline keys. Uploaded URDFs must use boxes, cylinders, or spheres; external mesh assets are rejected in this MVP. See [ADR 0002](./docs/adr/0002-timeline-based-teaching-and-curriculum-training.md) for the timeline and curriculum-training decision.
+Authored keyframes are the source of truth. Derived playback/training samples are not presented as editable timeline keys. Uploaded URDFs must use boxes, cylinders, or spheres; external mesh assets are rejected in this MVP. See [archive and session ownership](./docs/adr/0001-archive-and-session-ownership.md) for persistence, dataset membership, and simulation concurrency decisions.
 
 ## Tests
 
@@ -104,4 +104,4 @@ For a Vite dev server instead, use `npm run test:e2e -- --config baseUrl=http://
 
 ## Frontend design reference
 
-The current visual language, tokens, component recipes, and Tailwind migration rules are documented in [`docs/design-reference.md`](./docs/design-reference.md).
+The current visual tokens and layout classes live in [`apps/web/src/styles.css`](./apps/web/src/styles.css); reusable controls live in [`apps/web/src/components/ui/`](./apps/web/src/components/ui/). Run `npm run lint:design` from `apps/web` to check the design-system conventions.

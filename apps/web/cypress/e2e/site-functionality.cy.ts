@@ -84,9 +84,10 @@ describe("site functionality coverage", () => {
       .find("button.keyframe-diamond")
       .should("have.length", 6);
     cy.contains("button", "Save keyframes").click();
-    cy.wait("@saveDemonstrations")
-      .its("request.body.demonstrations.0.keyframes")
-      .should((keyframes: any[]) => {
+    cy.get("@saveDemonstrations.all")
+      .should((requests: any) => {
+        const keyframes = requests.at(-1)?.request.body.demonstrations[0]?.keyframes;
+        expect(keyframes).to.exist;
         const frames = keyframes.map((k) => k.frame);
         expect(frames[0]).to.equal(0);
         expect(frames.length).to.be.at.least(3);
@@ -131,18 +132,12 @@ describe("site functionality coverage", () => {
     cy.wait("@createSession");
     cy.contains("Timeline").click();
     cy.contains("button", "Insert full-pose key").click();
-    cy.contains("button", "Save keyframes").click();
-    cy.wait("@saveDemonstrations");
-    cy.contains(/authored keyframes/).should("be.visible");
-    cy.get("body").should("contain.text", "Delete key");
-    cy.get("body").then(($body) => {
-      if ($body.text().includes("Duplicate")) {
-        cy.contains("button", "Duplicate").click();
-        cy.contains("Unsaved timeline edits").should("be.visible");
-        cy.contains("button", "Delete key").click();
-      }
-    });
-    cy.contains(/authored keyframes/).should("be.visible");
+    cy.contains("button", "Save keyframes").should("be.disabled");
+    cy.contains("button", "Duplicate").click();
+    cy.get("button.keyframe-diamond").should("have.length", 4);
+    cy.contains("Unsaved timeline edits").should("be.visible");
+    cy.contains("button", "Delete key").click();
+    cy.get("button.keyframe-diamond").should("have.length", 2);
   });
 
   it("scrub slider value matches frame (no 12→312 drift)", () => {
@@ -155,21 +150,13 @@ describe("site functionality coverage", () => {
     // scrub should be frame-based, max = durationFrames > frames.length
     cy.get("body").should("contain.text", "Frame");
     cy.get("body").should("contain.text", "Key");
-    // after inserts, duration should exceed key count
-    cy.get("body").then(($b) => {
-      const text = $b.text();
-      const m = text.match(/Frame\s+(\d+)\s+\/\s+(\d+)/);
-      if (m) {
-        const frame = Number(m[1]);
-        const duration = Number(m[2]);
-        expect(duration).to.be.greaterThan(30);
-        expect(frame).to.be.lessThan(100);
-      }
-    });
+    // Inspect the timeline control directly, not unrelated page text.
+    cy.get('[aria-label="Scrub keyframes"]').should("have.value", "10");
     cy.contains("button", "Save keyframes").click();
-    cy.wait("@saveDemonstrations")
-      .its("request.body.demonstrations.0.keyframes")
-      .should((kfs: any[]) => {
+    cy.get("@saveDemonstrations.all")
+      .should((requests: any) => {
+        const kfs = requests.at(-1)?.request.body.demonstrations[0]?.keyframes;
+        expect(kfs).to.have.length(2);
         const frames = kfs.map((k) => k.frame);
         for (const f of frames) expect(f).to.be.lessThan(100);
       });

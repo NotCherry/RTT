@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BrowserRouter, Navigate, useLocation } from "react-router-dom";
 import {
+  closeSession,
   createSession,
   exportUrl,
   loadDemoRobot,
@@ -34,10 +35,12 @@ import {
   buildRolloutArgs,
 } from "./domain/evaluate";
 import {
+  browserStorage,
   loadBrowserArchive,
   saveBrowserArchive,
   type BrowserArchive,
 } from "./domain/browserArchive";
+import { createArchiveSync, normalizeArchive } from "./domain/archive";
 import {
   Button,
   Panel,
@@ -170,6 +173,8 @@ function Workbench() {
     null,
   );
   const socketRef = useRef<WebSocket | null>(null);
+  const activeSessionRef = useRef<string | null>(null);
+  const syncArchive = useMemo(() => createArchiveSync(saveDemonstrations, saveDatasets), []);
   const replayTimerRef = useRef<number | null>(null);
 
   const controllableJoints = useMemo(
@@ -375,23 +380,22 @@ function Workbench() {
     robotId = robot?.id,
   ) {
     if (!robotId) return;
-    if (!saveBrowserArchive(window.localStorage, robotId, archive)) {
+    if (!saveBrowserArchive(browserStorage, robotId, archive)) {
       setError(
         "Browser storage is unavailable, so archive changes may not survive a reload.",
       );
     }
   }
 
-  function persistArchive(archive: BrowserArchive) {
+  function persistArchive(snapshot: BrowserArchive) {
+    const archive = normalizeArchive(snapshot);
     setDemonstrations(archive.demonstrations);
     setDatasets(archive.datasets);
     setActiveDatasetId(archive.activeDatasetId);
     persistBrowserSnapshot(archive);
     if (!sessionId) return;
-    void Promise.all([
-      saveDemonstrations(sessionId, archive.demonstrations),
-      saveDatasets(sessionId, archive.datasets),
-    ]).catch((cause) => {
+    void syncArchive(sessionId, archive).catch((cause) => {
+      if (activeSessionRef.current !== sessionId) return;
       setError(cause instanceof Error ? cause.message : "Unable to save archive.");
     });
   }
@@ -408,30 +412,9 @@ function Workbench() {
   }
 
   function persistDemonstrations(next: Demonstration[]) {
-    setDemonstrations(next);
-    const previousIds = new Set(
-      demonstrations.map((demonstration) => demonstration.id),
-    );
-    const retainedIds = new Set(next.map((demonstration) => demonstration.id));
-    const newIds = next
-      .filter((demonstration) => !previousIds.has(demonstration.id))
-      .map((demonstration) => demonstration.id);
-    const nextDatasets = datasets.map((dataset) => {
-      const members = dataset.demonstration_ids.filter((id) =>
-        retainedIds.has(id),
-      );
-      return {
-        ...dataset,
-        demonstration_ids:
-          dataset.id === activeDatasetId
-            ? [...new Set([...members, ...newIds])]
-            : members,
-        updated_at: new Date().toISOString(),
-      };
-    });
     persistArchive({
       demonstrations: next,
-      datasets: nextDatasets,
+      datasets,
       activeDatasetId,
     });
   }
@@ -489,14 +472,14 @@ function Workbench() {
 
   function selectDataset(datasetId: string) {
     const dataset = datasets.find((item) => item.id === datasetId);
-    if (!dataset) return;
-    setActiveDatasetId(datasetId);
+    if (datasetId && !dataset) return;
+    setActiveDatasetId(datasetId || null);
     persistBrowserSnapshot({
       demonstrations,
       datasets,
-      activeDatasetId: datasetId,
+      activeDatasetId: datasetId || null,
     });
-    setMessage(`Selected ${dataset.name}.`);
+    setMessage(dataset ? `Selected ${dataset.name}.` : "Showing all datasets.");
   }
 
   function applyPositions(next: number[]) {
@@ -884,11 +867,17 @@ function Workbench() {
     setError(null);
     try {
       const session = await createSession(nextRobot.id);
+      activeSessionRef.current = session.session_id;
+      if (sessionId && sessionId !== session.session_id) {
+        // Active training is retained by the server until its idle lease expires.
+        void closeSession(sessionId).catch(() => {});
+      }
       setRobot(nextRobot);
       setSessionId(session.session_id);
       setState(session.state);
       stopReplay();
-      const savedArchive = loadBrowserArchive(window.localStorage, nextRobot.id);
+      const loadedArchive = loadBrowserArchive(browserStorage, nextRobot.id);
+      const savedArchive = loadedArchive ? normalizeArchive(loadedArchive) : null;
       const now = new Date().toISOString();
       const defaultDataset: Dataset = {
         id: `dataset-${Date.now()}`,
@@ -899,10 +888,8 @@ function Workbench() {
       };
       const restoredDemonstrations = savedArchive?.demonstrations ?? [];
       const restoredDatasets = savedArchive?.datasets ?? [defaultDataset];
-      const restoredActiveDatasetId = restoredDatasets.some(
-        (dataset) => dataset.id === savedArchive?.activeDatasetId,
-      )
-        ? (savedArchive?.activeDatasetId ?? null)
+      const restoredActiveDatasetId = savedArchive
+        ? savedArchive.activeDatasetId
         : (restoredDatasets[0]?.id ?? null);
       setDemonstrations(restoredDemonstrations);
       setDatasets(restoredDatasets);
@@ -915,10 +902,12 @@ function Workbench() {
         },
         nextRobot.id,
       );
-      void Promise.all([
-        saveDemonstrations(session.session_id, restoredDemonstrations),
-        saveDatasets(session.session_id, restoredDatasets),
-      ]).catch((cause) => {
+      void syncArchive(session.session_id, {
+        demonstrations: restoredDemonstrations,
+        datasets: restoredDatasets,
+        activeDatasetId: restoredActiveDatasetId,
+      }).catch((cause) => {
+        if (activeSessionRef.current !== session.session_id) return;
         setError(
           cause instanceof Error
             ? cause.message
@@ -1094,6 +1083,8 @@ function Workbench() {
   }
 
   function deleteDemonstration(id: string) {
+    const demonstration = demonstrations.find((item) => item.id === id);
+    if (!demonstration || !window.confirm(`Delete demonstration “${demonstration.name}”? This cannot be undone.`)) return;
     persistDemonstrations(
       demonstrations.filter((demonstration) => demonstration.id !== id),
     );
@@ -1354,7 +1345,7 @@ function Workbench() {
             const dataset = {
               id: `dataset-${Date.now()}`,
               name: `Dataset ${datasets.length + 1}`,
-              demonstration_ids: demonstrations.map((item) => item.id),
+              demonstration_ids: [],
               created_at: now,
               updated_at: now,
             };
@@ -2107,7 +2098,7 @@ function Workbench() {
                 const dataset = {
                   id: `dataset-${Date.now()}`,
                   name: `Dataset ${datasets.length + 1}`,
-                  demonstration_ids: demonstrations.map((item) => item.id),
+                  demonstration_ids: [],
                   created_at: now,
                   updated_at: now,
                 };

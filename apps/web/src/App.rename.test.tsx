@@ -15,6 +15,7 @@ vi.mock("./components/workbench/RobotViewport", () => ({
 }));
 vi.mock("./api", () => ({
   createSession: vi.fn(),
+  closeSession: vi.fn(() => Promise.resolve()),
   exportUrl: vi.fn(() => "#export"),
   loadDemoRobot: vi.fn(),
   predictPose: vi.fn(),

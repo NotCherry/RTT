@@ -66,6 +66,10 @@ export function saveDemonstrations(
   );
 }
 
+export function closeSession(sessionId: string) {
+  return request(`/api/sessions/${sessionId}`, { method: "DELETE" });
+}
+
 export function saveDatasets(sessionId: string, datasets: Dataset[]) {
   return request<{ status: string; datasets: number }>(
     `/api/sessions/${sessionId}/datasets`,

@@ -81,9 +81,10 @@ describe("routed teaching workspace", () => {
     cy.contains("button", "Open sample robot").click();
     cy.wait("@createSession");
     cy.contains("button", "Capture pose").click();
-    cy.wait("@saveDemonstrations")
-      .its("request.body.demonstrations.0")
-      .should((demonstration) => {
+    cy.get("@saveDemonstrations.all")
+      .should((requests: any) => {
+        const demonstration = requests.at(-1)?.request.body.demonstrations[0];
+        expect(demonstration).to.exist;
         expect(demonstration.kind).to.equal("pose");
         expect(demonstration.keyframes).to.have.length(1);
         expect(demonstration.keyframes[0].frame).to.equal(0);
@@ -105,9 +106,10 @@ describe("routed teaching workspace", () => {
     cy.get('[aria-label="Insert frame"]').clear().type("10");
     cy.contains("button", "Insert full-pose key").click();
     cy.contains("button", "Save keyframes").click();
-    cy.wait("@saveDemonstrations")
-      .its("request.body.demonstrations.0")
-      .should((demonstration) => {
+    cy.get("@saveDemonstrations.all")
+      .should((requests: any) => {
+        const demonstration = requests.at(-1)?.request.body.demonstrations[0];
+        expect(demonstration).to.exist;
         expect(demonstration.kind).to.equal("gesture");
         expect(demonstration.keyframes.length).to.be.greaterThan(1);
         expect(demonstration.keyframes[0]).to.have.property(

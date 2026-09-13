@@ -31,6 +31,14 @@ function memoryStorage() {
 }
 
 describe("browser archive", () => {
+  it("handles storage operations rejected by browser policy", () => {
+    const blocked = {
+      getItem: () => { throw new Error("SecurityError"); },
+      setItem: () => { throw new Error("SecurityError"); },
+    };
+    expect(loadBrowserArchive(blocked, "robot")).toBeNull();
+    expect(saveBrowserArchive(blocked, "robot", { demonstrations: [], datasets: [], activeDatasetId: null })).toBe(false);
+  });
   it("preserves demonstrations, datasets, and the active dataset by robot", () => {
     const storage = memoryStorage();
     const archive = {

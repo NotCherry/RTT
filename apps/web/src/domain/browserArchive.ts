@@ -8,6 +8,12 @@ export type BrowserArchive = {
   activeDatasetId: string | null;
 };
 
+// Access to the localStorage property itself can throw under browser policy.
+export const browserStorage = {
+  getItem: (key: string) => window.localStorage.getItem(key),
+  setItem: (key: string, value: string) => window.localStorage.setItem(key, value),
+};
+
 function storageKey(robotId: string) {
   return `${ARCHIVE_STORAGE_PREFIX}:${robotId}`;
 }

@@ -44,6 +44,14 @@ def test_demo_robot_idempotent():
     assert first["id"] == second["id"] == "demo-slider-arm"
     assert len(first["joints"]) == len(second["joints"])
 
+
+def test_reupload_preserves_robot_identity():
+    from app.main import DEMO_URDF
+    first = client.post("/api/robots/parse", files={"file": ("arm.urdf", DEMO_URDF.encode(), "text/xml")})
+    second = client.post("/api/robots/parse", files={"file": ("renamed.urdf", DEMO_URDF.encode(), "text/xml")})
+    assert first.status_code == second.status_code == 200
+    assert first.json()["id"] == second.json()["id"]
+
 def test_create_session_invalid_robot_returns_404():
     r = client.post("/api/sessions", json={"robot_id": "no-such-robot"})
     assert r.status_code == 404
@@ -592,4 +600,3 @@ def test_coordination_weights_empty_and_invalid():
     fake = Fake()
     fallback = coordination_sample_weights(fake, 0.5)  # type: ignore[arg-type]
     assert fallback.shape[0] == 2
-
