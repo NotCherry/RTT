@@ -16,13 +16,37 @@ const runtimeMeta = import.meta as unknown as {
 };
 const API_BASE = runtimeMeta.env?.VITE_API_URL ?? "";
 
+export function formatApiErrorDetail(detail: unknown): string | null {
+  if (typeof detail === "string" && detail.trim()) return detail;
+  if (Array.isArray(detail)) {
+    const messages = detail
+      .map((item) => formatApiErrorDetail(item))
+      .filter((item): item is string => Boolean(item));
+    return messages.length ? messages.join("; ") : null;
+  }
+  if (!detail || typeof detail !== "object") return null;
+
+  const record = detail as Record<string, unknown>;
+  if (typeof record.detail === "string") return record.detail;
+  if (typeof record.message === "string") return record.message;
+  if (typeof record.msg !== "string") return null;
+
+  const location = Array.isArray(record.loc)
+    ? record.loc
+        .filter((part) => part !== "body")
+        .map(String)
+        .join(".")
+    : "";
+  return location ? `${location}: ${record.msg}` : record.msg;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, init);
   if (!response.ok) {
     let message = `Request failed (${response.status})`;
     try {
-      const body = (await response.json()) as { detail?: string };
-      message = body.detail ?? message;
+      const body = (await response.json()) as { detail?: unknown };
+      message = formatApiErrorDetail(body.detail) ?? message;
     } catch {
       // Keep the status message when the server did not send JSON.
     }

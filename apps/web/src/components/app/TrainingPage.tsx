@@ -184,20 +184,9 @@ export function TrainingPage({
               onChange={(e) => onConfigChange("random_starts", e.target.value)}
             />
           </Label>
-          <Label>
-            Rollout steps
-            <Input
-              type="number"
-              min="1"
-              max="2000"
-              value={config.rollout_steps}
-              onChange={(e) => onConfigChange("rollout_steps", e.target.value)}
-            />
-          </Label>
           <p className="helper-text">
-            Gesture rollout density follows the demonstration timeline fps
-            (capped by rollout steps); Increment (ms) applies to the scripted
-            approach and the timestep fallback.
+            Increment (ms) controls training samples when the gesture does not
+            define a timeline frame rate.
           </p>
           <Label>
             Epochs

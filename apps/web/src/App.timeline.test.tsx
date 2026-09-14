@@ -557,9 +557,11 @@ describe("training draft guard", () => {
             ],
           }}
           evaluation={{ target: [0], positions: [0], error: 0 }}
+          evaluationStepBudget={160}
           replaying={false}
           onReplay={() => {}}
           onEvaluate={() => {}}
+          onEvaluationStepBudgetChange={() => {}}
         />
       </MemoryRouter>,
     );

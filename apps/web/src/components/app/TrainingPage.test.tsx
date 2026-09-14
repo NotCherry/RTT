@@ -105,6 +105,17 @@ function renderPage(props?: Partial<Parameters<typeof TrainingPage>[0]>) {
 }
 
 describe("TrainingPage single-target picker", () => {
+  it("forwards the exact epoch value entered by the user", () => {
+    const onConfigChange = vi.fn();
+    renderPage({ onConfigChange });
+
+    fireEvent.change(screen.getByRole("spinbutton", { name: "Epochs" }), {
+      target: { value: "800" },
+    });
+
+    expect(onConfigChange).toHaveBeenCalledWith("epochs", "800");
+  });
+
   it("lists every archived item as a single-select radio target", () => {
     renderPage();
     const group = screen.getByRole("radiogroup", { name: "Training target" });

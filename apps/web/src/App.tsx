@@ -1426,11 +1426,15 @@ function Workbench() {
           rolloutFrames={rolloutFrames}
           rolloutDiagnostics={rolloutDiagnostics}
           evaluation={evaluation}
+          evaluationStepBudget={config.rollout_steps}
           replaying={replayingDemoId === "evaluation"}
           onReplay={() =>
             replayFrames(rolloutFrames, "the evaluated trajectory")
           }
           onEvaluate={testModel}
+          onEvaluationStepBudgetChange={(value) =>
+            updateConfig("rollout_steps", value)
+          }
         />
       );
     }
@@ -1818,7 +1822,7 @@ function Workbench() {
                   />
                 </label>
                 <label>
-                  <span>Rollout steps</span>
+                  <span>Evaluation step budget</span>
                   <input
                     type="number"
                     min="1"
@@ -1829,6 +1833,9 @@ function Workbench() {
                     }
                   />
                 </label>
+                <p className="helper-text">
+                  Replay safety cap only; it does not improve model quality.
+                </p>
               </div>
               <div className="training-actions">
                 <Button

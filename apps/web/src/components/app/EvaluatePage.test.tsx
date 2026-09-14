@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { EvaluatePage } from "./EvaluatePage";
 
@@ -26,15 +26,30 @@ function renderEvaluate(
             checkpointCount={3}
             rolloutFrames={[]}
             evaluation={null}
+            evaluationStepBudget={160}
             replaying={false}
             onReplay={() => {}}
             onEvaluate={() => {}}
+            onEvaluationStepBudgetChange={() => {}}
             {...overrides}
         />,
     );
 }
 
 describe("EvaluatePage identity", () => {
+    it("describes the rollout budget as an evaluation cap, not a quality control", () => {
+        const onEvaluationStepBudgetChange = vi.fn();
+        renderEvaluate({ onEvaluationStepBudgetChange });
+
+        const budget = screen.getByRole("spinbutton", {
+            name: "Evaluation step budget",
+        });
+        expect(budget).toHaveValue(160);
+        expect(screen.getByText(/does not retrain or improve model quality/i)).toBeInTheDocument();
+        fireEvent.change(budget, { target: { value: "800" } });
+        expect(onEvaluationStepBudgetChange).toHaveBeenCalledWith("800");
+    });
+
     it("labels which demonstration and checkpoints are playing", () => {
         render(
             <EvaluatePage
@@ -48,9 +63,11 @@ describe("EvaluatePage identity", () => {
                 checkpointCount={3}
                 rolloutFrames={[]}
                 evaluation={null}
+                evaluationStepBudget={160}
                 replaying={false}
                 onReplay={() => {}}
                 onEvaluate={() => {}}
+                onEvaluationStepBudgetChange={() => {}}
             />,
         );
         expect(screen.getByText("Evaluating “Wave”")).toBeInTheDocument();
@@ -120,9 +137,11 @@ describe("EvaluatePage identity", () => {
                     { timestamp: 240, positions: [1], expected: [0.9] },
                 ]}
                 evaluation={{ target: [0.9], positions: [1], error: 0.1 }}
+                evaluationStepBudget={160}
                 replaying={false}
                 onReplay={onReplay}
                 onEvaluate={() => {}}
+                onEvaluationStepBudgetChange={() => {}}
             />,
         );
 

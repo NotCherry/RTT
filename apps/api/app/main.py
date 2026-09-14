@@ -1405,41 +1405,12 @@ def analyze_rollout_coordination(
         return {"simultaneity": 1.0, "direction_alignment": 1.0, "multi_joint_steps": 0, "sequential": False}
 
 
-# --- Gesture convergence & checkpoint probe (full-gesture fidelity) ---------
-# Per-step training loss stays low long before an autoregressive replay
-# reproduces interior checkpoints (see
-# docs/research/training-middle-frame-revalidation.md), so multi-segment
-# gestures get an epoch floor and every gesture training ends with a cheap
-# kinematic checkpoint probe that reports per-checkpoint replay error.
+# --- Gesture checkpoint probe (full-gesture fidelity) -----------------------
+# Per-step training loss can stay low while an autoregressive replay misses
+# interior checkpoints. Every gesture training run therefore ends with a cheap
+# kinematic checkpoint probe, while the epoch budget remains user-controlled.
 
-GESTURE_MIN_EPOCHS = 1200
 CHECKPOINT_MISS_MAE = 0.12
-
-
-def _effective_training_epochs(demonstrations: list[Demonstration], epochs: int) -> int:
-    """Raise the epoch budget for multi-segment gestures.
-
-    Static poses converge quickly; multi-segment gestures with direction
-    reversals need more optimization before the model reproduces interior
-    checkpoints instead of averaging through them. Poses and 1-segment
-    gestures keep the user-configured budget.
-    """
-    for item in demonstrations:
-        if item.kind != "gesture":
-            continue
-        try:
-            frames = authored_frames(item)
-        except Exception:
-            continue
-        if len(frames) >= 3:
-            try:
-                return max(int(epochs), GESTURE_MIN_EPOCHS)
-            except (TypeError, ValueError):
-                return GESTURE_MIN_EPOCHS
-    try:
-        return int(epochs)
-    except (TypeError, ValueError) as exc:
-        raise ValueError("The training epoch budget must be an integer.") from exc
 
 
 def probe_gesture_checkpoint_errors(
@@ -1568,7 +1539,7 @@ def train_session(session: SimulationSession, request: TrainRequest) -> None:
         model = make_model(expected_input_size(joint_count), joint_count, request.config)
         optimizer = torch.optim.Adam(model.parameters(), lr=request.config.learning_rate)
         loss_function = torch.nn.SmoothL1Loss(reduction="none")
-        steps = _effective_training_epochs(request.demonstrations, request.config.epochs)
+        steps = request.config.epochs
         try:
             coordination_weight = float(request.config.coordination_weight)
         except Exception:

@@ -9,6 +9,8 @@ import {
 import { H2, H3, IntroCopy, Kicker } from "@/components/ui/typography";
 import { RobotViewport } from "@/components/workbench/RobotViewport";
 import { Progress } from "@/components/ui/progress";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import type { Robot, SimulationState, RolloutFrame } from "@/types";
 import { meanAbsoluteError as meanError } from "@/domain/metrics";
 
@@ -45,9 +47,11 @@ type EvaluatePageProps = {
                 } | null;
         } | null;
         evaluation: EvaluationResult | null;
+        evaluationStepBudget: number;
         replaying: boolean;
         onReplay: () => void;
         onEvaluate: () => void;
+        onEvaluationStepBudgetChange: (value: string) => void;
 };
 
 export function EvaluatePage({
@@ -62,9 +66,11 @@ export function EvaluatePage({
         rolloutFrames,
         rolloutDiagnostics,
         evaluation,
+        evaluationStepBudget,
         replaying,
         onReplay,
         onEvaluate,
+        onEvaluationStepBudgetChange,
 }: EvaluatePageProps) {
         const lastAutoPlayedRollout = useRef<RolloutFrame[] | null>(null);
         const derivedPreviewCount = rolloutFrames.filter(
@@ -166,6 +172,25 @@ export function EvaluatePage({
                                                 </div>
                                         </PanelHeader>
                                         <div className="evaluation-route-content">
+                                                <div className="flex flex-col gap-2">
+                                                        <Label>
+                                                                Evaluation step budget
+                                                                <Input
+                                                                        type="number"
+                                                                        min="1"
+                                                                        max="2000"
+                                                                        value={evaluationStepBudget}
+                                                                        onChange={(event) =>
+                                                                                onEvaluationStepBudgetChange(
+                                                                                        event.target.value,
+                                                                                )
+                                                                        }
+                                                                />
+                                                        </Label>
+                                                        <p className="helper-text">
+                                                                This is a replay safety cap. It does not retrain or improve model quality; increase it only when evaluation reports a trimmed or decimated gesture.
+                                                        </p>
+                                                </div>
                                                 <Button
                                                         variant="primary"
                                                         full
