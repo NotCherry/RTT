@@ -59,6 +59,7 @@ import { EvaluatePage } from "./components/app/EvaluatePage";
 import { TimelinePanel } from "./components/workbench/TimelinePanel";
 import { DatasetPanel } from "./components/workbench/DatasetPanel";
 import { PoseSketch } from "./components/workbench/PoseSketch";
+import { DraftNumberInput } from "./components/ui/draft-number-input";
 import type {
   Dataset,
   Demonstration,
@@ -1835,17 +1836,14 @@ function Workbench() {
                   <output>
                     {formatJoint(joint.type, positions[index] ?? 0)}
                   </output>
-                  <input
+                  <DraftNumberInput
                     className="joint-number"
                     aria-label={`${joint.name} numeric position`}
-                    type="number"
                     min={joint.lower}
                     max={joint.upper}
                     step="0.001"
                     value={positions[index] ?? 0}
-                    onChange={(event) =>
-                      updateJoint(index, Number(event.target.value))
-                    }
+                    onValueChange={(value) => updateJoint(index, value)}
                   />
                 </div>
                 <input
@@ -1987,62 +1985,61 @@ function Workbench() {
                 </label>
                 <label>
                   <span>Learning rate</span>
-                  <input
-                    type="number"
+                  <DraftNumberInput
                     min="0.000001"
                     max="1"
-                    step="0.0001"
+                    step="any"
                     value={config.learning_rate}
-                    onChange={(event) =>
-                      updateConfig("learning_rate", event.target.value)
+                    onValueChange={(value) =>
+                      updateConfig("learning_rate", String(value))
                     }
                   />
                 </label>
                 <label>
                   <span>Epochs</span>
-                  <input
-                    type="number"
+                  <DraftNumberInput
+                    integer
                     min="1"
                     max="5000"
                     value={config.epochs}
-                    onChange={(event) =>
-                      updateConfig("epochs", event.target.value)
+                    onValueChange={(value) =>
+                      updateConfig("epochs", String(value))
                     }
                   />
                 </label>
                 <label>
                   <span>Increment (ms)</span>
-                  <input
-                    type="number"
+                  <DraftNumberInput
+                    integer
                     min="10"
                     max="2000"
                     value={config.timestep_ms}
-                    onChange={(event) =>
-                      updateConfig("timestep_ms", event.target.value)
+                    onValueChange={(value) =>
+                      updateConfig("timestep_ms", String(value))
                     }
                   />
                 </label>
                 <label>
                   <span>Random starts</span>
-                  <input
-                    type="number"
+                  <DraftNumberInput
+                    integer
                     min="0"
                     max="64"
                     value={config.random_starts}
-                    onChange={(event) =>
-                      updateConfig("random_starts", event.target.value)
+                    onValueChange={(value) =>
+                      updateConfig("random_starts", String(value))
                     }
                   />
                 </label>
                 <label>
                   <span>Evaluation step budget</span>
-                  <input
-                    type="number"
+                  <DraftNumberInput
+                    integer
                     min="1"
                     max="2000"
                     value={config.rollout_steps}
-                    onChange={(event) =>
-                      updateConfig("rollout_steps", event.target.value)
+                    onValueChange={(value) =>
+                      updateConfig("rollout_steps", String(value))
                     }
                   />
                 </label>

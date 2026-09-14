@@ -9,7 +9,7 @@ import {
 import { H2, H3, IntroCopy, Kicker } from "@/components/ui/typography";
 import { RobotViewport } from "@/components/workbench/RobotViewport";
 import { Progress } from "@/components/ui/progress";
-import { Input } from "@/components/ui/input";
+import { DraftNumberInput } from "@/components/ui/draft-number-input";
 import { Label } from "@/components/ui/label";
 import { NativeSelect } from "@/components/ui/native-select";
 import type { Demonstration, Robot, SimulationState, RolloutFrame } from "@/types";
@@ -199,15 +199,13 @@ export function EvaluatePage({
                                                 <div className="flex flex-col gap-2">
                                                         <Label>
                                                                 Evaluation step budget
-                                                                <Input
-                                                                        type="number"
+                                                                <DraftNumberInput
+                                                                        integer
                                                                         min="1"
                                                                         max="2000"
                                                                         value={evaluationStepBudget}
-                                                                        onChange={(event) =>
-                                                                                onEvaluationStepBudgetChange(
-                                                                                        event.target.value,
-                                                                                )
+                                                                        onValueChange={(value) =>
+                                                                                onEvaluationStepBudgetChange(String(value))
                                                                         }
                                                                 />
                                                         </Label>

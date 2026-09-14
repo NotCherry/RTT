@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { Button, Panel, PanelHeader, PanelLabel, StatusPill } from "@/components/ui";
 import { H2, H3, IntroCopy, Kicker } from "@/components/ui/typography";
-import { Input } from "@/components/ui/input";
+import { DraftNumberInput } from "@/components/ui/draft-number-input";
 import { Label } from "@/components/ui/label";
 import { NativeSelect } from "@/components/ui/native-select";
 import { Separator } from "@/components/ui/separator";
@@ -203,7 +203,7 @@ export function TrainingPage({
                     <span className="grid h-8 w-8 place-items-center rounded bg-accent-deep font-mono text-xs text-accent-300">{index + 1}</span>
                     <Label>
                       Dense width
-                      <Input type="number" min="1" max="512" value={block.width} onChange={(event) => updateBlock(index, { width: Math.max(1, Number(event.target.value) || 1) })} />
+                      <DraftNumberInput integer min="1" max="512" value={block.width} onValueChange={(value) => updateBlock(index, { width: value })} />
                     </Label>
                     <Label>
                       Activation
@@ -223,10 +223,10 @@ export function TrainingPage({
 
           <TabsContent value="optimize" className="space-y-4 pt-3">
             <div className="route-form-grid">
-              <Label>Learning rate<Input type="number" min="0.000001" max="1" step="0.0001" value={config.learning_rate} onChange={(event) => onConfigChange("learning_rate", event.target.value)} /></Label>
-              <Label>Final training epochs<Input type="number" min="1" max="5000" value={config.epochs} onChange={(event) => onConfigChange("epochs", event.target.value)} /></Label>
-              <Label>Increment (ms)<Input type="number" min="10" max="2000" value={config.timestep_ms} onChange={(event) => onConfigChange("timestep_ms", event.target.value)} /></Label>
-              <Label>Random starts<Input type="number" min="0" max="64" value={config.random_starts} onChange={(event) => onConfigChange("random_starts", event.target.value)} /></Label>
+              <Label>Learning rate<DraftNumberInput min="0.000001" max="1" step="any" value={config.learning_rate} onValueChange={(value) => onConfigChange("learning_rate", String(value))} /></Label>
+              <Label>Final training epochs<DraftNumberInput integer min="1" max="5000" value={config.epochs} onValueChange={(value) => onConfigChange("epochs", String(value))} /></Label>
+              <Label>Increment (ms)<DraftNumberInput integer min="10" max="2000" value={config.timestep_ms} onValueChange={(value) => onConfigChange("timestep_ms", String(value))} /></Label>
+              <Label>Random starts<DraftNumberInput integer min="0" max="64" value={config.random_starts} onValueChange={(value) => onConfigChange("random_starts", String(value))} /></Label>
             </div>
             <div className="rounded border border-line-650 bg-ink-850 p-4">
               <div className="flex flex-wrap items-start justify-between gap-3">
@@ -237,8 +237,8 @@ export function TrainingPage({
                 <StatusPill online={optimizing}>{optimizing ? "Running" : "1 worker"}</StatusPill>
               </div>
               <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                <Label>Candidates<Input type="number" min="2" max="12" value={searchTrials} onChange={(event) => setSearchTrials(Number(event.target.value))} /></Label>
-                <Label>Epochs per candidate<Input type="number" min="5" max="300" value={trialEpochs} onChange={(event) => setTrialEpochs(Number(event.target.value))} /></Label>
+                <Label>Candidates<DraftNumberInput integer min="2" max="12" value={searchTrials} onValueChange={setSearchTrials} /></Label>
+                <Label>Epochs per candidate<DraftNumberInput integer min="5" max="300" value={trialEpochs} onValueChange={setTrialEpochs} /></Label>
               </div>
               <div className="mt-4 grid gap-2 sm:grid-cols-2">
                 <Button variant="primary" onClick={() => onOptimize(searchTrials, trialEpochs)} disabled={!canRun}>{optimizing ? "Searching…" : `Search ${searchTrials} candidates`}</Button>

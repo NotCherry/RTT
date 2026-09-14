@@ -170,7 +170,7 @@ function TimelineStateHarness() {
 
 describe("TimelinePanel selected keypose flow", () => {
   afterEach(() => cleanup());
-  it("displays frame 12 and its pose inputs, forwards edits, inserts, and validates input", () => {
+  it("displays frame 12 and lets a pose value be cleared and replaced", () => {
     const onCapture = vi.fn();
     const onUpdateFrame = vi.fn();
     renderTimeline({ onCapture, onUpdateFrame });
@@ -193,15 +193,41 @@ describe("TimelinePanel selected keypose flow", () => {
     expect(onCapture).toHaveBeenCalledWith(12);
 
     fireEvent.change(poseInput, { target: { value: "" } });
+    expect(poseInput).toHaveValue(null);
+    expect(onUpdateFrame).toHaveBeenCalledTimes(1);
+
+    fireEvent.change(poseInput, { target: { value: "-0.4" } });
+    expect(onUpdateFrame).toHaveBeenLastCalledWith(1, 0, -0.4);
+  });
+
+  it("rejects an out-of-range pose value", () => {
+    const onUpdateFrame = vi.fn();
+    renderTimeline({ onUpdateFrame });
+
+    fireEvent.change(
+      screen.getByRole("spinbutton", {
+        name: "shoulder at selected keyframe",
+      }),
+      { target: { value: "2" } },
+    );
+
     expect(screen.getByRole("alert")).toHaveTextContent(
       "Enter a value between -1 and 1 for shoulder.",
     );
-    expect(onUpdateFrame).toHaveBeenCalledTimes(1);
-
-    fireEvent.click(
+    expect(onUpdateFrame).not.toHaveBeenCalled();
+    expect(
       screen.getByRole("button", { name: "Insert full-pose key" }),
+    ).toBeDisabled();
+
+    fireEvent.blur(
+      screen.getByRole("spinbutton", {
+        name: "shoulder at selected keyframe",
+      }),
     );
-    expect(onCapture).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Insert full-pose key" }),
+    ).toBeEnabled();
   });
 
   it("inserts at the typed frame after scrubbing elsewhere", () => {

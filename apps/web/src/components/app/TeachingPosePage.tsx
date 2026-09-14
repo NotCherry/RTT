@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { Button, Panel, PanelHeader, PanelLabel } from "@/components/ui";
 import { H2, H3, IntroCopy, Kicker } from "@/components/ui/typography";
 import { RobotViewport } from "@/components/workbench/RobotViewport";
+import { DraftNumberInput } from "@/components/ui/draft-number-input";
 import type { Joint, Robot, SimulationState } from "@/types";
 
 type TeachingPosePageProps = {
@@ -90,16 +91,13 @@ export function TeachingPosePage({
                     onUpdateJoint(index, Number(event.target.value))
                   }
                 />
-                <input
-                  type="number"
+                <DraftNumberInput
                   min={joint.lower}
                   max={joint.upper}
                   step="0.001"
                   value={positions[index] ?? 0}
                   aria-label={`${joint.name} route position`}
-                  onChange={(event) =>
-                    onUpdateJoint(index, Number(event.target.value))
-                  }
+                  onValueChange={(value) => onUpdateJoint(index, value)}
                 />
               </label>
             ))}

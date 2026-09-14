@@ -110,6 +110,23 @@ function renderPage(props?: Partial<Parameters<typeof TrainingPage>[0]>) {
 }
 
 describe("TrainingPage single-target picker", () => {
+  it("allows a numeric setting to be cleared before entering a replacement", async () => {
+    const onConfigChange = vi.fn();
+    renderPage({ onConfigChange });
+    await userEvent.click(screen.getByRole("tab", { name: "3 Optimize" }));
+
+    const input = screen.getByRole("spinbutton", {
+      name: "Final training epochs",
+    });
+    fireEvent.change(input, { target: { value: "" } });
+
+    expect(input).toHaveValue(null);
+    expect(onConfigChange).not.toHaveBeenCalled();
+
+    fireEvent.change(input, { target: { value: "800" } });
+    expect(onConfigChange).toHaveBeenCalledWith("epochs", "800");
+  });
+
   it("forwards the exact epoch value entered by the user", async () => {
     const onConfigChange = vi.fn();
     renderPage({ onConfigChange });

@@ -335,16 +335,13 @@ describe("production timeline keypose flow", () => {
       ),
     ).toBe(true);
 
-    fireEvent.change(
-      screen.getByRole("spinbutton", { name: "shoulder at selected keyframe" }),
-      { target: { value: "" } },
-    );
-    expect(screen.getByRole("alert")).toHaveTextContent(
-      "Enter a value between -1 and 1 for shoulder.",
-    );
-    expect(
-      screen.getByRole("button", { name: "Insert full-pose key" }),
-    ).toBeDisabled();
+    const jointInput = screen.getByRole("spinbutton", {
+      name: "shoulder at selected keyframe",
+    });
+    fireEvent.change(jointInput, { target: { value: "" } });
+    expect(jointInput).toHaveValue(null);
+    fireEvent.change(jointInput, { target: { value: "-0.25" } });
+    expect(jointInput).toHaveValue(-0.25);
   });
 
   it("loops playback over the full duration instead of sticking", async () => {

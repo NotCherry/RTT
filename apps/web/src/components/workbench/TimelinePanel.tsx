@@ -3,6 +3,7 @@ import { Button } from "@/components/ui";
 import { PanelLabel } from "@/components/ui";
 import { Empty, EmptyTitle, EmptyDescription } from "@/components/ui/empty";
 import { Separator } from "@/components/ui/separator";
+import { DraftNumberInput } from "@/components/ui/draft-number-input";
 import {
   effectiveDurationFrames,
   frameToTimestamp,
@@ -511,16 +512,19 @@ export function TimelinePanel({
                             updateJointValue(jointIndex, event.target.value)
                           }
                         />
-                        <input
+                        <DraftNumberInput
                           aria-label={`${joint.name} at selected keyframe`}
-                          type="number"
                           min={joint.lower}
                           max={joint.upper}
                           step="0.001"
                           value={value}
-                          onChange={(event) =>
-                            updateJointValue(jointIndex, event.target.value)
+                          onValueChange={(nextValue) =>
+                            updateJointValue(jointIndex, String(nextValue))
                           }
+                          onInvalidValue={(rawValue) =>
+                            updateJointValue(jointIndex, rawValue)
+                          }
+                          onDraftRestore={() => setValidationError(null)}
                         />
                       </div>
                     </label>

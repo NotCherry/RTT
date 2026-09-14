@@ -51,6 +51,22 @@ function renderPage(props?: Partial<Parameters<typeof TeachingPosePage>[0]>) {
 }
 
 describe("TeachingPosePage save UX", () => {
+  it("allows the joint number to be cleared before entering a replacement", () => {
+    const onUpdateJoint = vi.fn();
+    renderPage({ onUpdateJoint });
+
+    const input = screen.getByRole("spinbutton", {
+      name: "shoulder route position",
+    });
+    fireEvent.change(input, { target: { value: "" } });
+
+    expect(input).toHaveValue(null);
+    expect(onUpdateJoint).not.toHaveBeenCalled();
+
+    fireEvent.change(input, { target: { value: "0.5" } });
+    expect(onUpdateJoint).toHaveBeenCalledWith(0, 0.5);
+  });
+
   it("captures with the typed pose name", () => {
     const onCapture = vi.fn();
     renderPage({ onCapture });
