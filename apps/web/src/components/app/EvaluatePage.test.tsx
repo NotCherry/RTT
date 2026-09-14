@@ -21,6 +21,8 @@ function renderEvaluate(
             trained
             busy={false}
             demonstrationsLength={1}
+            demonstrations={[]}
+            selectedDemoId={null}
             demonstrationName="Wave"
             demonstrationKind="gesture"
             checkpointCount={3}
@@ -30,6 +32,7 @@ function renderEvaluate(
             replaying={false}
             onReplay={() => {}}
             onEvaluate={() => {}}
+            onDemoChange={() => {}}
             onEvaluationStepBudgetChange={() => {}}
             {...overrides}
         />,
@@ -58,6 +61,8 @@ describe("EvaluatePage identity", () => {
                 trained
                 busy={false}
                 demonstrationsLength={1}
+                demonstrations={[]}
+                selectedDemoId={null}
                 demonstrationName="Wave"
                 demonstrationKind="gesture"
                 checkpointCount={3}
@@ -67,6 +72,7 @@ describe("EvaluatePage identity", () => {
                 replaying={false}
                 onReplay={() => {}}
                 onEvaluate={() => {}}
+                onDemoChange={() => {}}
                 onEvaluationStepBudgetChange={() => {}}
             />,
         );
@@ -128,6 +134,8 @@ describe("EvaluatePage identity", () => {
                 trained
                 busy={false}
                 demonstrationsLength={1}
+                demonstrations={[]}
+                selectedDemoId={null}
                 demonstrationName="Wave"
                 demonstrationKind="gesture"
                 checkpointCount={3}
@@ -141,6 +149,7 @@ describe("EvaluatePage identity", () => {
                 replaying={false}
                 onReplay={onReplay}
                 onEvaluate={() => {}}
+                onDemoChange={() => {}}
                 onEvaluationStepBudgetChange={() => {}}
             />,
         );

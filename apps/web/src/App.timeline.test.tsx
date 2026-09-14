@@ -55,9 +55,30 @@ const robot: Robot = {
   ],
 };
 
+const gestureA = {
+  id: "gesture-a", name: "Gesture A", kind: "gesture" as const,
+  current: [0], target: [0.4],
+  frames: [{ timestamp: 0, positions: [0] }, { timestamp: 120, positions: [0.4] }],
+};
+const gestureB = {
+  id: "gesture-b", name: "Gesture B", kind: "gesture" as const,
+  current: [0], target: [-0.6],
+  frames: [{ timestamp: 0, positions: [0] }, { timestamp: 120, positions: [-0.6] }],
+};
+
+function storeTwoGestures() {
+  window.localStorage.setItem(
+    "robot-learning-workbench:archive:v1:sample-arm",
+    JSON.stringify({ demonstrations: [gestureA, gestureB], datasets: [], activeDatasetId: null, experiments: [] }),
+  );
+}
+
 class MockWebSocket {
   static readonly OPEN = 1;
+  static latest: MockWebSocket | null = null;
   readyState = MockWebSocket.OPEN;
+  onmessage?: (event: MessageEvent<string>) => void;
+  constructor() { MockWebSocket.latest = this; }
   close() {}
   send() {}
 }
@@ -78,6 +99,79 @@ beforeEach(() => {
 });
 
 describe("production timeline keypose flow", () => {
+  it("does not carry one gesture's evaluation metrics into another gesture", async () => {
+    storeTwoGestures();
+    window.history.replaceState({}, "", "/train");
+    vi.mocked(api.rolloutSession).mockResolvedValue({
+      frames: [
+        { timestamp: 0, positions: [0], expected: [0], phase: "gesture" },
+        { timestamp: 120, positions: [0.9], expected: [0.4], phase: "gesture" },
+      ],
+      steps: 2, collisions: 0, max_tracking_error: 0, clipped_steps: 0, physics: false,
+    });
+
+    render(<App />);
+    await screen.findByRole("radio", { name: "Train Gesture A" });
+    MockWebSocket.latest?.onmessage?.({
+      data: JSON.stringify({ type: "training_complete" }),
+    } as MessageEvent<string>);
+    fireEvent.click(screen.getByRole("radio", { name: "Train Gesture A" }));
+    fireEvent.click(screen.getByRole("link", { name: "Evaluate" }));
+    fireEvent.click(screen.getByRole("button", { name: "Evaluate selected demonstration" }));
+    await waitFor(() => expect(api.rolloutSession).toHaveBeenCalled());
+    expect(screen.getAllByText("0.5000")).toHaveLength(3);
+
+    fireEvent.change(screen.getByLabelText("Demonstration to evaluate"), {
+      target: { value: gestureB.id },
+    });
+
+    expect(screen.getByText('Evaluating “Gesture B”')).toBeInTheDocument();
+    expect(screen.queryByText("0.5000")).not.toBeInTheDocument();
+
+    vi.mocked(api.rolloutSession).mockResolvedValue({
+      frames: [
+        { timestamp: 0, positions: [0], expected: [0], phase: "gesture" },
+        { timestamp: 120, positions: [-0.5], expected: [-0.6], phase: "gesture" },
+      ],
+      steps: 2, collisions: 0, max_tracking_error: 0, clipped_steps: 0, physics: false,
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Evaluate selected demonstration" }));
+    await waitFor(() => expect(api.rolloutSession).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(api.rolloutSession).mock.calls[1]?.[1]).toEqual(gestureB.frames);
+    expect(await screen.findAllByText("0.1000")).toHaveLength(3);
+  });
+
+  it("discards a late rollout when another gesture becomes the target", async () => {
+    storeTwoGestures();
+    window.history.replaceState({}, "", "/train");
+    let resolveRollout!: (value: Awaited<ReturnType<typeof api.rolloutSession>>) => void;
+    vi.mocked(api.rolloutSession).mockReturnValue(new Promise((resolve) => {
+      resolveRollout = resolve;
+    }));
+
+    render(<App />);
+    await screen.findByRole("radio", { name: "Train Gesture A" });
+    MockWebSocket.latest?.onmessage?.({
+      data: JSON.stringify({ type: "training_complete" }),
+    } as MessageEvent<string>);
+    fireEvent.click(screen.getByRole("radio", { name: "Train Gesture A" }));
+    fireEvent.click(screen.getByRole("link", { name: "Evaluate" }));
+    fireEvent.click(screen.getByRole("button", { name: "Evaluate selected demonstration" }));
+    fireEvent.click(screen.getByRole("link", { name: "Train" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Train Gesture B" }));
+    fireEvent.click(screen.getByRole("link", { name: "Evaluate" }));
+
+    await act(async () => resolveRollout({
+      frames: [
+        { timestamp: 0, positions: [0], expected: [0], phase: "gesture" },
+        { timestamp: 120, positions: [0.9], expected: [0.4], phase: "gesture" },
+      ],
+      steps: 2, collisions: 0, max_tracking_error: 0, clipped_steps: 0, physics: false,
+    }));
+
+    expect(screen.getByText('Evaluating “Gesture B”')).toBeInTheDocument();
+    expect(screen.queryByText("0.5000")).not.toBeInTheDocument();
+  });
   it("creates empty datasets and lets training show all archived demonstrations", async () => {
     render(<App />);
     const capture = await screen.findByRole("button", { name: "Capture pose" });
@@ -535,6 +629,8 @@ describe("training draft guard", () => {
           trained={true}
           busy={false}
           demonstrationsLength={1}
+          demonstrations={[]}
+          selectedDemoId={null}
           demonstrationName="demo"
           demonstrationKind="gesture"
           checkpointCount={2}
@@ -565,6 +661,7 @@ describe("training draft guard", () => {
           replaying={false}
           onReplay={() => {}}
           onEvaluate={() => {}}
+          onDemoChange={() => {}}
           onEvaluationStepBudgetChange={() => {}}
         />
       </MemoryRouter>,

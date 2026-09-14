@@ -199,6 +199,8 @@ function Workbench() {
   const activeSessionRef = useRef<string | null>(null);
   const syncArchive = useMemo(() => createArchiveSync(saveDemonstrations, saveDatasets), []);
   const replayTimerRef = useRef<number | null>(null);
+  const evaluationRequestRef = useRef(0);
+  const evaluationInFlightRef = useRef(false);
   const archiveRef = useRef<BrowserArchive>({
     demonstrations: [],
     datasets: [],
@@ -957,7 +959,7 @@ function Workbench() {
       setMessage(`${demonstration.name} is a static pose.`);
       return;
     }
-    setSelectedDemoId(demonstration.id);
+    chooseDemonstrationTarget(demonstration.id);
     setReplayingDemoId(demonstration.id);
     // Expand checkpoints into timed intermediate poses so replay traverses
     // the full gesture instead of jumping between authored frames.
@@ -1164,12 +1166,27 @@ function Workbench() {
 
   function selectDemonstration(demonstration: Demonstration) {
     stopReplay();
-    setSelectedDemoId(demonstration.id);
+    chooseDemonstrationTarget(demonstration.id);
     setState((current) => ({
       positions: [...demonstration.target],
       training: current?.training ?? false,
     }));
     send({ type: "set_positions", positions: demonstration.target });
+  }
+
+  function chooseDemonstrationTarget(id: string) {
+    setSelectedDemoId(id);
+    if (id === evaluatedDemoId) return;
+    evaluationRequestRef.current += 1;
+    if (evaluationInFlightRef.current) {
+      evaluationInFlightRef.current = false;
+      setBusy(false);
+    }
+    stopReplay();
+    setEvaluatedDemoId(null);
+    setEvaluation(null);
+    setRolloutFrames([]);
+    setRolloutDiagnostics(null);
   }
 
   function beginEditing(demonstration: Demonstration) {
@@ -1309,6 +1326,9 @@ function Workbench() {
       demonstrations.find((item) => item.id === selectedDemoId) ??
       demonstrations[0];
     if (!demonstration) return;
+    const requestId = evaluationRequestRef.current + 1;
+    evaluationRequestRef.current = requestId;
+    evaluationInFlightRef.current = true;
     setEvaluatedDemoId(demonstration.id);
     setBusy(true);
     setError(null);
@@ -1328,6 +1348,7 @@ function Workbench() {
           rolloutArgs.timelineFps,
           config.physics,
         );
+        if (evaluationRequestRef.current !== requestId) return;
         const finalFrame = result.frames[result.frames.length - 1];
         if (!finalFrame) throw new Error("The rollout returned no frames.");
         const frameError = (frame: RolloutFrame) =>
@@ -1404,6 +1425,7 @@ function Workbench() {
           demonstration.target,
           demonstration.current,
         );
+        if (evaluationRequestRef.current !== requestId) return;
         const poseReplayFrames = buildPosePredictionPreviewFrames(
           demonstration.current,
           result.positions,
@@ -1419,13 +1441,17 @@ function Workbench() {
         );
       }
     } catch (cause) {
+      if (evaluationRequestRef.current !== requestId) return;
       setError(
         cause instanceof Error
           ? cause.message
           : "Unable to evaluate the demonstration.",
       );
     } finally {
-      setBusy(false);
+      if (evaluationRequestRef.current === requestId) {
+        evaluationInFlightRef.current = false;
+        setBusy(false);
+      }
     }
   }
 
@@ -1543,7 +1569,7 @@ function Workbench() {
           onDeleteDataset={deleteDataset}
           onMoveDemonstration={moveDemonstration}
           onPreview={replayDemonstration}
-          onSelectDemo={setSelectedDemoId}
+          onSelectDemo={chooseDemonstrationTarget}
           onDeleteDemo={deleteDemonstration}
         />
       );
@@ -1567,7 +1593,7 @@ function Workbench() {
             timelineSourceFrames,
           )}
           onDatasetChange={selectDataset}
-          onDemoChange={setSelectedDemoId}
+          onDemoChange={chooseDemonstrationTarget}
           onConfigChange={updateConfig}
           onModelSpecChange={updateModelSpec}
           onTrain={startTraining}
@@ -1586,6 +1612,8 @@ function Workbench() {
           trained={trained}
           busy={busy}
           demonstrationsLength={demonstrations.length}
+          demonstrations={demonstrations}
+          selectedDemoId={selectedDemoId}
           demonstrationName={
             demonstrations.find((item) => item.id === evaluatedDemoId)?.name ??
             demonstrations.find((item) => item.id === selectedDemoId)?.name ??
@@ -1616,6 +1644,7 @@ function Workbench() {
             replayFrames(rolloutFrames, "the evaluated trajectory")
           }
           onEvaluate={testModel}
+          onDemoChange={chooseDemonstrationTarget}
           onEvaluationStepBudgetChange={(value) =>
             updateConfig("rollout_steps", value)
           }

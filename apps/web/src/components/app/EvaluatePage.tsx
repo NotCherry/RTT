@@ -11,7 +11,8 @@ import { RobotViewport } from "@/components/workbench/RobotViewport";
 import { Progress } from "@/components/ui/progress";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import type { Robot, SimulationState, RolloutFrame } from "@/types";
+import { NativeSelect } from "@/components/ui/native-select";
+import type { Demonstration, Robot, SimulationState, RolloutFrame } from "@/types";
 import { meanAbsoluteError as meanError } from "@/domain/metrics";
 
 type EvaluationResult = {
@@ -26,6 +27,8 @@ type EvaluatePageProps = {
         trained: boolean;
         busy: boolean;
         demonstrationsLength: number;
+        demonstrations: Demonstration[];
+        selectedDemoId: string | null;
         demonstrationName: string | null;
         demonstrationKind: string | null;
         checkpointCount: number;
@@ -51,6 +54,7 @@ type EvaluatePageProps = {
         replaying: boolean;
         onReplay: () => void;
         onEvaluate: () => void;
+        onDemoChange: (id: string) => void;
         onEvaluationStepBudgetChange: (value: string) => void;
 };
 
@@ -60,6 +64,8 @@ export function EvaluatePage({
         trained,
         busy,
         demonstrationsLength,
+        demonstrations,
+        selectedDemoId,
         demonstrationName,
         demonstrationKind,
         checkpointCount,
@@ -70,6 +76,7 @@ export function EvaluatePage({
         replaying,
         onReplay,
         onEvaluate,
+        onDemoChange,
         onEvaluationStepBudgetChange,
 }: EvaluatePageProps) {
         const lastAutoPlayedRollout = useRef<RolloutFrame[] | null>(null);
@@ -172,6 +179,23 @@ export function EvaluatePage({
                                                 </div>
                                         </PanelHeader>
                                         <div className="evaluation-route-content">
+                                                {demonstrations.length > 1 ? (
+                                                        <Label>
+                                                                Demonstration to evaluate
+                                                                <NativeSelect
+                                                                        value={selectedDemoId ?? ""}
+                                                                        disabled={busy}
+                                                                        onChange={(event) => onDemoChange(event.target.value)}
+                                                                >
+                                                                        <option value="" disabled>Select a demonstration</option>
+                                                                        {demonstrations.map((demonstration) => (
+                                                                                <option key={demonstration.id} value={demonstration.id}>
+                                                                                        {demonstration.name} · {demonstration.kind}
+                                                                                </option>
+                                                                        ))}
+                                                                </NativeSelect>
+                                                        </Label>
+                                                ) : null}
                                                 <div className="flex flex-col gap-2">
                                                         <Label>
                                                                 Evaluation step budget
