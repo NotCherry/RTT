@@ -7,12 +7,13 @@ import hashlib
 import io
 import json
 import math
+import random
 import threading
 import time
 import uuid
 import zipfile
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 import xml.etree.ElementTree as ET
 
 import numpy as np
@@ -21,7 +22,7 @@ import torch  # type: ignore[import-not-found]
 from fastapi import FastAPI, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect  # type: ignore[import-not-found]
 from fastapi.middleware.cors import CORSMiddleware  # type: ignore[import-not-found]
 from fastapi.responses import StreamingResponse  # type: ignore[import-not-found]
-from pydantic import BaseModel, Field  # type: ignore[import-not-found]
+from pydantic import BaseModel, Field, model_validator  # type: ignore[import-not-found]
 from .session_runtime import SessionEvents, serialized
 from .modeling import ModelSpec, compile_policy, legacy_model_spec
 
@@ -423,19 +424,91 @@ class TrainRequest(BaseModel):
     config: TrainConfig = Field(default_factory=TrainConfig)  # type: ignore[arg-type]  # pyright needs a plugin for pydantic defaults; runtime-verified
 
 
-class ExperimentSpec(BaseModel):
+class ExperimentSpecBase(BaseModel):
     version: Literal[1] = 1
-    strategy: Literal["quick"] = "quick"
-    trials: int = Field(6, ge=2, le=12)
     trial_epochs: int = Field(30, ge=5, le=300)
     score_name: Literal["checkpoint_fidelity"] = OPTIMIZATION_SCORE_NAME
     score_version: Literal[1] = OPTIMIZATION_SCORE_VERSION
 
 
+class QuickExperimentSpec(ExperimentSpecBase):
+    strategy: Literal["quick"] = "quick"
+    trials: int = Field(6, ge=2, le=12)
+
+
+class EvolutionSearchSpace(BaseModel):
+    optimize_width: bool = True
+    min_width: int = Field(16, ge=1, le=512)
+    max_width: int = Field(256, ge=1, le=512)
+    width_step: int = Field(16, ge=1, le=128)
+    optimize_depth: bool = True
+    min_depth: int = Field(1, ge=1, le=8)
+    max_depth: int = Field(4, ge=1, le=8)
+    activations: list[Literal["relu", "tanh", "gelu"]] = Field(
+        default_factory=lambda: ["relu", "tanh", "gelu"], min_length=1
+    )
+    optimize_learning_rate: bool = True
+    min_learning_rate: float = Field(0.0003, ge=0.000001, le=1.0)
+    max_learning_rate: float = Field(0.01, ge=0.000001, le=1.0)
+
+    def mutable_dimensions(self) -> list[str]:
+        dimensions: list[str] = []
+        if self.optimize_width and self.min_width < self.max_width:
+            dimensions.append("width")
+        if self.optimize_depth and self.min_depth < self.max_depth:
+            dimensions.append("depth")
+        if len(self.activations) > 1:
+            dimensions.append("activation")
+        if self.optimize_learning_rate and self.min_learning_rate < self.max_learning_rate:
+            dimensions.append("learning_rate")
+        return dimensions
+
+    @model_validator(mode="after")
+    def valid_ranges(self) -> "EvolutionSearchSpace":
+        if self.min_width > self.max_width:
+            raise ValueError("Minimum width cannot exceed maximum width.")
+        if self.min_depth > self.max_depth:
+            raise ValueError("Minimum depth cannot exceed maximum depth.")
+        if self.min_learning_rate > self.max_learning_rate:
+            raise ValueError("Minimum learning rate cannot exceed maximum learning rate.")
+        if not self.mutable_dimensions():
+            raise ValueError("Evolution search must vary at least one parameter.")
+        return self
+
+
+class EvolutionExperimentSpec(ExperimentSpecBase):
+    strategy: Literal["evolution"]
+    population_size: int = Field(4, ge=2, le=8)
+    generations: int = Field(3, ge=2, le=8)
+    mutation_rate: float = Field(0.35, ge=0.05, le=1.0)
+    search_space: EvolutionSearchSpace = Field(default_factory=EvolutionSearchSpace)
+
+    @model_validator(mode="after")
+    def bounded_search_budget(self) -> "EvolutionExperimentSpec":
+        if self.population_size * self.generations > 48:
+            raise ValueError("Evolution search is limited to 48 candidate fits.")
+        return self
+
+
+ExperimentSpec = Annotated[
+    QuickExperimentSpec | EvolutionExperimentSpec,
+    Field(discriminator="strategy"),
+]
+
+
 class OptimizeRequest(BaseModel):
     demonstrations: list[Demonstration]
     config: TrainConfig = Field(default_factory=TrainConfig)  # type: ignore[arg-type]
-    experiment: ExperimentSpec = Field(default_factory=ExperimentSpec)  # type: ignore[arg-type]
+    experiment: ExperimentSpec = Field(default_factory=QuickExperimentSpec)  # type: ignore[arg-type]
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_legacy_quick_experiment(cls, value: Any) -> Any:
+        if isinstance(value, dict) and isinstance(value.get("experiment"), dict):
+            experiment = value["experiment"]
+            if "strategy" not in experiment:
+                value = {**value, "experiment": {**experiment, "strategy": "quick"}}
+        return value
 
 
 class SessionRequest(BaseModel):
@@ -1688,6 +1761,8 @@ def train_session(
 
 def quick_search_configs(request: OptimizeRequest) -> list[TrainConfig]:
     """Create a deterministic, bounded comparison around the edited MLP."""
+    if not isinstance(request.experiment, QuickExperimentSpec):
+        raise ValueError("Quick-search configuration requires the quick strategy.")
     base = request.config
     base_spec = base.model_spec or legacy_model_spec(base.hidden_layers, base.activation)
     width_scales = [1.0, 0.5, 1.5, 0.75, 2.0, 1.25]
@@ -1721,11 +1796,153 @@ def quick_search_configs(request: OptimizeRequest) -> list[TrainConfig]:
                     "hidden_layers": [block.width for block in blocks],
                     "activation": activation,
                     "model_spec": spec,
-                    "random_seed": base.random_seed + index,
+                    "random_seed": base.random_seed,
                 }
             )
         )
     return candidates
+
+
+def evolutionary_search_configs(
+    request: OptimizeRequest,
+    parents: list[TrainConfig] | None = None,
+    generation: int = 1,
+) -> list[TrainConfig]:
+    """Build one deterministic MLP population from the best prior configs."""
+    if not isinstance(request.experiment, EvolutionExperimentSpec):
+        raise ValueError("Evolutionary configuration requires the evolution strategy.")
+    base = request.config
+    search_space = request.experiment.search_space
+    parent_pool = parents or [base]
+    population: list[TrainConfig] = []
+    for index in range(request.experiment.population_size):
+        parent = parent_pool[index % len(parent_pool)]
+        parent_spec = parent.model_spec or legacy_model_spec(
+            parent.hidden_layers, parent.activation
+        )
+        rng = random.Random(
+            base.random_seed + generation * 10_007 + index * 101
+        )
+        blocks = [block.model_copy() for block in parent_spec.blocks]
+        if search_space.optimize_depth:
+            blocks = blocks[: search_space.max_depth]
+            while len(blocks) < search_space.min_depth:
+                blocks.append(blocks[-1].model_copy())
+        blocks = [
+            block.model_copy(
+                update={
+                    "width": (
+                        max(search_space.min_width, min(search_space.max_width, block.width))
+                        if search_space.optimize_width
+                        else block.width
+                    ),
+                    "activation": (
+                        block.activation
+                        if block.activation in search_space.activations
+                        else search_space.activations[0]
+                    ),
+                }
+            )
+            for block in blocks
+        ]
+        changed = False
+        if not (generation == 1 and index == 0):
+            for block_index, block in enumerate(blocks):
+                if search_space.optimize_width and rng.random() < request.experiment.mutation_rate:
+                    factor = rng.choice([0.5, 0.75, 1.25, 1.5])
+                    width = int(round(block.width * factor / search_space.width_step) * search_space.width_step)
+                    width = max(search_space.min_width, min(search_space.max_width, width))
+                    blocks[block_index] = block.model_copy(update={"width": width})
+                    changed = changed or width != block.width
+                if len(search_space.activations) > 1 and rng.random() < request.experiment.mutation_rate:
+                    activation = rng.choice(search_space.activations)
+                    blocks[block_index] = blocks[block_index].model_copy(
+                        update={"activation": activation}
+                    )
+                    changed = changed or activation != block.activation
+            if search_space.optimize_depth and rng.random() < request.experiment.mutation_rate / 2:
+                if len(blocks) < search_space.max_depth and rng.random() < 0.5:
+                    blocks.append(
+                        blocks[-1].model_copy(
+                            update={"width": max(search_space.min_width, min(search_space.max_width, blocks[-1].width))}
+                        )
+                    )
+                    changed = True
+                elif len(blocks) > search_space.min_depth:
+                    blocks.pop(rng.randrange(len(blocks)))
+                    changed = True
+        learning_rate = (
+            max(
+                search_space.min_learning_rate,
+                min(search_space.max_learning_rate, parent.learning_rate),
+            )
+            if search_space.optimize_learning_rate
+            else parent.learning_rate
+        )
+        if (
+            not (generation == 1 and index == 0)
+            and search_space.optimize_learning_rate
+            and rng.random() < request.experiment.mutation_rate
+        ):
+            learning_rate = max(
+                search_space.min_learning_rate,
+                min(
+                    search_space.max_learning_rate,
+                    learning_rate * rng.choice([0.5, 0.75, 1.25, 1.5]),
+                ),
+            )
+            changed = changed or learning_rate != parent.learning_rate
+        if not (generation == 1 and index == 0) and not changed:
+            forced_dimension = rng.choice(search_space.mutable_dimensions())
+            if forced_dimension == "width":
+                block = blocks[0]
+                direction = (
+                    search_space.width_step
+                    if block.width < search_space.max_width
+                    else -search_space.width_step
+                )
+                width = max(
+                    search_space.min_width,
+                    min(search_space.max_width, block.width + direction),
+                )
+                blocks[0] = block.model_copy(update={"width": width})
+            elif forced_dimension == "depth":
+                if len(blocks) < search_space.max_depth:
+                    blocks.append(blocks[-1].model_copy())
+                else:
+                    blocks.pop()
+            elif forced_dimension == "activation":
+                block = blocks[0]
+                activation = next(
+                    item for item in search_space.activations if item != block.activation
+                )
+                blocks[0] = block.model_copy(update={"activation": activation})
+            else:
+                learning_rate = (
+                    search_space.max_learning_rate
+                    if learning_rate < search_space.max_learning_rate
+                    else search_space.min_learning_rate
+                )
+        activation = blocks[0].activation
+        spec = parent_spec.model_copy(
+            update={
+                "name": f"Evolution g{generation} candidate {index + 1}",
+                "blocks": blocks,
+            }
+        )
+        population.append(
+            parent.model_copy(
+                update={
+                    "epochs": request.experiment.trial_epochs,
+                    "learning_rate": learning_rate,
+                    "hidden_layers": [block.width for block in blocks],
+                    "activation": activation,
+                    "model_spec": spec,
+                    "random_seed": base.random_seed,
+                }
+            )
+        )
+    return population
 
 
 def optimization_score(outcome: dict[str, Any]) -> dict[str, float | str]:
@@ -1749,6 +1966,77 @@ def optimization_score(outcome: dict[str, Any]) -> dict[str, float | str]:
     }
 
 
+class SearchStrategyAdapter:
+    """Internal seam for producing and advancing bounded search generations."""
+
+    def __init__(self, request: OptimizeRequest) -> None:
+        self.request = request
+
+    @property
+    def total_trials(self) -> int:
+        raise NotImplementedError
+
+    @property
+    def generation_count(self) -> int:
+        raise NotImplementedError
+
+    def candidates(self, generation: int) -> list[TrainConfig]:
+        raise NotImplementedError
+
+    def accept_generation(self, ranked: list[tuple[float, TrainConfig]]) -> None:
+        del ranked
+
+
+class QuickSearchAdapter(SearchStrategyAdapter):
+    @property
+    def total_trials(self) -> int:
+        experiment = self.request.experiment
+        assert isinstance(experiment, QuickExperimentSpec)
+        return experiment.trials
+
+    @property
+    def generation_count(self) -> int:
+        return 1
+
+    def candidates(self, generation: int) -> list[TrainConfig]:
+        if generation != 1:
+            raise ValueError("Quick search has exactly one generation.")
+        return quick_search_configs(self.request)
+
+
+class EvolutionSearchAdapter(SearchStrategyAdapter):
+    def __init__(self, request: OptimizeRequest) -> None:
+        super().__init__(request)
+        self.parents: list[TrainConfig] | None = None
+
+    @property
+    def experiment(self) -> EvolutionExperimentSpec:
+        experiment = self.request.experiment
+        assert isinstance(experiment, EvolutionExperimentSpec)
+        return experiment
+
+    @property
+    def total_trials(self) -> int:
+        return self.experiment.population_size * self.experiment.generations
+
+    @property
+    def generation_count(self) -> int:
+        return self.experiment.generations
+
+    def candidates(self, generation: int) -> list[TrainConfig]:
+        return evolutionary_search_configs(self.request, self.parents, generation)
+
+    def accept_generation(self, ranked: list[tuple[float, TrainConfig]]) -> None:
+        elite_count = max(1, min(2, self.experiment.population_size // 2))
+        self.parents = [config for _, config in ranked[:elite_count]]
+
+
+def search_strategy_adapter(request: OptimizeRequest) -> SearchStrategyAdapter:
+    if isinstance(request.experiment, QuickExperimentSpec):
+        return QuickSearchAdapter(request)
+    return EvolutionSearchAdapter(request)
+
+
 def optimize_session(session: SimulationSession, request: OptimizeRequest) -> None:
     """Compare bounded candidates sequentially and retain only the best policy."""
     results: list[dict[str, Any]] = []
@@ -1756,58 +2044,69 @@ def optimize_session(session: SimulationSession, request: OptimizeRequest) -> No
     best_config: TrainConfig | None = None
     best_score = math.inf
     try:
-        candidates = quick_search_configs(request)
+        adapter = search_strategy_adapter(request)
         session.events.append(
             {
                 "type": "optimization_started",
                 "experiment": request.experiment.model_dump(),
             }
         )
-        for index, config in enumerate(candidates):
-            session.check_training_cancelled()
-            with session.lock:
-                session.training = True
-            session.events.append(
-                {
-                    "type": "optimization_trial_started",
-                    "trial": index + 1,
-                    "trials": len(candidates),
+        for generation in range(1, adapter.generation_count + 1):
+            candidates = adapter.candidates(generation)
+            generation_results: list[tuple[float, TrainConfig]] = []
+            for candidate_index, config in enumerate(candidates, start=1):
+                trial = len(results) + 1
+                session.check_training_cancelled()
+                with session.lock:
+                    session.training = True
+                session.events.append(
+                    {
+                        "type": "optimization_trial_started",
+                        "trial": trial,
+                        "trials": adapter.total_trials,
+                        "generation": generation,
+                        "generations": adapter.generation_count,
+                        "candidate": candidate_index,
+                        "config": config.model_dump(),
+                    }
+                )
+                outcome = train_session(
+                    session,
+                    TrainRequest(demonstrations=request.demonstrations, config=config),
+                    install_model=False,
+                    emit_complete=False,
+                    release_training=False,
+                )
+                if outcome is None:
+                    raise ValueError(f"Search candidate {trial} did not complete.")
+                score_components = optimization_score(outcome)
+                score = float(score_components["score"])
+                result = {
+                    "trial": trial,
+                    "generation": generation,
+                    "candidate": candidate_index,
+                    "score": score,
+                    "score_name": request.experiment.score_name,
+                    "score_version": request.experiment.score_version,
+                    "score_basis": score_components["score_basis"],
+                    "reproduction_error": score_components["reproduction_error"],
+                    "simultaneity_penalty": score_components["simultaneity_penalty"],
+                    "loss": float(outcome["loss"]),
+                    "simultaneity": float(outcome.get("simultaneity", 1.0)),
                     "config": config.model_dump(),
                 }
-            )
-            outcome = train_session(
-                session,
-                TrainRequest(demonstrations=request.demonstrations, config=config),
-                install_model=False,
-                emit_complete=False,
-                release_training=False,
-            )
-            if outcome is None:
-                raise ValueError(f"Quick-search candidate {index + 1} did not complete.")
-            score_components = optimization_score(outcome)
-            score = float(score_components["score"])
-            result = {
-                "trial": index + 1,
-                "score": score,
-                "score_name": request.experiment.score_name,
-                "score_version": request.experiment.score_version,
-                "score_basis": score_components["score_basis"],
-                "reproduction_error": score_components["reproduction_error"],
-                "simultaneity_penalty": score_components["simultaneity_penalty"],
-                "loss": float(outcome["loss"]),
-                "simultaneity": float(outcome.get("simultaneity", 1.0)),
-                "config": config.model_dump(),
-            }
-            results.append(result)
-            if score < best_score:
-                best_score = score
-                best_model = copy.deepcopy(outcome["model"]).eval()
-                best_config = config
-            session.events.append({"type": "optimization_trial_complete", **result})
-            outcome["model"] = None
-            gc.collect()
+                results.append(result)
+                generation_results.append((score, config))
+                if score < best_score:
+                    best_score = score
+                    best_model = copy.deepcopy(outcome["model"]).eval()
+                    best_config = config
+                session.events.append({"type": "optimization_trial_complete", **result})
+                outcome["model"] = None
+                gc.collect()
+            adapter.accept_generation(sorted(generation_results, key=lambda item: item[0]))
         if best_model is None or best_config is None:
-            raise ValueError("Quick search did not produce a model.")
+            raise ValueError("Model search did not produce a model.")
         with session.lock:
             session.model = best_model
             session.model_config = best_config.model_dump()

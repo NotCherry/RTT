@@ -39,6 +39,8 @@ const experiment: ExperimentRecord = {
   best_trial: 1,
   results: [{
     trial: 1,
+    generation: 1,
+    candidate: 1,
     score: 0.01,
     score_name: "checkpoint_fidelity",
     score_version: 1,
@@ -95,6 +97,22 @@ describe("browser archive", () => {
     }));
 
     expect(loadBrowserArchive(storage, "sample-arm")?.experiments).toEqual([]);
+  });
+
+  it("adds generation identity to legacy quick-search results", () => {
+    const storage = memoryStorage();
+    const legacyExperiment = {
+      ...experiment,
+      results: experiment.results.map(({ generation: _generation, candidate: _candidate, ...result }) => result),
+    };
+    storage.setItem("robot-learning-workbench:archive:v1:sample-arm", JSON.stringify({
+      demonstrations: [demonstration], datasets: [dataset],
+      activeDatasetId: dataset.id, experiments: [legacyExperiment],
+    }));
+
+    expect(loadBrowserArchive(storage, "sample-arm")?.experiments[0]?.results[0]).toMatchObject({
+      trial: 1, generation: 1, candidate: 1,
+    });
   });
 
   it("ignores corrupt or incompatible saved data", () => {

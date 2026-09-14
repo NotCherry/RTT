@@ -3,6 +3,7 @@ import type {
   Dataset,
   Demonstration,
   DemonstrationFrame,
+  ExperimentSpec,
   Robot,
   RolloutFrame,
   RolloutResponse,
@@ -121,8 +122,7 @@ export function optimizeSession(
   sessionId: string,
   demonstrations: Demonstration[],
   config: TrainingConfig,
-  trials: number,
-  trialEpochs: number,
+  experiment: ExperimentSpec,
 ) {
   return request<{ status: string }>(`/api/sessions/${sessionId}/optimize`, {
     method: "POST",
@@ -130,14 +130,7 @@ export function optimizeSession(
     body: JSON.stringify({
       demonstrations,
       config,
-      experiment: {
-        version: 1,
-        strategy: "quick",
-        trials,
-        trial_epochs: trialEpochs,
-        score_name: "checkpoint_fidelity",
-        score_version: 1,
-      },
+      experiment,
     }),
   });
 }

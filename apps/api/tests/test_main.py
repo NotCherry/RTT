@@ -17,6 +17,7 @@ from app.main import (  # type: ignore[import-not-found]
     app,
     build_incremental_samples,
     denormalized,
+    evolutionary_search_configs,
     normalized,
     optimize_session,
     quick_search_configs,
@@ -126,11 +127,14 @@ def test_quick_search_is_bounded_deterministic_and_promotes_best_model():
     assert len(candidates) == 2
     assert candidates[0].model_spec is not None
     assert candidates[0].epochs == 5
+    assert {candidate.random_seed for candidate in candidates} == {request.config.random_seed}
     complete = [event for event in session.events if event.get("type") == "optimization_complete"]
     assert len(complete) == 1
     assert len(complete[0]["results"]) == 2
     assert complete[0]["results"][0]["score_name"] == "checkpoint_fidelity"
     assert complete[0]["results"][0]["score_version"] == 1
+    assert complete[0]["results"][0]["generation"] == 1
+    assert complete[0]["results"][0]["candidate"] == 1
     assert complete[0]["results"][0]["score_basis"] == "training_loss"
     assert complete[0]["results"][0]["score"] == pytest.approx(
         complete[0]["results"][0]["reproduction_error"]
@@ -138,6 +142,154 @@ def test_quick_search_is_bounded_deterministic_and_promotes_best_model():
     )
     assert session.model is not None
     assert session.model_config == complete[0]["best_config"]
+
+
+def test_evolution_search_mutates_elites_across_bounded_generations():
+    session_id, _ = create_sample_session()
+    session = SESSIONS[session_id]
+    demo = Demonstration(
+        id="evolution-pose",
+        name="evolution pose",
+        kind="pose",
+        current=[0.0, 0.0],
+        target=[0.3, -0.1],
+        frames=[{"timestamp": 0, "positions": [0.3, -0.1]}],
+    )
+    request = OptimizeRequest(
+        demonstrations=[demo],
+        config=TrainConfig(epochs=20, random_starts=0, physics=False, random_seed=11),
+        experiment={
+            "strategy": "evolution",
+            "population_size": 2,
+            "generations": 2,
+            "mutation_rate": 0.5,
+            "trial_epochs": 5,
+        },
+    )
+
+    first = evolutionary_search_configs(request, generation=1)
+    repeated = evolutionary_search_configs(request, generation=1)
+    second = evolutionary_search_configs(request, first[:1], generation=2)
+    optimize_session(session, request)
+
+    assert [item.model_dump() for item in first] == [item.model_dump() for item in repeated]
+    assert first[0].hidden_layers == request.config.hidden_layers
+    assert {candidate.random_seed for candidate in first + second} == {request.config.random_seed}
+    assert any(item.hidden_layers != first[0].hidden_layers for item in second)
+    complete = [event for event in session.events if event.get("type") == "optimization_complete"]
+    assert len(complete) == 1
+    assert [result["generation"] for result in complete[0]["results"]] == [1, 1, 2, 2]
+    assert [result["candidate"] for result in complete[0]["results"]] == [1, 2, 1, 2]
+    assert session.model_config == complete[0]["best_config"]
+
+
+def test_evolution_search_rejects_an_unbounded_candidate_budget():
+    with pytest.raises(ValueError, match="48 candidate fits"):
+        OptimizeRequest(
+            demonstrations=[],
+            experiment={
+                "strategy": "evolution",
+                "population_size": 8,
+                "generations": 8,
+            },
+        )
+
+
+def test_evolution_rejects_equal_bounds_with_no_other_variation():
+    with pytest.raises(ValueError, match="vary at least one parameter"):
+        OptimizeRequest(
+            demonstrations=[],
+            experiment={
+                "strategy": "evolution",
+                "search_space": {
+                    "optimize_width": True,
+                    "min_width": 64,
+                    "max_width": 64,
+                    "optimize_depth": False,
+                    "activations": ["relu"],
+                    "optimize_learning_rate": False,
+                },
+            },
+        )
+
+
+def test_evolution_forces_variation_when_width_search_is_disabled():
+    request = OptimizeRequest(
+        demonstrations=[],
+        config=TrainConfig(random_seed=23),
+        experiment={
+            "strategy": "evolution",
+            "population_size": 4,
+            "mutation_rate": 0.05,
+            "search_space": {
+                "optimize_width": False,
+                "optimize_depth": False,
+                "activations": ["relu", "tanh"],
+                "optimize_learning_rate": False,
+            },
+        },
+    )
+
+    candidates = evolutionary_search_configs(request, generation=1)
+
+    assert candidates[0].model_spec.blocks[0].activation == "relu"
+    parent_activations = [block.activation for block in candidates[0].model_spec.blocks]
+    assert all(
+        [block.activation for block in candidate.model_spec.blocks] != parent_activations
+        for candidate in candidates[1:]
+    )
+
+
+def test_evolution_uses_strongest_parent_and_promotes_global_best(monkeypatch):
+    session_id, _ = create_sample_session()
+    session = SESSIONS[session_id]
+    request = OptimizeRequest(
+        demonstrations=[
+            Demonstration(
+                id="controlled-evolution",
+                name="controlled evolution",
+                kind="pose",
+                current=[0.0, 0.0],
+                target=[0.2, -0.1],
+                frames=[{"timestamp": 0, "positions": [0.2, -0.1]}],
+            )
+        ],
+        config=TrainConfig(random_starts=0, physics=False, random_seed=19),
+        experiment={
+            "strategy": "evolution",
+            "population_size": 2,
+            "generations": 2,
+            "trial_epochs": 5,
+        },
+    )
+    losses = iter([0.4, 0.1, 0.3, 0.2])
+    captured_parents = []
+    original_generator = evolutionary_search_configs
+
+    def observed_generator(request, parents=None, generation=1):
+        if generation == 2:
+            captured_parents.extend(parents or [])
+        return original_generator(request, parents, generation)
+
+    def controlled_train(*_args, **_kwargs):
+        return {
+            "model": compile_policy(7, 2, ModelSpec()),
+            "loss": next(losses),
+            "checkpoint_probe": [],
+            "simultaneity": 1.0,
+        }
+
+    monkeypatch.setattr("app.main.evolutionary_search_configs", observed_generator)
+    monkeypatch.setattr("app.main.train_session", controlled_train)
+    optimize_session(session, request)
+
+    complete = next(
+        event for event in session.events if event.get("type") == "optimization_complete"
+    )
+    best_result = min(complete["results"], key=lambda result: result["score"])
+    assert captured_parents[0].model_dump() == complete["results"][1]["config"]
+    assert complete["best_config"] == best_result["config"]
+    assert best_result["trial"] == 2
 
 
 def test_candidate_fit_does_not_replace_active_model_or_release_search_lock():

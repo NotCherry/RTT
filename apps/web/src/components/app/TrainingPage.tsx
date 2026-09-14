@@ -8,7 +8,7 @@ import { NativeSelect } from "@/components/ui/native-select";
 import { Separator } from "@/components/ui/separator";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import type { Dataset, Demonstration, Joint, ModelSpec, OptimizationResult, OptimizationStatus, TrainingConfig } from "@/types";
+import type { Dataset, Demonstration, EvolutionSearchSpace, ExperimentSpec, Joint, ModelSpec, OptimizationResult, OptimizationStatus, TrainingConfig } from "@/types";
 
 type TrainingMetric = {
   epoch: number;
@@ -40,7 +40,7 @@ type TrainingPageProps = {
   onConfigChange: (key: keyof TrainingConfig, value: string) => void;
   onModelSpecChange: (spec: ModelSpec) => void;
   onTrain: () => void;
-  onOptimize: (trials: number, trialEpochs: number) => void;
+  onOptimize: (experiment: ExperimentSpec) => void;
 };
 
 const fallbackSpec: ModelSpec = {
@@ -71,6 +71,15 @@ export function TrainingPage({
 }: TrainingPageProps) {
   const [searchTrials, setSearchTrials] = useState(6);
   const [trialEpochs, setTrialEpochs] = useState(30);
+  const [searchStrategy, setSearchStrategy] = useState<"quick" | "evolution">("quick");
+  const [populationSize, setPopulationSize] = useState(4);
+  const [generations, setGenerations] = useState(3);
+  const [searchSpace, setSearchSpace] = useState<EvolutionSearchSpace>({
+    optimize_width: true, min_width: 16, max_width: 256, width_step: 16,
+    optimize_depth: true, min_depth: 1, max_depth: 4,
+    activations: ["relu", "tanh", "gelu"],
+    optimize_learning_rate: true, min_learning_rate: 0.0003, max_learning_rate: 0.01,
+  });
   const spec = config.model_spec ?? fallbackSpec;
   const selected = demonstrations.find((item) => item.id === selectedDemoId);
   const visibleDemonstrations = demonstrations.filter(
@@ -85,7 +94,46 @@ export function TrainingPage({
     () => [...optimizationResults].sort((left, right) => left.score - right.score)[0],
     [optimizationResults],
   );
-  const canRun = Boolean(sessionId && selected && !busy && !training && !optimizing);
+  const searchSpaceRangesValid = (
+    searchSpace.min_width <= searchSpace.max_width &&
+    searchSpace.min_depth <= searchSpace.max_depth &&
+    searchSpace.min_learning_rate <= searchSpace.max_learning_rate
+  );
+  const searchSpaceHasVariation = (
+    (searchSpace.optimize_width && searchSpace.min_width < searchSpace.max_width) ||
+    (searchSpace.optimize_depth && searchSpace.min_depth < searchSpace.max_depth) ||
+    searchSpace.activations.length > 1 ||
+    (searchSpace.optimize_learning_rate && searchSpace.min_learning_rate < searchSpace.max_learning_rate)
+  );
+  const searchSpaceValid = searchStrategy === "quick" || (
+    searchSpaceRangesValid && searchSpaceHasVariation
+  );
+  const canTrain = Boolean(sessionId && selected && !busy && !training && !optimizing);
+  const canSearch = canTrain && searchSpaceValid;
+  const experiment: ExperimentSpec = searchStrategy === "quick"
+    ? {
+        version: 1, strategy: "quick", trials: searchTrials,
+        trial_epochs: trialEpochs, score_name: "checkpoint_fidelity", score_version: 1,
+      }
+    : {
+        version: 1, strategy: "evolution", population_size: populationSize,
+        generations, mutation_rate: 0.35, search_space: searchSpace,
+        trial_epochs: trialEpochs,
+        score_name: "checkpoint_fidelity", score_version: 1,
+      };
+  const candidateFits = searchStrategy === "quick" ? searchTrials : populationSize * generations;
+  function toggleActivation(activation: EvolutionSearchSpace["activations"][number]) {
+    setSearchSpace((current) => {
+      const selected = current.activations.includes(activation);
+      if (selected && current.activations.length === 1) return current;
+      return {
+        ...current,
+        activations: selected
+          ? current.activations.filter((item) => item !== activation)
+          : [...current.activations, activation],
+      };
+    });
+  }
   const optimizationMetricLabel = optimizationStatus === "running"
     ? "Current best loss"
     : optimizationStatus === "promoted"
@@ -231,18 +279,54 @@ export function TrainingPage({
             <div className="rounded border border-line-650 bg-ink-850 p-4">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
-                  <PanelLabel>QUICK SEARCH</PanelLabel>
-                  <p className="mt-2 max-w-2xl text-xs leading-5 text-text-500">Compare nearby widths, activations and learning rates. Trials run one at a time and only the best model is retained in memory.</p>
+                  <PanelLabel>MODEL SEARCH</PanelLabel>
+                  <p className="mt-2 max-w-2xl text-xs leading-5 text-text-500">{searchStrategy === "quick" ? "Compare a fixed set of nearby widths, activations and learning rates." : "Keep the strongest candidates, then mutate layer widths, depth, activations and learning rate for the next generation."} Trials run one at a time and only the current and best model are retained in memory.</p>
                 </div>
                 <StatusPill online={optimizing}>{optimizing ? "Running" : "1 worker"}</StatusPill>
               </div>
               <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                <Label>Candidates<DraftNumberInput integer min="2" max="12" value={searchTrials} onValueChange={setSearchTrials} /></Label>
+                <Label>Search method<NativeSelect value={searchStrategy} onChange={(event) => setSearchStrategy(event.target.value as typeof searchStrategy)}><option value="quick">Quick scan</option><option value="evolution">Evolution</option></NativeSelect></Label>
                 <Label>Epochs per candidate<DraftNumberInput integer min="5" max="300" value={trialEpochs} onValueChange={setTrialEpochs} /></Label>
+                {searchStrategy === "quick" ? (
+                  <Label>Candidates<DraftNumberInput integer min="2" max="12" value={searchTrials} onValueChange={setSearchTrials} /></Label>
+                ) : (
+                  <>
+                    <Label>Population<DraftNumberInput integer min="2" max="8" value={populationSize} onValueChange={setPopulationSize} /></Label>
+                    <Label>Generations<DraftNumberInput integer min="2" max="6" value={generations} onValueChange={setGenerations} /></Label>
+                  </>
+                )}
               </div>
+              {searchStrategy === "evolution" && (
+                <details className="mt-4 rounded border border-line-650 bg-ink-900 p-3">
+                  <summary className="cursor-pointer font-mono text-xs text-text-300">Parameters to evolve</summary>
+                  <div className="mt-4 space-y-4">
+                    <div className="grid gap-3 sm:grid-cols-3">
+                      <Label className="flex flex-row items-center gap-2"><input type="checkbox" checked={searchSpace.optimize_width} onChange={(event) => setSearchSpace((current) => ({ ...current, optimize_width: event.target.checked }))} />Dense width</Label>
+                      <Label>Minimum width<DraftNumberInput integer min="1" max="512" value={searchSpace.min_width} onValueChange={(value) => setSearchSpace((current) => ({ ...current, min_width: value }))} /></Label>
+                      <Label>Maximum width<DraftNumberInput integer min="1" max="512" value={searchSpace.max_width} onValueChange={(value) => setSearchSpace((current) => ({ ...current, max_width: value }))} /></Label>
+                    </div>
+                    <div className="grid gap-3 sm:grid-cols-3">
+                      <Label className="flex flex-row items-center gap-2"><input type="checkbox" checked={searchSpace.optimize_depth} onChange={(event) => setSearchSpace((current) => ({ ...current, optimize_depth: event.target.checked }))} />Network depth</Label>
+                      <Label>Minimum blocks<DraftNumberInput integer min="1" max="8" value={searchSpace.min_depth} onValueChange={(value) => setSearchSpace((current) => ({ ...current, min_depth: value }))} /></Label>
+                      <Label>Maximum blocks<DraftNumberInput integer min="1" max="8" value={searchSpace.max_depth} onValueChange={(value) => setSearchSpace((current) => ({ ...current, max_depth: value }))} /></Label>
+                    </div>
+                    <div>
+                      <PanelLabel>ACTIVATIONS</PanelLabel>
+                      <div className="mt-2 flex flex-wrap gap-3">{(["relu", "tanh", "gelu"] as const).map((activation) => <Label key={activation} className="flex flex-row items-center gap-2"><input type="checkbox" checked={searchSpace.activations.includes(activation)} onChange={() => toggleActivation(activation)} />{activation.toUpperCase()}</Label>)}</div>
+                    </div>
+                    <div className="grid gap-3 sm:grid-cols-3">
+                      <Label className="flex flex-row items-center gap-2"><input type="checkbox" checked={searchSpace.optimize_learning_rate} onChange={(event) => setSearchSpace((current) => ({ ...current, optimize_learning_rate: event.target.checked }))} />Learning rate</Label>
+                      <Label>Minimum rate<DraftNumberInput min="0.000001" max="1" step="any" value={searchSpace.min_learning_rate} onValueChange={(value) => setSearchSpace((current) => ({ ...current, min_learning_rate: value }))} /></Label>
+                      <Label>Maximum rate<DraftNumberInput min="0.000001" max="1" step="any" value={searchSpace.max_learning_rate} onValueChange={(value) => setSearchSpace((current) => ({ ...current, max_learning_rate: value }))} /></Label>
+                    </div>
+                  </div>
+                </details>
+              )}
+              {!searchSpaceRangesValid && <div className="mt-3 alert warning" role="alert">Each minimum must be less than or equal to its maximum.</div>}
+              {searchStrategy === "evolution" && searchSpaceRangesValid && !searchSpaceHasVariation && <div className="mt-3 alert warning" role="alert">Enable at least one parameter with a range or multiple activation choices.</div>}
               <div className="mt-4 grid gap-2 sm:grid-cols-2">
-                <Button variant="primary" onClick={() => onOptimize(searchTrials, trialEpochs)} disabled={!canRun}>{optimizing ? "Searching…" : `Search ${searchTrials} candidates`}</Button>
-                <Button variant="secondary" onClick={onTrain} disabled={!canRun}>{selected ? `Train “${selected.name}”` : "Select a training target"}</Button>
+                <Button variant="primary" onClick={() => onOptimize(experiment)} disabled={!canSearch}>{optimizing ? "Searching…" : searchStrategy === "quick" ? `Scan ${candidateFits} candidates` : `Evolve ${generations} generations · ${candidateFits} fits`}</Button>
+                <Button variant="secondary" onClick={onTrain} disabled={!canTrain}>{selected ? `Train “${selected.name}”` : "Select a training target"}</Button>
               </div>
             </div>
             <Label className="flex flex-row items-center gap-2">
@@ -261,9 +345,9 @@ export function TrainingPage({
             {optimizationResults.length ? (
               <div className="overflow-x-auto rounded border border-line-650">
                 <table className="w-full border-collapse text-left font-mono text-xs">
-                  <thead className="bg-ink-900 text-text-500"><tr><th className="p-3">Candidate</th><th className="p-3">Score ↓</th><th className="p-3">Loss</th><th className="p-3">Shape</th><th className="p-3">Activation</th></tr></thead>
+                  <thead className="bg-ink-900 text-text-500"><tr><th className="p-3">Generation</th><th className="p-3">Candidate</th><th className="p-3">Score ↓</th><th className="p-3">Loss</th><th className="p-3">Shape</th><th className="p-3">Activation</th></tr></thead>
                   <tbody>{[...optimizationResults].sort((left, right) => left.score - right.score).map((result, index) => (
-                    <tr key={result.trial} className="border-t border-line-650 text-text-300"><td className="p-3">{index === 0 ? "★ " : ""}#{result.trial}</td><td className="p-3">{result.score.toFixed(5)}</td><td className="p-3">{result.loss.toFixed(5)}</td><td className="p-3">{(result.config.model_spec?.blocks.map((block) => block.width) ?? result.config.hidden_layers).join(" → ")}</td><td className="p-3">{result.config.model_spec?.blocks.map((block) => block.activation).join(" / ") ?? result.config.activation}</td></tr>
+                    <tr key={result.trial} className="border-t border-line-650 text-text-300"><td className="p-3">{result.generation}</td><td className="p-3">{index === 0 ? "★ " : ""}#{result.candidate}</td><td className="p-3">{result.score.toFixed(5)}</td><td className="p-3">{result.loss.toFixed(5)}</td><td className="p-3">{(result.config.model_spec?.blocks.map((block) => block.width) ?? result.config.hidden_layers).join(" → ")}</td><td className="p-3">{result.config.model_spec?.blocks.map((block) => block.activation).join(" / ") ?? result.config.activation}</td></tr>
                   ))}</tbody>
                 </table>
               </div>

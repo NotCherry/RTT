@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { formatApiErrorDetail, optimizeSession, trainSession } from "./api";
-import type { Demonstration } from "./types";
+import type { Demonstration, EvolutionExperimentSpec } from "./types";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -79,7 +79,10 @@ describe("API error formatting", () => {
       frames: [{ timestamp: 0, positions: [0.5] }],
     };
 
-    await optimizeSession("session-1", [demonstration], config, 6, 30);
+    await optimizeSession("session-1", [demonstration], config, {
+      version: 1, strategy: "quick", trials: 6, trial_epochs: 30,
+      score_name: "checkpoint_fidelity", score_version: 1,
+    });
 
     const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
     expect(body.experiment).toEqual({
@@ -90,5 +93,38 @@ describe("API error formatting", () => {
       score_name: "checkpoint_fidelity",
       score_version: 1,
     });
+  });
+
+  it("sends the evolutionary search contract without flattening its strategy", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ status: "started" }), {
+        status: 200, headers: { "Content-Type": "application/json" },
+      }),
+    );
+    const config = {
+      hidden_layers: [64], activation: "relu", learning_rate: 0.003,
+      epochs: 300, batch_size: 16, timestep_ms: 120, random_starts: 0,
+      random_seed: 7, rollout_steps: 160,
+    };
+    const demonstration: Demonstration = {
+      id: "pose-1", name: "Pose", kind: "pose", current: [0], target: [0.5],
+      frames: [{ timestamp: 0, positions: [0.5] }],
+    };
+    const experiment: EvolutionExperimentSpec = {
+      version: 1, strategy: "evolution",
+      population_size: 4, generations: 3, mutation_rate: 0.35,
+      search_space: {
+        optimize_width: true, min_width: 16, max_width: 256, width_step: 16,
+        optimize_depth: true, min_depth: 1, max_depth: 4,
+        activations: ["relu", "tanh", "gelu"],
+        optimize_learning_rate: true, min_learning_rate: 0.0003, max_learning_rate: 0.01,
+      },
+      trial_epochs: 20, score_name: "checkpoint_fidelity",
+      score_version: 1,
+    };
+
+    await optimizeSession("session-1", [demonstration], config, experiment);
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(body.experiment).toEqual(experiment);
   });
 });

@@ -178,10 +178,53 @@ describe("TrainingPage single-target picker", () => {
     renderPage({ selectedDemoId: "gesture-1", onOptimize });
 
     await userEvent.click(screen.getByRole("tab", { name: "3 Optimize" }));
-    fireEvent.click(screen.getByRole("button", { name: "Search 6 candidates" }));
+    fireEvent.click(screen.getByRole("button", { name: "Scan 6 candidates" }));
 
-    expect(onOptimize).toHaveBeenCalledWith(6, 30);
+    expect(onOptimize).toHaveBeenCalledWith({
+      version: 1, strategy: "quick", trials: 6, trial_epochs: 30,
+      score_name: "checkpoint_fidelity", score_version: 1,
+    });
     expect(screen.getByText("1 worker")).toBeInTheDocument();
+  });
+
+  it("configures a bounded evolutionary search with safe defaults", async () => {
+    const onOptimize = vi.fn();
+    renderPage({ selectedDemoId: "gesture-1", onOptimize });
+
+    await userEvent.click(screen.getByRole("tab", { name: "3 Optimize" }));
+    fireEvent.change(screen.getByLabelText("Search method"), { target: { value: "evolution" } });
+    fireEvent.change(screen.getByRole("spinbutton", { name: "Minimum width" }), {
+      target: { value: "32" },
+    });
+    fireEvent.click(screen.getByRole("checkbox", { name: "GELU" }));
+    fireEvent.click(screen.getByRole("button", { name: "Evolve 3 generations · 12 fits" }));
+
+    expect(onOptimize).toHaveBeenCalledWith({
+      version: 1, strategy: "evolution", population_size: 4, generations: 3,
+      mutation_rate: 0.35, trial_epochs: 30,
+      search_space: {
+        optimize_width: true, min_width: 32, max_width: 256, width_step: 16,
+        optimize_depth: true, min_depth: 1, max_depth: 4,
+        activations: ["relu", "tanh"],
+        optimize_learning_rate: true, min_learning_rate: 0.0003, max_learning_rate: 0.01,
+      },
+      score_name: "checkpoint_fidelity", score_version: 1,
+    });
+  });
+
+  it("requires at least one genuinely variable evolution parameter", async () => {
+    renderPage({ selectedDemoId: "gesture-1" });
+    await userEvent.click(screen.getByRole("tab", { name: "3 Optimize" }));
+    fireEvent.change(screen.getByLabelText("Search method"), { target: { value: "evolution" } });
+    fireEvent.click(screen.getByRole("checkbox", { name: "Dense width" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Network depth" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Learning rate" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "TANH" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "GELU" }));
+
+    expect(screen.getByRole("alert")).toHaveTextContent("Enable at least one parameter");
+    expect(screen.getByRole("button", { name: "Evolve 3 generations · 12 fits" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: 'Train “Wave”' })).toBeEnabled();
   });
 
   it("does not describe an in-progress candidate as promoted", async () => {
@@ -190,6 +233,8 @@ describe("TrainingPage single-target picker", () => {
       optimizationStatus: "running",
       optimizationResults: [{
         trial: 1,
+        generation: 1,
+        candidate: 1,
         score: 0.02,
         score_name: "checkpoint_fidelity",
         score_version: 1,
@@ -216,7 +261,8 @@ describe("TrainingPage single-target picker", () => {
     renderPage({
       optimizationStatus: "historical",
       optimizationResults: [{
-        trial: 1, score: 0.02, score_name: "checkpoint_fidelity", score_version: 1,
+        trial: 1, generation: 1, candidate: 1,
+        score: 0.02, score_name: "checkpoint_fidelity", score_version: 1,
         score_basis: "training_loss", reproduction_error: 0.02,
         simultaneity_penalty: 0, loss: 0.01, simultaneity: 1,
         config: {

@@ -115,6 +115,8 @@ export type TrainingConfig = {
 };
 export type OptimizationResult = {
   trial: number;
+  generation: number;
+  candidate: number;
   score: number;
   score_name: "checkpoint_fidelity";
   score_version: 1;
@@ -126,14 +128,37 @@ export type OptimizationResult = {
   config: TrainingConfig;
 };
 export type OptimizationStatus = "idle" | "running" | "promoted" | "historical" | "failed";
-export type ExperimentSpec = {
+type ExperimentSpecBase = {
   version: 1;
-  strategy: "quick";
-  trials: number;
   trial_epochs: number;
   score_name: "checkpoint_fidelity";
   score_version: 1;
 };
+export type QuickExperimentSpec = ExperimentSpecBase & {
+  strategy: "quick";
+  trials: number;
+};
+export type EvolutionSearchSpace = {
+  optimize_width: boolean;
+  min_width: number;
+  max_width: number;
+  width_step: number;
+  optimize_depth: boolean;
+  min_depth: number;
+  max_depth: number;
+  activations: Array<"relu" | "tanh" | "gelu">;
+  optimize_learning_rate: boolean;
+  min_learning_rate: number;
+  max_learning_rate: number;
+};
+export type EvolutionExperimentSpec = ExperimentSpecBase & {
+  strategy: "evolution";
+  population_size: number;
+  generations: number;
+  mutation_rate: number;
+  search_space: EvolutionSearchSpace;
+};
+export type ExperimentSpec = QuickExperimentSpec | EvolutionExperimentSpec;
 export type ExperimentRecord = {
   id: string;
   version: 1;

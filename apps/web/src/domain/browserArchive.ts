@@ -56,6 +56,26 @@ function isDataset(value: unknown): value is Dataset {
   );
 }
 
+function isEvolutionSearchSpace(value: unknown) {
+  if (!value || typeof value !== "object") return false;
+  const space = value as Record<string, unknown>;
+  return (
+    typeof space.optimize_width === "boolean" &&
+    typeof space.min_width === "number" &&
+    typeof space.max_width === "number" &&
+    typeof space.width_step === "number" &&
+    typeof space.optimize_depth === "boolean" &&
+    typeof space.min_depth === "number" &&
+    typeof space.max_depth === "number" &&
+    Array.isArray(space.activations) &&
+    space.activations.length > 0 &&
+    space.activations.every((item) => item === "relu" || item === "tanh" || item === "gelu") &&
+    typeof space.optimize_learning_rate === "boolean" &&
+    typeof space.min_learning_rate === "number" &&
+    typeof space.max_learning_rate === "number"
+  );
+}
+
 function isExperimentRecord(value: unknown): value is ExperimentRecord {
   if (!value || typeof value !== "object") return false;
   const item = value as Partial<ExperimentRecord>;
@@ -67,8 +87,14 @@ function isExperimentRecord(value: unknown): value is ExperimentRecord {
     typeof item.created_at === "string" &&
     typeof item.best_trial === "number" &&
     item.experiment?.version === 1 &&
-    item.experiment.strategy === "quick" &&
-    typeof item.experiment.trials === "number" &&
+    (item.experiment.strategy === "quick" || item.experiment.strategy === "evolution") &&
+    (item.experiment.strategy !== "quick" || typeof item.experiment.trials === "number") &&
+    (item.experiment.strategy !== "evolution" || (
+      typeof item.experiment.population_size === "number" &&
+      typeof item.experiment.generations === "number" &&
+      typeof item.experiment.mutation_rate === "number" &&
+      isEvolutionSearchSpace(item.experiment.search_space)
+    )) &&
     typeof item.experiment.trial_epochs === "number" &&
     item.experiment.score_name === "checkpoint_fidelity" &&
     item.experiment.score_version === 1 &&
@@ -78,6 +104,8 @@ function isExperimentRecord(value: unknown): value is ExperimentRecord {
         result.score_name === "checkpoint_fidelity" &&
         result.score_version === 1 &&
         typeof result.trial === "number" &&
+        typeof result.generation === "number" &&
+        typeof result.candidate === "number" &&
         typeof result.score === "number" &&
         (result.score_basis === "checkpoint_mae" || result.score_basis === "training_loss") &&
         typeof result.reproduction_error === "number" &&
@@ -96,6 +124,25 @@ function isExperimentRecord(value: unknown): value is ExperimentRecord {
         typeof result.config.rollout_steps === "number",
     )
   );
+}
+
+function migrateExperimentRecord(value: unknown): unknown {
+  if (!value || typeof value !== "object") return value;
+  const item = value as Record<string, unknown>;
+  const experiment = item.experiment as Record<string, unknown> | undefined;
+  if (experiment?.strategy !== "quick" || !Array.isArray(item.results)) return value;
+  return {
+    ...item,
+    results: item.results.map((result) => {
+      if (!result || typeof result !== "object") return result;
+      const candidate = result as Record<string, unknown>;
+      return {
+        ...candidate,
+        generation: candidate.generation ?? 1,
+        candidate: candidate.candidate ?? candidate.trial,
+      };
+    }),
+  };
 }
 
 function isBrowserArchive(value: unknown): value is BrowserArchive {
@@ -123,7 +170,9 @@ export function loadBrowserArchive(
     return isBrowserArchive(parsed)
       ? {
           ...parsed,
-          experiments: (parsed.experiments ?? []).filter(isExperimentRecord),
+          experiments: (parsed.experiments ?? [])
+            .map(migrateExperimentRecord)
+            .filter(isExperimentRecord),
         }
       : null;
   } catch {

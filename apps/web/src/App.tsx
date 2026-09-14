@@ -347,6 +347,10 @@ function Workbench() {
         simultaneity?: number;
         multi_joint_fraction?: number;
         trial?: number;
+        generation?: number;
+        generations?: number;
+        candidate?: number;
+        trials?: number;
         score?: number;
         config?: TrainingConfig;
         results?: OptimizationResult[];
@@ -371,6 +375,10 @@ function Workbench() {
           simultaneity?: number;
           multi_joint_fraction?: number;
           trial?: number;
+          generation?: number;
+          generations?: number;
+          candidate?: number;
+          trials?: number;
           score?: number;
           config?: TrainingConfig;
           results?: OptimizationResult[];
@@ -415,6 +423,8 @@ function Workbench() {
       } else if (
         payload.type === "optimization_trial_complete" &&
         payload.trial &&
+        payload.generation &&
+        payload.candidate &&
         payload.score !== undefined &&
         payload.loss !== undefined &&
         payload.config &&
@@ -427,10 +437,14 @@ function Workbench() {
         const scoreBasis = payload.score_basis;
         const reproductionError = payload.reproduction_error;
         const simultaneityPenalty = payload.simultaneity_penalty;
+        const generation = payload.generation;
+        const candidate = payload.candidate;
         setOptimizationResults((current) => [
           ...current.filter((item) => item.trial !== payload.trial),
           {
             trial: payload.trial as number,
+            generation,
+            candidate,
             score: payload.score as number,
             score_name: payload.score_name as "checkpoint_fidelity",
             score_version: payload.score_version as 1,
@@ -446,7 +460,11 @@ function Workbench() {
         setOptimizing(true);
         setOptimizationStatus("running");
         setOptimizationResults([]);
-        setMessage("Quick search started. Candidates run sequentially to protect memory.");
+        setMessage(`${payload.experiment?.strategy === "evolution" ? "Evolution" : "Quick scan"} started. Candidates run sequentially to protect memory.`);
+      } else if (payload.type === "optimization_trial_started") {
+        setMessage(payload.generations && payload.generations > 1
+          ? `Evolution generation ${payload.generation}/${payload.generations} · candidate ${payload.candidate}.`
+          : `Quick scan candidate ${payload.trial}/${payload.trials}.`);
       } else if (payload.type === "optimization_complete") {
         setOptimizing(false);
         setOptimizationStatus("promoted");
@@ -481,7 +499,7 @@ function Workbench() {
           }
         }
         optimizationTargetRef.current = null;
-        setMessage("Quick search complete. The best candidate is ready to evaluate.");
+        setMessage("Model search complete. The best candidate is ready to evaluate.");
       } else if (payload.type === "warning") {
         setMessage(
           payload.message ??
@@ -1294,7 +1312,7 @@ function Workbench() {
     }
   }
 
-  async function startQuickSearch(trials: number, trialEpochs: number) {
+  async function startQuickSearch(experiment: ExperimentSpec) {
     if (!sessionId) return;
     const target =
       demonstrations.find((item) => item.id === selectedDemoId) ?? null;
@@ -1308,7 +1326,7 @@ function Workbench() {
     setOptimizationStatus("running");
     optimizationTargetRef.current = { id: target.id, name: target.name };
     try {
-      await optimizeSession(sessionId, [target], config, trials, trialEpochs);
+      await optimizeSession(sessionId, [target], config, experiment);
     } catch (cause) {
       setOptimizing(false);
       setOptimizationStatus("failed");
