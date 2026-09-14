@@ -506,12 +506,16 @@ describe("training draft guard", () => {
           busy={false}
           training={false}
           trained={false}
+          optimizing={false}
+          optimizationResults={[]}
           sessionId="s1"
           hasUnsavedTimelineChanges={true}
           onDatasetChange={() => {}}
           onDemoChange={() => {}}
           onConfigChange={() => {}}
+          onModelSpecChange={() => {}}
           onTrain={() => {}}
+          onOptimize={() => {}}
         />
       </MemoryRouter>,
     );

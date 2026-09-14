@@ -11,15 +11,19 @@ from app.main import (  # type: ignore[import-not-found]
     ROBOTS,
     SESSIONS,
     Demonstration,
+    OptimizeRequest,
     TrainConfig,
     TrainRequest,
     app,
     build_incremental_samples,
     denormalized,
     normalized,
+    optimize_session,
+    quick_search_configs,
     parse_urdf,
     train_session,
 )
+from app.modeling import DenseBlock, ModelSpec, compile_policy, parameter_count  # type: ignore[import-not-found]
 
 client = TestClient(app)
 
@@ -79,6 +83,55 @@ def test_joint_normalization_round_trips_with_robot_limits():
 
     assert encoded == pytest.approx([-0.25, 0.5])
     assert decoded == pytest.approx(values)
+
+
+def test_model_spec_compiles_individual_dense_blocks():
+    spec = ModelSpec(
+        name="mixed activations",
+        blocks=[
+            DenseBlock(width=12, activation="tanh"),
+            DenseBlock(width=8, activation="gelu"),
+        ],
+    )
+
+    model = compile_policy(7, 2, spec)
+
+    assert model[0].in_features == 7
+    assert model[0].out_features == 12
+    assert model[2].out_features == 8
+    assert model[-1].out_features == 2
+    assert parameter_count(7, 2, spec) == sum(p.numel() for p in model.parameters())
+
+
+def test_quick_search_is_bounded_deterministic_and_promotes_best_model():
+    session_id, _ = create_sample_session()
+    session = SESSIONS[session_id]
+    demo = Demonstration(
+        id="search-pose",
+        name="search pose",
+        kind="pose",
+        current=[0.0, 0.0],
+        target=[0.4, -0.2],
+        frames=[{"timestamp": 0, "positions": [0.4, -0.2]}],
+    )
+    request = OptimizeRequest(
+        demonstrations=[demo],
+        config=TrainConfig(epochs=20, random_starts=0, physics=False),
+        trials=2,
+        trial_epochs=5,
+    )
+
+    candidates = quick_search_configs(request)
+    optimize_session(session, request)
+
+    assert len(candidates) == 2
+    assert candidates[0].model_spec is not None
+    assert candidates[0].epochs == 5
+    complete = [event for event in session.events if event.get("type") == "optimization_complete"]
+    assert len(complete) == 1
+    assert len(complete[0]["results"]) == 2
+    assert session.model is not None
+    assert session.model_config == complete[0]["best_config"]
 
 
 def test_demonstrations_are_persisted_and_exported_as_frames():

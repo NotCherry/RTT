@@ -2,6 +2,7 @@
 
 import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TrainingPage } from "./TrainingPage";
@@ -93,11 +94,15 @@ function renderPage(props?: Partial<Parameters<typeof TrainingPage>[0]>) {
         busy={false}
         training={false}
         trained={false}
+        optimizing={false}
+        optimizationResults={[]}
         sessionId="session-1"
         onDatasetChange={() => {}}
         onDemoChange={() => {}}
         onConfigChange={() => {}}
+        onModelSpecChange={() => {}}
         onTrain={() => {}}
+        onOptimize={() => {}}
         {...props}
       />
     </MemoryRouter>,
@@ -105,11 +110,13 @@ function renderPage(props?: Partial<Parameters<typeof TrainingPage>[0]>) {
 }
 
 describe("TrainingPage single-target picker", () => {
-  it("forwards the exact epoch value entered by the user", () => {
+  it("forwards the exact epoch value entered by the user", async () => {
     const onConfigChange = vi.fn();
     renderPage({ onConfigChange });
 
-    fireEvent.change(screen.getByRole("spinbutton", { name: "Epochs" }), {
+    await userEvent.click(screen.getByRole("tab", { name: "3 Optimize" }));
+
+    fireEvent.change(screen.getByRole("spinbutton", { name: "Final training epochs" }), {
       target: { value: "800" },
     });
 
@@ -128,7 +135,39 @@ describe("TrainingPage single-target picker", () => {
     ).toBeInTheDocument();
   });
 
-  it("selects exactly one target and labels the train button with it", () => {
+  it("edits the MLP as readable blocks", async () => {
+    const onModelSpecChange = vi.fn();
+    renderPage({ onModelSpecChange });
+
+    await userEvent.click(screen.getByRole("tab", { name: "2 Network" }));
+    expect(screen.getByLabelText("Model block stack")).toHaveTextContent(
+      "Robot state history",
+    );
+    expect(screen.getAllByRole("spinbutton", { name: "Dense width" })).toHaveLength(2);
+    fireEvent.click(screen.getByRole("button", { name: "+ Dense block" }));
+
+    expect(onModelSpecChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        family: "mlp",
+        blocks: expect.arrayContaining([
+          expect.objectContaining({ width: 64, activation: "relu" }),
+        ]),
+      }),
+    );
+  });
+
+  it("starts a bounded quick search with visible defaults", async () => {
+    const onOptimize = vi.fn();
+    renderPage({ selectedDemoId: "gesture-1", onOptimize });
+
+    await userEvent.click(screen.getByRole("tab", { name: "3 Optimize" }));
+    fireEvent.click(screen.getByRole("button", { name: "Search 6 candidates" }));
+
+    expect(onOptimize).toHaveBeenCalledWith(6, 30);
+    expect(screen.getByText("1 worker")).toBeInTheDocument();
+  });
+
+  it("selects exactly one target and labels the train button with it", async () => {
     const onDemoChange = vi.fn();
     renderPage({ onDemoChange, selectedDemoId: "gesture-1" });
     expect(screen.getByRole("radio", { name: "Train Wave" })).toBeChecked();
@@ -137,11 +176,13 @@ describe("TrainingPage single-target picker", () => {
     ).not.toBeChecked();
     fireEvent.click(screen.getByRole("radio", { name: "Train Home pose" }));
     expect(onDemoChange).toHaveBeenCalledWith("demo-1");
+    await userEvent.click(screen.getByRole("tab", { name: "3 Optimize" }));
     expect(screen.getByRole("button", { name: "Train “Wave”" })).toBeEnabled();
   });
 
-  it("blocks training until a target is selected", () => {
+  it("blocks training until a target is selected", async () => {
     renderPage({ sessionId: "session-1" });
+    await userEvent.click(screen.getByRole("tab", { name: "3 Optimize" }));
     expect(
       screen.getByRole("button", { name: "Select a training target" }),
     ).toBeDisabled();

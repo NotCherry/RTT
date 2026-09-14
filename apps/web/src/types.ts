@@ -88,6 +88,17 @@ export type Dataset = {
   created_at: string;
   updated_at: string;
 };
+export type DenseModelBlock = {
+  type: "dense";
+  width: number;
+  activation: "relu" | "tanh" | "gelu";
+};
+export type ModelSpec = {
+  version: 1;
+  family: "mlp";
+  name: string;
+  blocks: DenseModelBlock[];
+};
 export type TrainingConfig = {
   hidden_layers: number[];
   activation: string;
@@ -100,6 +111,14 @@ export type TrainingConfig = {
   rollout_steps: number;
   physics?: boolean;
   coordination_weight?: number;
+  model_spec?: ModelSpec;
+};
+export type OptimizationResult = {
+  trial: number;
+  score: number;
+  loss: number;
+  simultaneity: number;
+  config: TrainingConfig;
 };
 export type CoordinationDiagnostics = {
   simultaneity: number;

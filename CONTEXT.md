@@ -93,9 +93,17 @@ The initial and default behavior-model family for this environment, suitable for
 _Avoid_: Universal model architecture
 
 **Model editor**:
-A future capability for exploring different network shapes, layers, activations, and model families.
-_Avoid_: Current MVP requirement
+A block-oriented workspace for composing, validating, and configuring behavior-model architectures without writing Python.
+_Avoid_: Arbitrary code executor, demonstration editor
 
 **Architecture exploration**:
-Future experimentation with alternative network topologies or search methods, including genetic algorithms, without committing the MVP to those methods.
-_Avoid_: Required training path
+Comparing model specifications and training parameters through bounded experiment runs, including evolutionary search, while keeping demonstrations as the primary artifact.
+_Avoid_: Training a single configured model, evaluation rollout
+
+**Model specification**:
+A versioned, declarative description of a behavior model's blocks and their settings. It is validated and compiled by the backend and never contains executable user code.
+_Avoid_: PyTorch state dictionary, arbitrary Python
+
+**Experiment run**:
+A bounded comparison of candidate model specifications or training parameters against the same immutable demonstration snapshot and scoring rule.
+_Avoid_: Individual candidate training run, final evaluation

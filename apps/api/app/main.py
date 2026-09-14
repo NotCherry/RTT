@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import copy
+import gc
 import hashlib
 import io
 import json
@@ -21,6 +23,7 @@ from fastapi.middleware.cors import CORSMiddleware  # type: ignore[import-not-fo
 from fastapi.responses import StreamingResponse  # type: ignore[import-not-found]
 from pydantic import BaseModel, Field  # type: ignore[import-not-found]
 from .session_runtime import SessionEvents, serialized
+from .modeling import ModelSpec, compile_policy, legacy_model_spec
 
 DATA_DIR = Path(__file__).resolve().parents[1] / "data"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -366,6 +369,7 @@ class TrainConfig(BaseModel):
     rollout_steps: int = Field(160, ge=1, le=2000)
     physics: bool = Field(True, description="When true, generate physics-feasible deltas; false uses kinematic teleport for fast training.")
     coordination_weight: float = Field(0.5, ge=0.0, le=5.0, description="Emphasis on simultaneous-motion samples — see CONTEXT.md Coordination.")
+    model_spec: ModelSpec | None = None
 
 
 class DemonstrationFrame(BaseModel):
@@ -415,6 +419,13 @@ class DatasetsRequest(BaseModel):
 class TrainRequest(BaseModel):
     demonstrations: list[Demonstration]
     config: TrainConfig = Field(default_factory=TrainConfig)  # type: ignore[arg-type]  # pyright needs a plugin for pydantic defaults; runtime-verified
+
+
+class OptimizeRequest(BaseModel):
+    demonstrations: list[Demonstration]
+    config: TrainConfig = Field(default_factory=TrainConfig)  # type: ignore[arg-type]
+    trials: int = Field(6, ge=2, le=12)
+    trial_epochs: int = Field(30, ge=5, le=300)
 
 
 class SessionRequest(BaseModel):
@@ -648,6 +659,21 @@ class SimulationSession:
             self.training_thread = None
             raise
 
+    @serialized
+    def start_optimization(self, request: OptimizeRequest) -> None:
+        self.begin_training()
+        self.training_thread = threading.Thread(
+            target=optimize_session,
+            args=(self, request),
+            daemon=True,
+        )
+        try:
+            self.training_thread.start()
+        except Exception:
+            self.training = False
+            self.training_thread = None
+            raise
+
 def _resolve_rollout_step(session: "SimulationSession", predicted: list[float], timestep_ms: int, use_physics: bool) -> tuple[list[float], float, int]:
     """Apply predicted positions via physics servo or kinematic assign; returns (achieved, tracking_error, clipped)."""
     if use_physics:
@@ -731,16 +757,8 @@ def model_expected_size(model: torch.nn.Module, joint_count: int) -> int:
 
 
 def make_model(input_size: int, output_size: int, config: TrainConfig) -> torch.nn.Module:
-    layers: list[torch.nn.Module] = []
-    size = input_size
-    activation: type[torch.nn.Module] = {"relu": torch.nn.ReLU, "tanh": torch.nn.Tanh, "gelu": torch.nn.GELU}.get(config.activation, torch.nn.ReLU)
-    for hidden_size in config.hidden_layers:
-        if hidden_size < 1 or hidden_size > 512:
-            raise ValueError("Hidden layer sizes must be between 1 and 512.")
-        layers.extend([torch.nn.Linear(size, hidden_size), activation()])
-        size = hidden_size
-    layers.append(torch.nn.Linear(size, output_size))
-    return torch.nn.Sequential(*layers)
+    spec = config.model_spec or legacy_model_spec(config.hidden_layers, config.activation)
+    return compile_policy(input_size, output_size, spec)
 
 
 def default_joint_velocity(joint_type: Any) -> float:
@@ -1456,7 +1474,7 @@ def probe_gesture_checkpoint_errors(
         return None
 
 
-def train_session(session: SimulationSession, request: TrainRequest) -> None:
+def train_session(session: SimulationSession, request: TrainRequest) -> dict[str, Any] | None:
     try:
         session.check_training_cancelled()
         if not request.demonstrations:
@@ -1634,10 +1652,145 @@ def train_session(session: SimulationSession, request: TrainRequest) -> None:
                     if entry["checkpoint"] in missed
                 )
                 session.events.append({"type": "warning", "message": f"Gesture '{probe['demonstration']}' not fully learned: checkpoints {missed} missed (MAE > {CHECKPOINT_MISS_MAE}; {details}). The replay will skip those middle frames — try more epochs or check segment timing."})
+            return {
+                "loss": final_loss,
+                "checkpoint_probe": checkpoint_probes,
+                **final_diagnostics,
+            }
     except Exception as exc:
         session.events.append({"type": "error", "message": str(exc)})
     finally:
         session.training = False
+        if session.cancel_training.is_set():
+            session.close()
+
+
+def quick_search_configs(request: OptimizeRequest) -> list[TrainConfig]:
+    """Create a deterministic, bounded comparison around the edited MLP."""
+    base = request.config
+    base_spec = base.model_spec or legacy_model_spec(base.hidden_layers, base.activation)
+    width_scales = [1.0, 0.5, 1.5, 0.75, 2.0, 1.25]
+    rate_scales = [1.0, 0.5, 1.5, 0.75, 2.0, 1.25]
+    activation_offsets = [0, 1, 2, 0, 1, 2]
+    activation_names = ["relu", "tanh", "gelu"]
+    candidates: list[TrainConfig] = []
+    for index in range(request.trials):
+        scale = width_scales[index % len(width_scales)]
+        activation = activation_names[activation_offsets[index % len(activation_offsets)]]
+        blocks = [
+            block.model_copy(
+                update={
+                    "width": max(1, min(512, int(round(block.width * scale)))),
+                    "activation": activation,
+                }
+            )
+            for block in base_spec.blocks
+        ]
+        spec = base_spec.model_copy(
+            update={"name": f"Quick candidate {index + 1}", "blocks": blocks}
+        )
+        candidates.append(
+            base.model_copy(
+                update={
+                    "epochs": request.trial_epochs,
+                    "learning_rate": max(
+                        0.000001,
+                        min(1.0, base.learning_rate * rate_scales[index % len(rate_scales)]),
+                    ),
+                    "hidden_layers": [block.width for block in blocks],
+                    "activation": activation,
+                    "model_spec": spec,
+                    "random_seed": base.random_seed + index,
+                }
+            )
+        )
+    return candidates
+
+
+def optimization_score(outcome: dict[str, Any]) -> float:
+    checkpoint_errors = [
+        float(checkpoint["mae"])
+        for probe in outcome.get("checkpoint_probe", [])
+        for checkpoint in probe.get("checkpoints", [])
+    ]
+    reproduction_error = (
+        sum(checkpoint_errors) / len(checkpoint_errors)
+        if checkpoint_errors
+        else float(outcome.get("loss", math.inf))
+    )
+    simultaneity_penalty = max(0.0, 1.0 - float(outcome.get("simultaneity", 1.0)))
+    return reproduction_error + 0.05 * simultaneity_penalty
+
+
+def optimize_session(session: SimulationSession, request: OptimizeRequest) -> None:
+    """Compare bounded candidates sequentially and retain only the best policy."""
+    results: list[dict[str, Any]] = []
+    best_model: torch.nn.Module | None = None
+    best_config: TrainConfig | None = None
+    best_score = math.inf
+    try:
+        candidates = quick_search_configs(request)
+        session.events.append(
+            {
+                "type": "optimization_started",
+                "trials": len(candidates),
+                "trial_epochs": request.trial_epochs,
+            }
+        )
+        for index, config in enumerate(candidates):
+            session.check_training_cancelled()
+            with session.lock:
+                session.training = True
+            session.events.append(
+                {
+                    "type": "optimization_trial_started",
+                    "trial": index + 1,
+                    "trials": len(candidates),
+                    "config": config.model_dump(),
+                }
+            )
+            outcome = train_session(
+                session,
+                TrainRequest(demonstrations=request.demonstrations, config=config),
+            )
+            if outcome is None or session.model is None:
+                raise ValueError(f"Quick-search candidate {index + 1} did not complete.")
+            score = optimization_score(outcome)
+            result = {
+                "trial": index + 1,
+                "score": score,
+                "loss": float(outcome["loss"]),
+                "simultaneity": float(outcome.get("simultaneity", 1.0)),
+                "config": config.model_dump(),
+            }
+            results.append(result)
+            if score < best_score:
+                best_score = score
+                best_model = copy.deepcopy(session.model).eval()
+                best_config = config
+            session.events.append({"type": "optimization_trial_complete", **result})
+            if session.model is not best_model:
+                session.model = None
+            gc.collect()
+        if best_model is None or best_config is None:
+            raise ValueError("Quick search did not produce a model.")
+        with session.lock:
+            session.model = best_model
+            session.model_config = best_config.model_dump()
+            session.model_mode = "temporal"
+            session.events.append(
+                {
+                    "type": "optimization_complete",
+                    "best_score": best_score,
+                    "best_config": best_config.model_dump(),
+                    "results": results,
+                }
+            )
+    except Exception as exc:
+        session.events.append({"type": "error", "message": str(exc)})
+    finally:
+        session.training = False
+        gc.collect()
         if session.cancel_training.is_set():
             session.close()
 
@@ -1797,6 +1950,20 @@ async def train(session_id: str, request: TrainRequest) -> dict[str, str]:
         raise HTTPException(413, f"A maximum of {MAX_DEMONSTRATIONS} demonstrations is supported.")
     try:
         await asyncio.to_thread(session.start_training, request)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return {"status": "started"}
+
+
+@app.post("/api/sessions/{session_id}/optimize")
+async def optimize(session_id: str, request: OptimizeRequest) -> dict[str, str]:
+    session = await asyncio.to_thread(active_session, session_id)
+    if session is None:
+        raise HTTPException(404, "Session not found.")
+    if len(request.demonstrations) > MAX_DEMONSTRATIONS:
+        raise HTTPException(413, f"A maximum of {MAX_DEMONSTRATIONS} demonstrations is supported.")
+    try:
+        await asyncio.to_thread(session.start_optimization, request)
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
     return {"status": "started"}

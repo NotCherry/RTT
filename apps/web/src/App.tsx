@@ -5,6 +5,7 @@ import {
   createSession,
   exportUrl,
   loadDemoRobot,
+  optimizeSession,
   predictPose,
   rolloutSession,
   saveDatasets,
@@ -66,6 +67,8 @@ import type {
   RolloutFrame,
   SimulationState,
   TrainingConfig,
+  ModelSpec,
+  OptimizationResult,
 } from "./types";
 
 const initialConfig: TrainingConfig = {
@@ -79,6 +82,15 @@ const initialConfig: TrainingConfig = {
   random_seed: 7,
   rollout_steps: 160,
   physics: true,
+  model_spec: {
+    version: 1,
+    family: "mlp",
+    name: "Fast MLP",
+    blocks: [
+      { type: "dense", width: 64, activation: "relu" },
+      { type: "dense", width: 64, activation: "relu" },
+    ],
+  },
 };
 
 type TrainingMetric = {
@@ -131,6 +143,10 @@ function Workbench() {
     } | null;
   } | null>(null);
   const [trained, setTrained] = useState(false);
+  const [optimizationResults, setOptimizationResults] = useState<
+    OptimizationResult[]
+  >([]);
+  const [optimizing, setOptimizing] = useState(false);
   const [message, setMessage] = useState(
     "Load the sample robot or upload a primitive URDF.",
   );
@@ -307,6 +323,11 @@ function Workbench() {
         direction_alignment?: number;
         simultaneity?: number;
         multi_joint_fraction?: number;
+        trial?: number;
+        score?: number;
+        config?: TrainingConfig;
+        results?: OptimizationResult[];
+        best_config?: TrainingConfig;
       };
       try {
         payload = JSON.parse(event.data) as {
@@ -320,6 +341,11 @@ function Workbench() {
           direction_alignment?: number;
           simultaneity?: number;
           multi_joint_fraction?: number;
+          trial?: number;
+          score?: number;
+          config?: TrainingConfig;
+          results?: OptimizationResult[];
+          best_config?: TrainingConfig;
         };
       } catch {
         // Malformed stream message: ignore rather than tear down the socket.
@@ -351,12 +377,40 @@ function Workbench() {
         setMessage(
           "Model trained. Open Test to evaluate an archived demonstration.",
         );
+      } else if (
+        payload.type === "optimization_trial_complete" &&
+        payload.trial &&
+        payload.score !== undefined &&
+        payload.loss !== undefined &&
+        payload.config
+      ) {
+        setOptimizationResults((current) => [
+          ...current.filter((item) => item.trial !== payload.trial),
+          {
+            trial: payload.trial as number,
+            score: payload.score as number,
+            loss: payload.loss as number,
+            simultaneity: payload.simultaneity ?? 1,
+            config: payload.config as TrainingConfig,
+          },
+        ]);
+      } else if (payload.type === "optimization_started") {
+        setOptimizing(true);
+        setOptimizationResults([]);
+        setMessage("Quick search started. Candidates run sequentially to protect memory.");
+      } else if (payload.type === "optimization_complete") {
+        setOptimizing(false);
+        setTrained(true);
+        if (payload.results) setOptimizationResults(payload.results);
+        if (payload.best_config) setConfig(payload.best_config);
+        setMessage("Quick search complete. The best candidate is ready to evaluate.");
       } else if (payload.type === "warning") {
         setMessage(
           payload.message ??
             "The physics preview is running in kinematic mode.",
         );
       } else if (payload.type === "error") {
+        setOptimizing(false);
         setError(payload.message ?? "The backend reported an error.");
       }
     };
@@ -1133,6 +1187,29 @@ function Workbench() {
     }
   }
 
+  async function startQuickSearch(trials: number, trialEpochs: number) {
+    if (!sessionId) return;
+    const target =
+      demonstrations.find((item) => item.id === selectedDemoId) ?? null;
+    if (!target) {
+      setError("Select one archived pose or gesture to optimize.");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    setOptimizationResults([]);
+    try {
+      await optimizeSession(sessionId, [target], config, trials, trialEpochs);
+    } catch (cause) {
+      setOptimizing(false);
+      setError(
+        cause instanceof Error ? cause.message : "Unable to start quick search.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function testModel() {
     if (!sessionId || !trained || !demonstrations.length) return;
     const demonstration =
@@ -1278,6 +1355,16 @@ function Workbench() {
     }
   }
 
+  function updateModelSpec(spec: ModelSpec) {
+    setConfig((current) => ({
+      ...current,
+      model_spec: spec,
+      hidden_layers: spec.blocks.map((block) => block.width),
+      activation: spec.blocks[0]?.activation ?? "relu",
+    }));
+    setTrained(false);
+  }
+
   const routePage = (() => {
     if (location.pathname === "/") return <Navigate to="/teach/pose" replace />;
     if (
@@ -1390,7 +1477,11 @@ function Workbench() {
           onDatasetChange={selectDataset}
           onDemoChange={setSelectedDemoId}
           onConfigChange={updateConfig}
+          onModelSpecChange={updateModelSpec}
           onTrain={startTraining}
+          onOptimize={startQuickSearch}
+          optimizing={optimizing}
+          optimizationResults={optimizationResults}
         />
       );
     }

@@ -117,6 +117,25 @@ export function trainSession(
   });
 }
 
+export function optimizeSession(
+  sessionId: string,
+  demonstrations: Demonstration[],
+  config: TrainingConfig,
+  trials: number,
+  trialEpochs: number,
+) {
+  return request<{ status: string }>(`/api/sessions/${sessionId}/optimize`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      demonstrations,
+      config,
+      trials,
+      trial_epochs: trialEpochs,
+    }),
+  });
+}
+
 export function rolloutSession(
   sessionId: string,
   frames: DemonstrationFrame[],
