@@ -16,6 +16,22 @@ The canonical local entrypoint is `./start-local.sh`. Prefer the Docker workflow
 
 Keep changes inside the owning app unless the change is truly cross-cutting. Do not create a shared package merely to move code; first establish real reuse and an explicit interface.
 
+## File size and agentic maintainability
+
+This repository is deliberately organized into small, cohesive modules so a
+coding agent can understand and modify a feature without loading unrelated
+implementation details. Treat a file above roughly 200–400 lines as a prompt
+to inspect its responsibilities; files above 400 lines should normally be
+split unless they are unusually cohesive.
+
+Keep UI composition, state coordination, domain operations, transport
+contracts, persistence, and infrastructure concerns in their owning modules.
+Prefer pure functions with explicit inputs and outputs for domain behavior.
+Use descriptive, domain-specific filenames; do not create generic dumping
+grounds such as `utils.ts`, `helpers.ts`, or application-wide `types.ts` for
+unrelated concerns. Split to create a useful seam and clear ownership, not to
+produce artificially tiny files or extra re-export layers.
+
 ## Verification loop
 
 After frontend changes:

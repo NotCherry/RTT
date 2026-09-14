@@ -60,6 +60,12 @@ import { TimelinePanel } from "./components/workbench/TimelinePanel";
 import { DatasetPanel } from "./components/workbench/DatasetPanel";
 import { PoseSketch } from "./components/workbench/PoseSketch";
 import { DraftNumberInput } from "./components/ui/draft-number-input";
+import {
+  initialTrainingConfig,
+  type EvaluationResult,
+  type RolloutDiagnostics,
+  type TrainingMetric,
+} from "./workbench/workbenchTypes";
 import type {
   Dataset,
   Demonstration,
@@ -75,42 +81,6 @@ import type {
   OptimizationStatus,
 } from "./types";
 
-const initialConfig: TrainingConfig = {
-  hidden_layers: [64, 64],
-  activation: "relu",
-  learning_rate: 0.003,
-  epochs: 300,
-  batch_size: 16,
-  timestep_ms: 120,
-  random_starts: 4,
-  random_seed: 7,
-  rollout_steps: 160,
-  physics: true,
-  model_spec: {
-    version: 1,
-    family: "mlp",
-    name: "Fast MLP",
-    blocks: [
-      { type: "dense", width: 64, activation: "relu" },
-      { type: "dense", width: 64, activation: "relu" },
-    ],
-  },
-};
-
-type TrainingMetric = {
-  epoch: number;
-  epochs: number;
-  loss: number;
-  direction_alignment?: number;
-  simultaneity?: number;
-  multi_joint_fraction?: number;
-};
-type EvaluationResult = {
-  target: number[];
-  positions: number[];
-  error: number;
-};
-
 export default function App() {
   return (
     <BrowserRouter>
@@ -125,27 +95,13 @@ function Workbench() {
   const [state, setState] = useState<SimulationState | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [demonstrations, setDemonstrations] = useState<Demonstration[]>([]);
-  const [config, setConfig] = useState<TrainingConfig>(initialConfig);
+  const [config, setConfig] = useState<TrainingConfig>(initialTrainingConfig);
   const [metric, setMetric] = useState<TrainingMetric | null>(null);
   const [metricHistory, setMetricHistory] = useState<TrainingMetric[]>([]);
   const [evaluation, setEvaluation] = useState<EvaluationResult | null>(null);
   const [rolloutFrames, setRolloutFrames] = useState<RolloutFrame[]>([]);
-  const [rolloutDiagnostics, setRolloutDiagnostics] = useState<{
-    density_ratio?: number;
-    warnings?: { type: string; message: string }[];
-    segment_diagnostics?: {
-      segment_index: number;
-      raw_steps: number;
-      scaled_steps: number;
-      density_ratio: number;
-    }[];
-    coordination?: {
-      simultaneity: number;
-      direction_alignment: number;
-      multi_joint_steps: number;
-      sequential: boolean;
-    } | null;
-  } | null>(null);
+  const [rolloutDiagnostics, setRolloutDiagnostics] =
+    useState<RolloutDiagnostics | null>(null);
   const [trained, setTrained] = useState(false);
   const [optimizationResults, setOptimizationResults] = useState<
     OptimizationResult[]
