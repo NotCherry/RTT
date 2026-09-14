@@ -32,6 +32,8 @@ MAX_JOINTS = 32
 MAX_DEMONSTRATIONS = 2000
 MAX_EPOCHS = 5000
 SESSION_IDLE_SECONDS = 30 * 60
+OPTIMIZATION_SCORE_NAME = "checkpoint_fidelity"
+OPTIMIZATION_SCORE_VERSION = 1
 
 app = FastAPI(title="Robot Learning Workbench", version="0.1.0")
 app.add_middleware(
@@ -421,11 +423,19 @@ class TrainRequest(BaseModel):
     config: TrainConfig = Field(default_factory=TrainConfig)  # type: ignore[arg-type]  # pyright needs a plugin for pydantic defaults; runtime-verified
 
 
+class ExperimentSpec(BaseModel):
+    version: Literal[1] = 1
+    strategy: Literal["quick"] = "quick"
+    trials: int = Field(6, ge=2, le=12)
+    trial_epochs: int = Field(30, ge=5, le=300)
+    score_name: Literal["checkpoint_fidelity"] = OPTIMIZATION_SCORE_NAME
+    score_version: Literal[1] = OPTIMIZATION_SCORE_VERSION
+
+
 class OptimizeRequest(BaseModel):
     demonstrations: list[Demonstration]
     config: TrainConfig = Field(default_factory=TrainConfig)  # type: ignore[arg-type]
-    trials: int = Field(6, ge=2, le=12)
-    trial_epochs: int = Field(30, ge=5, le=300)
+    experiment: ExperimentSpec = Field(default_factory=ExperimentSpec)  # type: ignore[arg-type]
 
 
 class SessionRequest(BaseModel):
@@ -1474,7 +1484,14 @@ def probe_gesture_checkpoint_errors(
         return None
 
 
-def train_session(session: SimulationSession, request: TrainRequest) -> dict[str, Any] | None:
+def train_session(
+    session: SimulationSession,
+    request: TrainRequest,
+    *,
+    install_model: bool = True,
+    emit_complete: bool = True,
+    release_training: bool = True,
+) -> dict[str, Any] | None:
     try:
         session.check_training_cancelled()
         if not request.demonstrations:
@@ -1630,9 +1647,10 @@ def train_session(session: SimulationSession, request: TrainRequest) -> dict[str
             checkpoint_probes.append(probe_entry)
         with session.lock:
             session.check_training_cancelled()
-            session.model = model.eval()
-            session.model_config = request.config.model_dump()
-            session.model_mode = "temporal"
+            if install_model:
+                session.model = model.eval()
+                session.model_config = request.config.model_dump()
+                session.model_mode = "temporal"
             try:
                 final_loss = float(loss.item())
             except Exception:
@@ -1641,7 +1659,8 @@ def train_session(session: SimulationSession, request: TrainRequest) -> dict[str
                 final_diagnostics = {key: float(value) for key, value in last_diagnostics.items()}
             except Exception:
                 final_diagnostics = {"direction_alignment": 1.0, "simultaneity": 1.0, "multi_joint_fraction": 0.0}
-            session.events.append({"type": "training_complete", "loss": final_loss, "demonstrations": len(request.demonstrations), "samples": len(samples), "checkpoint_probe": checkpoint_probes, **final_diagnostics})
+            if emit_complete:
+                session.events.append({"type": "training_complete", "loss": final_loss, "demonstrations": len(request.demonstrations), "samples": len(samples), "checkpoint_probe": checkpoint_probes, **final_diagnostics})
             for probe in checkpoint_probes:
                 missed = probe.get("missed") or []
                 if not missed:
@@ -1653,6 +1672,7 @@ def train_session(session: SimulationSession, request: TrainRequest) -> dict[str
                 )
                 session.events.append({"type": "warning", "message": f"Gesture '{probe['demonstration']}' not fully learned: checkpoints {missed} missed (MAE > {CHECKPOINT_MISS_MAE}; {details}). The replay will skip those middle frames — try more epochs or check segment timing."})
             return {
+                "model": model.eval(),
                 "loss": final_loss,
                 "checkpoint_probe": checkpoint_probes,
                 **final_diagnostics,
@@ -1660,8 +1680,9 @@ def train_session(session: SimulationSession, request: TrainRequest) -> dict[str
     except Exception as exc:
         session.events.append({"type": "error", "message": str(exc)})
     finally:
-        session.training = False
-        if session.cancel_training.is_set():
+        if release_training:
+            session.training = False
+        if release_training and session.cancel_training.is_set():
             session.close()
 
 
@@ -1674,7 +1695,7 @@ def quick_search_configs(request: OptimizeRequest) -> list[TrainConfig]:
     activation_offsets = [0, 1, 2, 0, 1, 2]
     activation_names = ["relu", "tanh", "gelu"]
     candidates: list[TrainConfig] = []
-    for index in range(request.trials):
+    for index in range(request.experiment.trials):
         scale = width_scales[index % len(width_scales)]
         activation = activation_names[activation_offsets[index % len(activation_offsets)]]
         blocks = [
@@ -1692,7 +1713,7 @@ def quick_search_configs(request: OptimizeRequest) -> list[TrainConfig]:
         candidates.append(
             base.model_copy(
                 update={
-                    "epochs": request.trial_epochs,
+                    "epochs": request.experiment.trial_epochs,
                     "learning_rate": max(
                         0.000001,
                         min(1.0, base.learning_rate * rate_scales[index % len(rate_scales)]),
@@ -1707,19 +1728,25 @@ def quick_search_configs(request: OptimizeRequest) -> list[TrainConfig]:
     return candidates
 
 
-def optimization_score(outcome: dict[str, Any]) -> float:
+def optimization_score(outcome: dict[str, Any]) -> dict[str, float | str]:
     checkpoint_errors = [
         float(checkpoint["mae"])
         for probe in outcome.get("checkpoint_probe", [])
         for checkpoint in probe.get("checkpoints", [])
     ]
+    score_basis = "checkpoint_mae" if checkpoint_errors else "training_loss"
     reproduction_error = (
         sum(checkpoint_errors) / len(checkpoint_errors)
         if checkpoint_errors
         else float(outcome.get("loss", math.inf))
     )
     simultaneity_penalty = max(0.0, 1.0 - float(outcome.get("simultaneity", 1.0)))
-    return reproduction_error + 0.05 * simultaneity_penalty
+    return {
+        "score": reproduction_error + 0.05 * simultaneity_penalty,
+        "score_basis": score_basis,
+        "reproduction_error": reproduction_error,
+        "simultaneity_penalty": simultaneity_penalty,
+    }
 
 
 def optimize_session(session: SimulationSession, request: OptimizeRequest) -> None:
@@ -1733,8 +1760,7 @@ def optimize_session(session: SimulationSession, request: OptimizeRequest) -> No
         session.events.append(
             {
                 "type": "optimization_started",
-                "trials": len(candidates),
-                "trial_epochs": request.trial_epochs,
+                "experiment": request.experiment.model_dump(),
             }
         )
         for index, config in enumerate(candidates):
@@ -1752,13 +1778,22 @@ def optimize_session(session: SimulationSession, request: OptimizeRequest) -> No
             outcome = train_session(
                 session,
                 TrainRequest(demonstrations=request.demonstrations, config=config),
+                install_model=False,
+                emit_complete=False,
+                release_training=False,
             )
-            if outcome is None or session.model is None:
+            if outcome is None:
                 raise ValueError(f"Quick-search candidate {index + 1} did not complete.")
-            score = optimization_score(outcome)
+            score_components = optimization_score(outcome)
+            score = float(score_components["score"])
             result = {
                 "trial": index + 1,
                 "score": score,
+                "score_name": request.experiment.score_name,
+                "score_version": request.experiment.score_version,
+                "score_basis": score_components["score_basis"],
+                "reproduction_error": score_components["reproduction_error"],
+                "simultaneity_penalty": score_components["simultaneity_penalty"],
                 "loss": float(outcome["loss"]),
                 "simultaneity": float(outcome.get("simultaneity", 1.0)),
                 "config": config.model_dump(),
@@ -1766,11 +1801,10 @@ def optimize_session(session: SimulationSession, request: OptimizeRequest) -> No
             results.append(result)
             if score < best_score:
                 best_score = score
-                best_model = copy.deepcopy(session.model).eval()
+                best_model = copy.deepcopy(outcome["model"]).eval()
                 best_config = config
             session.events.append({"type": "optimization_trial_complete", **result})
-            if session.model is not best_model:
-                session.model = None
+            outcome["model"] = None
             gc.collect()
         if best_model is None or best_config is None:
             raise ValueError("Quick search did not produce a model.")
@@ -1783,6 +1817,7 @@ def optimize_session(session: SimulationSession, request: OptimizeRequest) -> No
                     "type": "optimization_complete",
                     "best_score": best_score,
                     "best_config": best_config.model_dump(),
+                    "experiment": request.experiment.model_dump(),
                     "results": results,
                 }
             )

@@ -117,8 +117,7 @@ def test_quick_search_is_bounded_deterministic_and_promotes_best_model():
     request = OptimizeRequest(
         demonstrations=[demo],
         config=TrainConfig(epochs=20, random_starts=0, physics=False),
-        trials=2,
-        trial_epochs=5,
+        experiment={"trials": 2, "trial_epochs": 5},
     )
 
     candidates = quick_search_configs(request)
@@ -130,8 +129,47 @@ def test_quick_search_is_bounded_deterministic_and_promotes_best_model():
     complete = [event for event in session.events if event.get("type") == "optimization_complete"]
     assert len(complete) == 1
     assert len(complete[0]["results"]) == 2
+    assert complete[0]["results"][0]["score_name"] == "checkpoint_fidelity"
+    assert complete[0]["results"][0]["score_version"] == 1
+    assert complete[0]["results"][0]["score_basis"] == "training_loss"
+    assert complete[0]["results"][0]["score"] == pytest.approx(
+        complete[0]["results"][0]["reproduction_error"]
+        + 0.05 * complete[0]["results"][0]["simultaneity_penalty"]
+    )
     assert session.model is not None
     assert session.model_config == complete[0]["best_config"]
+
+
+def test_candidate_fit_does_not_replace_active_model_or_release_search_lock():
+    session_id, _ = create_sample_session()
+    session = SESSIONS[session_id]
+    active_model = compile_policy(7, 2, ModelSpec())
+    session.model = active_model
+    session.training = True
+    demo = Demonstration(
+        id="candidate-pose",
+        name="candidate pose",
+        kind="pose",
+        current=[0.0, 0.0],
+        target=[0.2, -0.1],
+        frames=[{"timestamp": 0, "positions": [0.2, -0.1]}],
+    )
+
+    outcome = train_session(
+        session,
+        TrainRequest(
+            demonstrations=[demo],
+            config=TrainConfig(epochs=1, random_starts=0, physics=False),
+        ),
+        install_model=False,
+        emit_complete=False,
+        release_training=False,
+    )
+
+    assert outcome is not None
+    assert session.model is active_model
+    assert session.training is True
+    assert not [event for event in session.events if event.get("type") == "training_complete"]
 
 
 def test_demonstrations_are_persisted_and_exported_as_frames():

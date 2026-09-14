@@ -501,13 +501,13 @@ describe("training draft guard", () => {
               random_starts: "0",
             } as unknown as import("./types").TrainingConfig
           }
-          hiddenLayerText="64,64"
           metric={null}
           busy={false}
           training={false}
           trained={false}
           optimizing={false}
           optimizationResults={[]}
+          optimizationStatus="idle"
           sessionId="s1"
           hasUnsavedTimelineChanges={true}
           onDatasetChange={() => {}}

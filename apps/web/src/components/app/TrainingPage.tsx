@@ -8,7 +8,7 @@ import { NativeSelect } from "@/components/ui/native-select";
 import { Separator } from "@/components/ui/separator";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import type { Dataset, Demonstration, Joint, ModelSpec, OptimizationResult, TrainingConfig } from "@/types";
+import type { Dataset, Demonstration, Joint, ModelSpec, OptimizationResult, OptimizationStatus, TrainingConfig } from "@/types";
 
 type TrainingMetric = {
   epoch: number;
@@ -26,13 +26,13 @@ type TrainingPageProps = {
   selectedDemoId: string | null;
   controllableJoints: Joint[];
   config: TrainingConfig;
-  hiddenLayerText: string;
   metric: TrainingMetric | null;
   busy: boolean;
   training: boolean;
   trained: boolean;
   optimizing: boolean;
   optimizationResults: OptimizationResult[];
+  optimizationStatus: OptimizationStatus;
   sessionId: string | null;
   hasUnsavedTimelineChanges?: boolean;
   onDatasetChange: (id: string) => void;
@@ -65,7 +65,7 @@ function estimateParameters(inputSize: number, outputSize: number, spec: ModelSp
 
 export function TrainingPage({
   demonstrations, datasets, activeDatasetId, selectedDemoId, controllableJoints,
-  config, metric, busy, training, trained, optimizing, optimizationResults,
+  config, metric, busy, training, trained, optimizing, optimizationResults, optimizationStatus,
   sessionId, hasUnsavedTimelineChanges, onDatasetChange, onDemoChange,
   onConfigChange, onModelSpecChange, onTrain, onOptimize,
 }: TrainingPageProps) {
@@ -86,6 +86,15 @@ export function TrainingPage({
     [optimizationResults],
   );
   const canRun = Boolean(sessionId && selected && !busy && !training && !optimizing);
+  const optimizationMetricLabel = optimizationStatus === "running"
+    ? "Current best loss"
+    : optimizationStatus === "promoted"
+      ? "Promoted loss"
+      : optimizationStatus === "historical"
+        ? "Previous experiment best"
+        : optimizationStatus === "failed"
+          ? "Unpromoted best"
+          : "Best loss";
 
   function updateBlock(index: number, update: Partial<ModelSpec["blocks"][number]>) {
     onModelSpecChange({
@@ -244,7 +253,7 @@ export function TrainingPage({
 
           <TabsContent value="results" className="space-y-4 pt-3">
             <div className="route-metric-grid">
-              <Metric label={bestOptimizationResult ? "Promoted loss" : "Latest loss"} value={bestOptimizationResult ? bestOptimizationResult.loss.toFixed(5) : metric ? metric.loss.toFixed(5) : "—"} />
+              <Metric label={bestOptimizationResult ? optimizationMetricLabel : "Latest loss"} value={bestOptimizationResult ? bestOptimizationResult.loss.toFixed(5) : metric ? metric.loss.toFixed(5) : "—"} />
               <Metric label="Progress" value={metric ? `${metric.epoch}/${metric.epochs}` : "—"} />
               <Metric label="Parameters" value={parameterCount.toLocaleString()} />
               <Metric label="Simultaneity" value={bestOptimizationResult ? bestOptimizationResult.simultaneity.toFixed(2) : metric?.simultaneity?.toFixed(2) ?? "—"} />
@@ -254,7 +263,7 @@ export function TrainingPage({
                 <table className="w-full border-collapse text-left font-mono text-xs">
                   <thead className="bg-ink-900 text-text-500"><tr><th className="p-3">Candidate</th><th className="p-3">Score ↓</th><th className="p-3">Loss</th><th className="p-3">Shape</th><th className="p-3">Activation</th></tr></thead>
                   <tbody>{[...optimizationResults].sort((left, right) => left.score - right.score).map((result, index) => (
-                    <tr key={result.trial} className="border-t border-line-650 text-text-300"><td className="p-3">{index === 0 ? "★ " : ""}#{result.trial}</td><td className="p-3">{result.score.toFixed(5)}</td><td className="p-3">{result.loss.toFixed(5)}</td><td className="p-3">{result.config.hidden_layers.join(" → ")}</td><td className="p-3">{result.config.activation}</td></tr>
+                    <tr key={result.trial} className="border-t border-line-650 text-text-300"><td className="p-3">{index === 0 ? "★ " : ""}#{result.trial}</td><td className="p-3">{result.score.toFixed(5)}</td><td className="p-3">{result.loss.toFixed(5)}</td><td className="p-3">{(result.config.model_spec?.blocks.map((block) => block.width) ?? result.config.hidden_layers).join(" → ")}</td><td className="p-3">{result.config.model_spec?.blocks.map((block) => block.activation).join(" / ") ?? result.config.activation}</td></tr>
                   ))}</tbody>
                 </table>
               </div>

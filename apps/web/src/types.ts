@@ -116,9 +116,33 @@ export type TrainingConfig = {
 export type OptimizationResult = {
   trial: number;
   score: number;
+  score_name: "checkpoint_fidelity";
+  score_version: 1;
+  score_basis: "checkpoint_mae" | "training_loss";
+  reproduction_error: number;
+  simultaneity_penalty: number;
   loss: number;
   simultaneity: number;
   config: TrainingConfig;
+};
+export type OptimizationStatus = "idle" | "running" | "promoted" | "historical" | "failed";
+export type ExperimentSpec = {
+  version: 1;
+  strategy: "quick";
+  trials: number;
+  trial_epochs: number;
+  score_name: "checkpoint_fidelity";
+  score_version: 1;
+};
+export type ExperimentRecord = {
+  id: string;
+  version: 1;
+  demonstration_id: string;
+  demonstration_name: string;
+  created_at: string;
+  experiment: ExperimentSpec;
+  best_trial: number;
+  results: OptimizationResult[];
 };
 export type CoordinationDiagnostics = {
   simultaneity: number;

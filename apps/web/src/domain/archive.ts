@@ -20,6 +20,7 @@ export function normalizeArchive(archive: BrowserArchive): BrowserArchive {
     activeDatasetId: archive.activeDatasetId && ids.has(archive.activeDatasetId)
       ? archive.activeDatasetId
       : null,
+    experiments: archive.experiments,
   };
 }
 

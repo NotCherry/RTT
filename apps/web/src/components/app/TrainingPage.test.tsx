@@ -89,13 +89,13 @@ function renderPage(props?: Partial<Parameters<typeof TrainingPage>[0]>) {
           random_seed: 7,
           rollout_steps: 10,
         }}
-        hiddenLayerText="32"
         metric={null}
         busy={false}
         training={false}
         trained={false}
         optimizing={false}
         optimizationResults={[]}
+        optimizationStatus="idle"
         sessionId="session-1"
         onDatasetChange={() => {}}
         onDemoChange={() => {}}
@@ -165,6 +165,53 @@ describe("TrainingPage single-target picker", () => {
 
     expect(onOptimize).toHaveBeenCalledWith(6, 30);
     expect(screen.getByText("1 worker")).toBeInTheDocument();
+  });
+
+  it("does not describe an in-progress candidate as promoted", async () => {
+    renderPage({
+      optimizing: true,
+      optimizationStatus: "running",
+      optimizationResults: [{
+        trial: 1,
+        score: 0.02,
+        score_name: "checkpoint_fidelity",
+        score_version: 1,
+        score_basis: "training_loss",
+        reproduction_error: 0.02,
+        simultaneity_penalty: 0,
+        loss: 0.01,
+        simultaneity: 1,
+        config: {
+          hidden_layers: [64], activation: "relu", learning_rate: 0.003,
+          epochs: 5, batch_size: 16, timestep_ms: 120, random_starts: 0,
+          random_seed: 7, rollout_steps: 160,
+        },
+      }],
+    });
+
+    await userEvent.click(screen.getByRole("tab", { name: "4 Results" }));
+
+    expect(screen.getByText("Current best loss")).toBeInTheDocument();
+    expect(screen.queryByText("Promoted loss")).not.toBeInTheDocument();
+  });
+
+  it("labels restored results as historical rather than promoted", async () => {
+    renderPage({
+      optimizationStatus: "historical",
+      optimizationResults: [{
+        trial: 1, score: 0.02, score_name: "checkpoint_fidelity", score_version: 1,
+        score_basis: "training_loss", reproduction_error: 0.02,
+        simultaneity_penalty: 0, loss: 0.01, simultaneity: 1,
+        config: {
+          hidden_layers: [64], activation: "relu", learning_rate: 0.003,
+          epochs: 5, batch_size: 16, timestep_ms: 120, random_starts: 0,
+          random_seed: 7, rollout_steps: 160,
+        },
+      }],
+    });
+
+    await userEvent.click(screen.getByRole("tab", { name: "4 Results" }));
+    expect(screen.getByText("Previous experiment best")).toBeInTheDocument();
   });
 
   it("selects exactly one target and labels the train button with it", async () => {

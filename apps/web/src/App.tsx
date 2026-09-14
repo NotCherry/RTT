@@ -69,6 +69,9 @@ import type {
   TrainingConfig,
   ModelSpec,
   OptimizationResult,
+  ExperimentRecord,
+  ExperimentSpec,
+  OptimizationStatus,
 } from "./types";
 
 const initialConfig: TrainingConfig = {
@@ -146,7 +149,11 @@ function Workbench() {
   const [optimizationResults, setOptimizationResults] = useState<
     OptimizationResult[]
   >([]);
+  const [experiments, setExperiments] = useState<ExperimentRecord[]>([]);
   const [optimizing, setOptimizing] = useState(false);
+  const [optimizationStatus, setOptimizationStatus] = useState<
+    OptimizationStatus
+  >("idle");
   const [message, setMessage] = useState(
     "Load the sample robot or upload a primitive URDF.",
   );
@@ -192,6 +199,19 @@ function Workbench() {
   const activeSessionRef = useRef<string | null>(null);
   const syncArchive = useMemo(() => createArchiveSync(saveDemonstrations, saveDatasets), []);
   const replayTimerRef = useRef<number | null>(null);
+  const archiveRef = useRef<BrowserArchive>({
+    demonstrations: [],
+    datasets: [],
+    activeDatasetId: null,
+    experiments: [],
+  });
+  const robotIdRef = useRef<string | null>(null);
+  const optimizationTargetRef = useRef<Pick<Demonstration, "id" | "name"> | null>(null);
+
+  useEffect(() => {
+    archiveRef.current = { demonstrations, datasets, activeDatasetId, experiments };
+    robotIdRef.current = robot?.id ?? null;
+  }, [activeDatasetId, datasets, demonstrations, experiments, robot?.id]);
 
   const controllableJoints = useMemo(
     () => robot?.joints.filter((joint) => joint.controllable) ?? [],
@@ -328,6 +348,12 @@ function Workbench() {
         config?: TrainingConfig;
         results?: OptimizationResult[];
         best_config?: TrainingConfig;
+        score_name?: "checkpoint_fidelity";
+        score_version?: 1;
+        score_basis?: "checkpoint_mae" | "training_loss";
+        reproduction_error?: number;
+        simultaneity_penalty?: number;
+        experiment?: ExperimentSpec;
       };
       try {
         payload = JSON.parse(event.data) as {
@@ -346,6 +372,12 @@ function Workbench() {
           config?: TrainingConfig;
           results?: OptimizationResult[];
           best_config?: TrainingConfig;
+          score_name?: "checkpoint_fidelity";
+          score_version?: 1;
+          score_basis?: "checkpoint_mae" | "training_loss";
+          reproduction_error?: number;
+          simultaneity_penalty?: number;
+          experiment?: ExperimentSpec;
         };
       } catch {
         // Malformed stream message: ignore rather than tear down the socket.
@@ -382,13 +414,26 @@ function Workbench() {
         payload.trial &&
         payload.score !== undefined &&
         payload.loss !== undefined &&
-        payload.config
+        payload.config &&
+        payload.score_name &&
+        payload.score_version &&
+        payload.score_basis &&
+        payload.reproduction_error !== undefined &&
+        payload.simultaneity_penalty !== undefined
       ) {
+        const scoreBasis = payload.score_basis;
+        const reproductionError = payload.reproduction_error;
+        const simultaneityPenalty = payload.simultaneity_penalty;
         setOptimizationResults((current) => [
           ...current.filter((item) => item.trial !== payload.trial),
           {
             trial: payload.trial as number,
             score: payload.score as number,
+            score_name: payload.score_name as "checkpoint_fidelity",
+            score_version: payload.score_version as 1,
+            score_basis: scoreBasis,
+            reproduction_error: reproductionError,
+            simultaneity_penalty: simultaneityPenalty,
             loss: payload.loss as number,
             simultaneity: payload.simultaneity ?? 1,
             config: payload.config as TrainingConfig,
@@ -396,13 +441,43 @@ function Workbench() {
         ]);
       } else if (payload.type === "optimization_started") {
         setOptimizing(true);
+        setOptimizationStatus("running");
         setOptimizationResults([]);
         setMessage("Quick search started. Candidates run sequentially to protect memory.");
       } else if (payload.type === "optimization_complete") {
         setOptimizing(false);
+        setOptimizationStatus("promoted");
         setTrained(true);
-        if (payload.results) setOptimizationResults(payload.results);
+        const results = payload.results ?? [];
+        if (payload.results) setOptimizationResults(results);
         if (payload.best_config) setConfig(payload.best_config);
+        if (payload.experiment && results.length) {
+          const best = [...results].sort((left, right) => left.score - right.score)[0];
+          const currentTarget = optimizationTargetRef.current;
+          if (best && currentTarget) {
+            const record: ExperimentRecord = {
+              id: `experiment-${Date.now()}`,
+              version: 1,
+              demonstration_id: currentTarget.id,
+              demonstration_name: currentTarget.name,
+              created_at: new Date().toISOString(),
+              experiment: payload.experiment,
+              best_trial: best.trial,
+              results,
+            };
+            setExperiments((current) => {
+              const next = [record, ...current].slice(0, 50);
+              const archive = { ...archiveRef.current, experiments: next };
+              archiveRef.current = archive;
+              const robotId = robotIdRef.current;
+              if (robotId && !saveBrowserArchive(browserStorage, robotId, archive)) {
+                setError("Browser storage is unavailable, so the experiment result was not persisted.");
+              }
+              return next;
+            });
+          }
+        }
+        optimizationTargetRef.current = null;
         setMessage("Quick search complete. The best candidate is ready to evaluate.");
       } else if (payload.type === "warning") {
         setMessage(
@@ -411,6 +486,8 @@ function Workbench() {
         );
       } else if (payload.type === "error") {
         setOptimizing(false);
+        setOptimizationStatus((current) => current === "running" ? "failed" : current);
+        optimizationTargetRef.current = null;
         setError(payload.message ?? "The backend reported an error.");
       }
     };
@@ -446,6 +523,7 @@ function Workbench() {
     setDemonstrations(archive.demonstrations);
     setDatasets(archive.datasets);
     setActiveDatasetId(archive.activeDatasetId);
+    setExperiments(archive.experiments);
     persistBrowserSnapshot(archive);
     if (!sessionId) return;
     void syncArchive(sessionId, archive).catch((cause) => {
@@ -462,6 +540,7 @@ function Workbench() {
       demonstrations,
       datasets: nextDatasets,
       activeDatasetId: nextActiveDatasetId,
+      experiments,
     });
   }
 
@@ -470,6 +549,7 @@ function Workbench() {
       demonstrations: next,
       datasets,
       activeDatasetId,
+      experiments,
     });
   }
 
@@ -491,6 +571,7 @@ function Workbench() {
       demonstrations: nextDemonstrations,
       datasets: nextDatasets,
       activeDatasetId: datasetId,
+      experiments,
     });
     setMessage("Demonstration moved to the selected dataset.");
   }
@@ -518,6 +599,7 @@ function Workbench() {
       demonstrations: nextDemonstrations,
       datasets: nextDatasets,
       activeDatasetId: nextActiveDatasetId,
+      experiments,
     });
     setMessage(
       `Deleted ${dataset.name}. Its demonstrations remain in the archive.`,
@@ -532,6 +614,7 @@ function Workbench() {
       demonstrations,
       datasets,
       activeDatasetId: datasetId || null,
+      experiments,
     });
     setMessage(dataset ? `Selected ${dataset.name}.` : "Showing all datasets.");
   }
@@ -945,14 +1028,19 @@ function Workbench() {
       const restoredActiveDatasetId = savedArchive
         ? savedArchive.activeDatasetId
         : (restoredDatasets[0]?.id ?? null);
+      const restoredExperiments = savedArchive?.experiments ?? [];
       setDemonstrations(restoredDemonstrations);
       setDatasets(restoredDatasets);
       setActiveDatasetId(restoredActiveDatasetId);
+      setExperiments(restoredExperiments);
+      setOptimizationResults(restoredExperiments[0]?.results ?? []);
+      setOptimizationStatus(restoredExperiments.length ? "historical" : "idle");
       persistBrowserSnapshot(
         {
           demonstrations: restoredDemonstrations,
           datasets: restoredDatasets,
           activeDatasetId: restoredActiveDatasetId,
+          experiments: restoredExperiments,
         },
         nextRobot.id,
       );
@@ -960,6 +1048,7 @@ function Workbench() {
         demonstrations: restoredDemonstrations,
         datasets: restoredDatasets,
         activeDatasetId: restoredActiveDatasetId,
+        experiments: restoredExperiments,
       }).catch((cause) => {
         if (activeSessionRef.current !== session.session_id) return;
         setError(
@@ -1198,10 +1287,14 @@ function Workbench() {
     setBusy(true);
     setError(null);
     setOptimizationResults([]);
+    setOptimizationStatus("running");
+    optimizationTargetRef.current = { id: target.id, name: target.name };
     try {
       await optimizeSession(sessionId, [target], config, trials, trialEpochs);
     } catch (cause) {
       setOptimizing(false);
+      setOptimizationStatus("failed");
+      optimizationTargetRef.current = null;
       setError(
         cause instanceof Error ? cause.message : "Unable to start quick search.",
       );
@@ -1464,7 +1557,6 @@ function Workbench() {
           selectedDemoId={selectedDemoId}
           controllableJoints={controllableJoints}
           config={config}
-          hiddenLayerText={hiddenLayerText}
           metric={metric}
           busy={busy}
           training={Boolean(state?.training)}
@@ -1482,6 +1574,7 @@ function Workbench() {
           onOptimize={startQuickSearch}
           optimizing={optimizing}
           optimizationResults={optimizationResults}
+          optimizationStatus={optimizationStatus}
         />
       );
     }

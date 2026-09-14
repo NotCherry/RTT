@@ -6,6 +6,7 @@ const archive: BrowserArchive = {
   demonstrations: [{ id: "pose", name: "Pose", kind: "pose", current: [0], target: [1], frames: [], dataset_id: "a" }],
   datasets: ["a", "b"].map((id) => ({ id, name: id, demonstration_ids: ["pose"], created_at: "", updated_at: "" })),
   activeDatasetId: "b",
+  experiments: [],
 };
 
 describe("archive invariants", () => {

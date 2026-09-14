@@ -130,8 +130,14 @@ export function optimizeSession(
     body: JSON.stringify({
       demonstrations,
       config,
-      trials,
-      trial_epochs: trialEpochs,
+      experiment: {
+        version: 1,
+        strategy: "quick",
+        trials,
+        trial_epochs: trialEpochs,
+        score_name: "checkpoint_fidelity",
+        score_version: 1,
+      },
     }),
   });
 }
