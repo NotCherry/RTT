@@ -57,9 +57,24 @@ def test_unitree_g1_examples_are_listed_and_preserve_official_dof_counts():
     edu = client.get("/api/robots/examples/unitree-g1-edu-29dof")
     assert basic.status_code == edu.status_code == 200
     assert basic.json()["name"] == "Unitree G1 Basic (23 DOF)"
+    assert basic.json()["display_ground_offset"] == pytest.approx(0.77286)
     assert len([joint for joint in basic.json()["joints"] if joint["controllable"]]) == 23
     assert len([joint for joint in edu.json()["joints"] if joint["controllable"]]) == 29
     assert any(link["visuals"] for link in basic.json()["links"])
+    pelvis = next(link for link in basic.json()["links"] if link["name"] == "pelvis")
+    assert pelvis["visuals"][0]["geometry"] == {
+        "type": "mesh",
+        "url": "/api/robot-meshes/pelvis_ver0529.STL",
+    }
+    mesh_urls = {
+        visual["geometry"]["url"]
+        for robot in (basic.json(), edu.json())
+        for link in robot["links"]
+        for visual in link["visuals"]
+        if visual["geometry"]["type"] == "mesh"
+    }
+    assert mesh_urls
+    assert all(client.get(url).status_code == 200 for url in mesh_urls)
 
 
 def test_reupload_preserves_robot_identity():

@@ -3,7 +3,8 @@ export type Origin = { xyz: number[]; rpy: number[] };
 export type VisualGeometry =
   | { type: "box"; size: number[] }
   | { type: "cylinder"; radius: number; length: number }
-  | { type: "sphere"; radius: number };
+  | { type: "sphere"; radius: number }
+  | { type: "mesh"; url: string };
 
 export type Visual = {
   geometry: VisualGeometry;
@@ -53,6 +54,7 @@ export type Robot = {
   gravity?: number[];
   use_fixed_base?: boolean;
   physics_timestep?: number;
+  display_ground_offset?: number;
 };
 export type RobotExample = {
   id: string;

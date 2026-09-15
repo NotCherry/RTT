@@ -23,8 +23,9 @@ import torch  # type: ignore[import-not-found]
 from fastapi import FastAPI, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect  # type: ignore[import-not-found]
 from fastapi.middleware.cors import CORSMiddleware  # type: ignore[import-not-found]
 from fastapi.responses import StreamingResponse  # type: ignore[import-not-found]
+from fastapi.staticfiles import StaticFiles  # type: ignore[import-not-found]
 from pydantic import BaseModel, Field  # type: ignore[import-not-found]
-from .bundled_robots import bundled_example_source, create_bundled_robot_router
+from .bundled_robots import ASSETS_DIR, attach_bundled_meshes, bundled_example_source, create_bundled_robot_router
 from .session_runtime import SessionEvents, serialized
 from .modeling import compile_policy, legacy_model_spec
 from .schemas import (
@@ -69,6 +70,11 @@ MAX_DEMONSTRATIONS = 2000
 SESSION_IDLE_SECONDS = 30 * 60
 
 app = FastAPI(title="Robot Learning Workbench", version="0.1.0")
+app.mount(
+    "/api/robot-meshes",
+    StaticFiles(directory=ASSETS_DIR / "unitree_g1" / "meshes"),
+    name="bundled-robot-meshes",
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins(os.environ.get("CORS_ORIGINS")),
@@ -396,11 +402,13 @@ def load_bundled_example(example_id: str) -> dict[str, Any]:
     robot = ROBOTS.get(example_id)
     if robot is not None:
         return robot
-    example, proxy = bundled_example_source(example_id)
+    example, source, proxy = bundled_example_source(example_id)
     path = robot_file_path(example_id)
     path.write_bytes(proxy)
     robot = parse_urdf(proxy, str(example["filename"]), path)
+    attach_bundled_meshes(robot, source)
     robot["name"] = str(example["name"])
+    robot["display_ground_offset"] = float(example["display_ground_offset"])
     ROBOTS[example_id] = robot
     return robot
 

@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { STLLoader } from "three/examples/jsm/loaders/STLLoader.js";
 import type { Robot, SimulationState } from "./types";
 
 type Props = { robot: Robot | null; state: SimulationState | null };
@@ -11,6 +12,11 @@ type MotionBinding = {
   type: string;
   axis: THREE.Vector3;
 };
+
+type PrimitiveVisualGeometry = Exclude<
+  Robot["links"][number]["visuals"][number]["geometry"],
+  { type: "mesh" }
+>;
 
 function setTransform(
   object: THREE.Object3D,
@@ -40,9 +46,7 @@ function material(color: number[]) {
   });
 }
 
-function geometryFor(
-  geometry: Robot["links"][number]["visuals"][number]["geometry"],
-) {
+function geometryFor(geometry: PrimitiveVisualGeometry) {
   if (geometry.type === "box")
     return new THREE.BoxGeometry(
       ...(geometry.size as [number, number, number]),
@@ -74,14 +78,20 @@ export function RobotScene({ robot, state }: Props) {
       0.01,
       100,
     );
-    camera.position.set(3.2, 2.6, 4.2);
+    const groundOffset = robot.display_ground_offset ?? 0;
+    const isGroundedBundledModel = groundOffset > 0;
+    camera.position.set(
+      isGroundedBundledModel ? 2.5 : 3.2,
+      isGroundedBundledModel ? 1.8 : 2.6,
+      isGroundedBundledModel ? 3.1 : 4.2,
+    );
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setSize(mount.clientWidth, mount.clientHeight);
     renderer.shadowMap.enabled = true;
     mount.appendChild(renderer.domElement);
     const controls = new OrbitControls(camera, renderer.domElement);
-    controls.target.set(0, 0.8, 0);
+    controls.target.set(0, isGroundedBundledModel ? 0.72 : 0.8, 0);
     controls.enableDamping = true;
 
     scene.add(new THREE.HemisphereLight("#dbeafe", "#172033", 2.2));
@@ -100,11 +110,28 @@ export function RobotScene({ robot, state }: Props) {
     floor.receiveShadow = true;
     scene.add(floor);
 
+    let disposed = false;
+    const stlLoader = new STLLoader();
     const links = new Map<string, THREE.Group>();
     robot.links.forEach((link) => {
       const group = new THREE.Group();
       group.name = link.name;
       link.visuals.forEach((visual) => {
+        if (visual.geometry.type === "mesh") {
+          stlLoader.load(visual.geometry.url, (meshGeometry) => {
+            if (disposed) {
+              meshGeometry.dispose();
+              return;
+            }
+            meshGeometry.computeVertexNormals();
+            const mesh = new THREE.Mesh(meshGeometry, material(visual.color));
+            setTransform(mesh, visual.origin);
+            mesh.castShadow = true;
+            mesh.receiveShadow = true;
+            group.add(mesh);
+          });
+          return;
+        }
         const mesh = new THREE.Mesh(
           geometryFor(visual.geometry),
           material(visual.color),
@@ -123,6 +150,7 @@ export function RobotScene({ robot, state }: Props) {
       const upright = new THREE.Group();
       upright.add(root);
       upright.rotation.x = -Math.PI / 2;
+      upright.position.y = groundOffset;
       scene.add(upright);
     }
     const bindings: MotionBinding[] = [];
@@ -173,6 +201,7 @@ export function RobotScene({ robot, state }: Props) {
     };
     render();
     return () => {
+      disposed = true;
       cancelAnimationFrame(animation);
       observer.disconnect();
       controls.dispose();
