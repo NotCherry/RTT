@@ -7,6 +7,7 @@ import hashlib
 import io
 import json
 import math
+import os
 import random
 import threading
 import time
@@ -44,7 +45,23 @@ from .schemas import (
     TrainRequest,
 )
 
-DATA_DIR = Path(__file__).resolve().parents[1] / "data"
+DEFAULT_CORS_ORIGINS = ("http://localhost:5173", "http://127.0.0.1:5173")
+DEFAULT_DATA_DIR = Path(__file__).resolve().parents[1] / "data"
+
+
+def cors_origins(value: str | None) -> list[str]:
+    """Return configured browser origins, retaining safe local-development defaults."""
+    if not value:
+        return list(DEFAULT_CORS_ORIGINS)
+    origins = [origin.strip().rstrip("/") for origin in value.split(",") if origin.strip()]
+    return origins or list(DEFAULT_CORS_ORIGINS)
+
+
+def data_dir(value: str | None) -> Path:
+    return Path(value) if value else DEFAULT_DATA_DIR
+
+
+DATA_DIR = data_dir(os.environ.get("DATA_DIR"))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 MAX_UPLOAD_BYTES = 5 * 1024 * 1024
 MAX_JOINTS = 32
@@ -54,7 +71,7 @@ SESSION_IDLE_SECONDS = 30 * 60
 app = FastAPI(title="Robot Learning Workbench", version="0.1.0")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=cors_origins(os.environ.get("CORS_ORIGINS")),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

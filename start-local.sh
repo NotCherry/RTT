@@ -24,13 +24,10 @@ Options:
   --logs        Follow backend and frontend logs after startup.
   --down        Stop and remove the Compose containers, keeping robot data.
   --status      Show the current Compose service status.
-  --tailscale   Expose frontend via 'tailscale serve' (tailnet only, https)
-  --funnel      Expose frontend via 'tailscale funnel' (public https)
   -h, --help    Show this help.
 EOF
 }
 
-TAILSCALE_MODE="${TAILSCALE_MODE:-}"
 while (($# > 0)); do
     case "$1" in
     --build)
@@ -47,12 +44,6 @@ while (($# > 0)); do
         ;;
     --status)
         SHOW_STATUS=1
-        ;;
-    --tailscale)
-        TAILSCALE_MODE="serve"
-        ;;
-    --funnel)
-        TAILSCALE_MODE="funnel"
         ;;
     -h | --help)
         usage
@@ -75,11 +66,6 @@ fi
 
 if ((STOP_STACK)); then
     "${COMPOSE[@]}" down
-    # Best-effort: clear any previous tailscale serve/funnel for the local frontend.
-    if command -v tailscale >/dev/null 2>&1; then
-        tailscale serve --https=443 off >/dev/null 2>&1 || true
-        tailscale funnel --https=443 off >/dev/null 2>&1 || true
-    fi
     exit 0
 fi
 
@@ -129,40 +115,6 @@ Robot Learning Workbench is running:
 
 Use --logs to follow service output or --down to stop the stack.
 EOF
-
-if [[ "$TAILSCALE_MODE" == "serve" ]]; then
-    if ! command -v tailscale >/dev/null 2>&1; then
-        echo "tailscale not found, skipping 'tailscale serve'." >&2
-    else
-        echo "Exposing frontend via Tailscale serve (tailnet only)..."
-        if tailscale serve --bg "http://127.0.0.1:8080" 2>&1; then
-            tailscale serve status || true
-            DNS="$(tailscale status --json 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("Self",{}).get("DNSName",""))' 2>/dev/null || true)"
-            if [[ -n "$DNS" ]]; then
-                echo "Tailscale URL: https://${DNS}"
-            else
-                echo "Tailscale serve active: https://<your-machine>.<tailnet>.ts.net"
-            fi
-        else
-            echo "tailscale serve failed (is Tailscale up? try 'sudo tailscale up')." >&2
-        fi
-    fi
-elif [[ "$TAILSCALE_MODE" == "funnel" ]]; then
-    if ! command -v tailscale >/dev/null 2>&1; then
-        echo "tailscale not found, skipping 'tailscale funnel'." >&2
-    else
-        echo "Exposing frontend via Tailscale funnel (public https)..."
-        if tailscale funnel --bg "http://127.0.0.1:8080" 2>&1; then
-            tailscale funnel status || true
-            DNS="$(tailscale status --json 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("Self",{}).get("DNSName",""))' 2>/dev/null || true)"
-            if [[ -n "$DNS" ]]; then
-                echo "Tailscale funnel URL: https://${DNS}"
-            fi
-        else
-            echo "tailscale funnel failed (is funnel enabled? see 'tailscale funnel --help')." >&2
-        fi
-    fi
-fi
 
 if ((FOLLOW_LOGS)); then
     "${COMPOSE[@]}" logs -f

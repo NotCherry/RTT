@@ -1,6 +1,5 @@
-# Preview overlay — isolated ports/volumes for PR checks on laptop/phone.
+# Isolated local preview stack for checking pull-request changes.
 # Usage: docker compose --project-directory . -f infra/docker-compose.yml -f infra/docker-compose.preview.yml --profile preview up -d
-# or ./infra/scripts/preview.sh --port 8100
 services:
   backend-preview:
     build:

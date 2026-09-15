@@ -16,6 +16,8 @@ from app.main import (  # type: ignore[import-not-found]
     TrainRequest,
     app,
     build_incremental_samples,
+    cors_origins,
+    data_dir,
     denormalized,
     evolutionary_search_configs,
     normalized,
@@ -61,6 +63,18 @@ def test_health_and_sample_session_expose_controllable_state():
     # helper returned the sample robot that owns this controllable state.
     assert session_id
     assert len([joint for joint in robot["joints"] if joint["controllable"]]) == 2
+
+
+def test_cors_origins_accepts_comma_separated_deployment_origins():
+    assert cors_origins("https://app.example.com/, https://preview.example.com") == [
+        "https://app.example.com",
+        "https://preview.example.com",
+    ]
+    assert cors_origins(" , ") == ["http://localhost:5173", "http://127.0.0.1:5173"]
+
+
+def test_data_dir_uses_deployment_override_when_supplied():
+    assert data_dir("/var/data") == Path("/var/data")
 
 
 def test_parser_rejects_external_mesh_assets(tmp_path: Path):

@@ -102,6 +102,12 @@ npm run test:e2e
 
 For a Vite dev server instead, use `npm run test:e2e -- --config baseUrl=http://localhost:5173`.
 
+## Production deployment
+
+Render production deployment is defined in [`render.yaml`](./render.yaml). Follow the one-time setup instructions in [Deploying to Render](./docs/render-deployment.md). GitHub Actions deploys only after CI passes on `main` or `master`.
+
+For an isolated local production-style preview, run `./infra/scripts/preview.sh --port 8100`; this does not expose the application outside your computer.
+
 ## Frontend design reference
 
 The current visual tokens and layout classes live in [`apps/web/src/styles.css`](./apps/web/src/styles.css); reusable controls live in [`apps/web/src/components/ui/`](./apps/web/src/components/ui/). Run `npm run lint:design` from `apps/web` to check the design-system conventions.
