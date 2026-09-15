@@ -107,11 +107,25 @@ fi
 # after source or dependency changes when using the production-style images.
 "${COMPOSE[@]}" up -d --no-build --remove-orphans --wait
 
+LAN_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
+
 cat <<'EOF'
 
 Robot Learning Workbench is running:
   Frontend: http://localhost:8080
   Backend:  http://localhost:8000/api/health
+
+The services are published on all network interfaces (0.0.0.0).
+EOF
+
+if [[ -n "$LAN_IP" ]]; then
+    cat <<EOF
+  LAN frontend: http://${LAN_IP}:8080
+  LAN backend:  http://${LAN_IP}:8000/api/health
+EOF
+fi
+
+cat <<'EOF'
 
 Use --logs to follow service output or --down to stop the stack.
 EOF
