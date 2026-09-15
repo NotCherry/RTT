@@ -4,6 +4,7 @@ import { H2, H3, IntroCopy, Kicker } from "@/components/ui/typography";
 import { RobotViewport } from "@/components/workbench/RobotViewport";
 import { hasUsablePose, retargetLandmarkFrame, type RetargetingAdjustments, type RetargetingProfile } from "@/domain/retargeting";
 import { cameraErrorMessage } from "@/domain/cameraErrors";
+import { directIpCameraStreamUrl } from "@/domain/ipCamera";
 import type { CameraCapture, Joint, LandmarkFrame, Robot, SimulationState } from "@/types";
 
 type Props = {
@@ -30,6 +31,8 @@ export function CameraTeachingPage({ robot, state, joints, neutral, onPreview, o
   const recorderRef = useRef<MediaRecorder | null>(null);
   const landmarkerRef = useRef<{ detectForVideo: (source: HTMLVideoElement | HTMLImageElement, timestamp: number) => any; close: () => void } | null>(null);
   const rafRef = useRef<number | null>(null);
+  const replayTimerRef = useRef<number | null>(null);
+  const recordedVideoUrlRef = useRef<string | null>(null);
   const countdownRef = useRef<number | null>(null);
   const recordingRef = useRef<LandmarkFrame[]>([]);
   const isRecordingRef = useRef(false);
@@ -46,9 +49,12 @@ export function CameraTeachingPage({ robot, state, joints, neutral, onPreview, o
   const [adjustments] = useState<RetargetingAdjustments>({});
   const [cameraSource, setCameraSource] = useState<"local" | "ip">("local");
   const [ipCameraUrl, setIpCameraUrl] = useState("");
+  const [activeIpCameraUrl, setActiveIpCameraUrl] = useState("");
+  const [recordedVideoUrl, setRecordedVideoUrl] = useState<string | null>(null);
 
   const stopCamera = () => {
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    if (replayTimerRef.current) window.clearTimeout(replayTimerRef.current);
     if (countdownRef.current) window.clearInterval(countdownRef.current);
     countdownRef.current = null;
     rafRef.current = null;
@@ -65,7 +71,10 @@ export function CameraTeachingPage({ robot, state, joints, neutral, onPreview, o
     setStatus("Camera off");
   };
 
-  useEffect(() => stopCamera, []);
+  useEffect(() => () => {
+    stopCamera();
+    if (recordedVideoUrlRef.current) URL.revokeObjectURL(recordedVideoUrlRef.current);
+  }, []);
 
   const draw = (frame: LandmarkFrame | null) => {
     const video = videoRef.current;
@@ -159,7 +168,10 @@ export function CameraTeachingPage({ robot, state, joints, neutral, onPreview, o
 
   async function openIpCamera() {
     if (!robot || !ipCameraUrl.trim() || !imageRef.current) return;
-    if (location.protocol === "https:" && ipCameraUrl.startsWith("http:")) {
+    let streamUrl: string;
+    try { streamUrl = directIpCameraStreamUrl(ipCameraUrl); }
+    catch { setStatus("Enter a complete IP camera URL, for example http://10.189.224.16:4444"); return; }
+    if (location.protocol === "https:" && streamUrl.startsWith("http:")) {
       setStatus("This HTTPS workbench cannot load an HTTP IP camera. Open the workbench over HTTP on your LAN, or configure HTTPS on the camera.");
       return;
     }
@@ -168,8 +180,9 @@ export function CameraTeachingPage({ robot, state, joints, neutral, onPreview, o
       await new Promise<void>((resolve, reject) => {
         const image = imageRef.current!;
         image.onload = () => resolve(); image.onerror = () => reject(new Error("The IP stream could not be loaded. Check its URL and LAN access."));
-        image.src = ipCameraUrl.trim();
+        image.src = streamUrl;
       });
+      setActiveIpCameraUrl(streamUrl);
       await startLandmarker();
     } catch (cause) { setStatus(cause instanceof Error ? cause.message : "The IP stream could not be loaded."); }
   }
@@ -225,6 +238,9 @@ export function CameraTeachingPage({ robot, state, joints, neutral, onPreview, o
 
   async function processRecording(blob: Blob) {
     const url = URL.createObjectURL(blob);
+    if (recordedVideoUrlRef.current) URL.revokeObjectURL(recordedVideoUrlRef.current);
+    recordedVideoUrlRef.current = url;
+    setRecordedVideoUrl(url);
     const video = document.createElement("video");
     video.muted = true;
     video.src = url;
@@ -257,7 +273,7 @@ export function CameraTeachingPage({ robot, state, joints, neutral, onPreview, o
     } catch (cause) {
       setStatus(cause instanceof Error ? cause.message : "Local video processing failed.");
     } finally {
-      URL.revokeObjectURL(url);
+      // Keep this local-only URL alive for the on-page recording review.
     }
   }
 
@@ -276,6 +292,20 @@ export function CameraTeachingPage({ robot, state, joints, neutral, onPreview, o
     );
   }
 
+  function replayGestureOnRobot() {
+    if (!frames.length) return;
+    if (replayTimerRef.current) window.clearTimeout(replayTimerRef.current);
+    const play = (index: number) => {
+      const frame = frames[index];
+      if (!frame) return;
+      onPreview(retargetLandmarkFrame(frame, joints, neutral, profile, adjustments));
+      const next = frames[index + 1];
+      if (next) replayTimerRef.current = window.setTimeout(() => play(index + 1), Math.max(1, next.timestamp - frame.timestamp));
+    };
+    play(0);
+    setStatus(`Replaying ${frames.length} stick-figure frames on the robot.`);
+  }
+
   function buildCapture(captureMode: "simple" | "continuous", captured: LandmarkFrame[]): CameraCapture {
     return {
       id: `camera-${Date.now()}`,
@@ -284,7 +314,7 @@ export function CameraTeachingPage({ robot, state, joints, neutral, onPreview, o
       created_at: new Date().toISOString(),
       mode: captureMode,
       sample_rate: sampleRate,
-      source: cameraSource === "ip" ? { kind: "ip-image-stream", url: ipCameraUrl.trim() } : { kind: "local-media-stream", stream_count: 1 },
+      source: cameraSource === "ip" ? { kind: "ip-image-stream", url: activeIpCameraUrl } : { kind: "local-media-stream", stream_count: 1 },
       frames: captured,
       quality: { accepted_frames: captured.length, rejected_frames: 0 },
       retargeting_profile: profile,
@@ -297,13 +327,13 @@ export function CameraTeachingPage({ robot, state, joints, neutral, onPreview, o
     <div className="route-two-column">
       <Panel className="route-viewport-panel"><PanelHeader><div><PanelLabel>{cameraSource === "ip" ? "IP CAMERA" : "LOCAL CAMERA"}</PanelLabel><H3>Stick-figure preview</H3></div><Button size="small" variant="secondary" onClick={streamRef.current || landmarkerRef.current ? stopCamera : cameraSource === "ip" ? openIpCamera : openCamera} disabled={!robot}>{streamRef.current || landmarkerRef.current ? "Close camera" : cameraSource === "ip" ? "Connect IP camera" : "Open camera"}</Button></PanelHeader>
         <div className="route-form-grid"><label>Video source<select aria-label="Video source" value={cameraSource} onChange={(event) => { const next = event.target.value as "local" | "ip"; setCameraSource(next); if (next === "ip") setProcessing("live"); }}><option value="local">Laptop / USB camera</option><option value="ip">Android IP camera</option></select></label>{cameraSource === "ip" && <label>IP camera URL<input aria-label="IP camera URL" value={ipCameraUrl} onChange={(event) => setIpCameraUrl(event.target.value)} placeholder="http://192.168.1.20:8080/video" /></label>}</div>
-        {cameraSource === "ip" && <p className="helper-text">Paste the Android app’s direct MJPEG/image stream URL, not its settings page. IP cameras use live mode only.</p>}
-        <div className="relative aspect-video overflow-hidden rounded border border-border"><video ref={videoRef} muted playsInline className={cameraSource === "local" ? "h-full w-full object-cover" : "hidden"} /><img ref={imageRef} alt="IP camera stream" className={cameraSource === "ip" ? "h-full w-full object-cover" : "hidden"} /><canvas ref={canvasRef} className="pointer-events-none absolute inset-0 h-full w-full" /></div>
+        {cameraSource === "ip" && <p className="helper-text">You can paste this Android IP Camera base address; it will use <code>/video/mjpeg</code> automatically. IP cameras use live mode only.</p>}
+        <div className="relative aspect-video overflow-hidden rounded border border-border">{recordedVideoUrl ? <video controls src={recordedVideoUrl} className="h-full w-full object-cover" /> : <><video ref={videoRef} muted playsInline className={cameraSource === "local" ? "h-full w-full object-cover" : "hidden"} /><img ref={imageRef} alt="IP camera stream" className={cameraSource === "ip" ? "h-full w-full object-cover" : "hidden"} /><canvas ref={canvasRef} className="pointer-events-none absolute inset-0 h-full w-full" /></>}</div>
       </Panel>
       <Panel className="route-content-panel"><PanelHeader><div><PanelLabel>CAMERA TEACHING</PanelLabel><H3>{mode === "simple" ? "Select a pose" : "Record a gesture"}</H3></div><span className="count-badge">{frames.length} frames</span></PanelHeader>
         <div className="route-form-grid"><label>Capture mode<select aria-label="Capture mode" value={mode} onChange={(event) => setMode(event.target.value as typeof mode)}><option value="simple">Simple pose</option><option value="continuous">Continuous gesture</option></select></label><label>Processing<select aria-label="Processing mode" value={processing} onChange={(event) => setProcessing(event.target.value as typeof processing)} disabled={cameraSource === "ip"}><option value="live">Live preview</option><option value="offline">Record then process</option></select></label><label>Sample rate<select aria-label="Sample rate" value={sampleRate} onChange={(event) => setSampleRate(Number(event.target.value) as typeof sampleRate)}><option value={10}>10 fps</option><option value={15}>15 fps</option><option value={30}>30 fps</option></select></label><label>Mapping profile<select aria-label="Mapping profile" value={profile} onChange={(event) => setProfile(event.target.value as RetargetingProfile)}><option value="g1-upper-body">G1 upper body</option><option value="g1-single-arm">Single right arm</option></select></label>{mode === "continuous" && <label>Countdown<select aria-label="Countdown" value={countdown} onChange={(event) => setCountdown(Number(event.target.value))}>{Array.from({ length: 10 }, (_, index) => <option key={index + 1} value={index + 1}>{index + 1} seconds</option>)}</select></label>}</div>
         <RobotViewport robot={robot} state={state} title="Retargeted preview" label="ROBOT PREVIEW" />
-        <div className="route-actions">{mode === "simple" ? <Button variant="primary" onClick={selectPose} disabled={!latest}>Select pose</Button> : recording ? <Button variant="recording" onClick={stopGesture}>Stop and save gesture</Button> : <Button variant="primary" onClick={startGesture} disabled={!streamRef.current}>Start recording</Button>}</div>
+        <div className="route-actions">{mode === "simple" ? <Button variant="primary" onClick={selectPose} disabled={!latest}>Select pose</Button> : recording ? <Button variant="recording" onClick={stopGesture}>Stop and save gesture</Button> : <Button variant="primary" onClick={startGesture} disabled={!landmarkerRef.current}>Start stick-figure capture</Button>}{frames.length > 1 && <Button variant="secondary" onClick={replayGestureOnRobot}>Play stick figure on robot</Button>}</div>
         <p className="helper-text">{status}. Video is never archived; only landmark frames and the derived robot demonstration are saved.</p>
       </Panel>
     </div>
