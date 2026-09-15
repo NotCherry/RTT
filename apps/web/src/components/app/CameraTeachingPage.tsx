@@ -3,6 +3,7 @@ import { Button, Panel, PanelHeader, PanelLabel, StatusPill } from "@/components
 import { H2, H3, IntroCopy, Kicker } from "@/components/ui/typography";
 import { RobotViewport } from "@/components/workbench/RobotViewport";
 import { hasUsablePose, retargetLandmarkFrame, type RetargetingAdjustments, type RetargetingProfile } from "@/domain/retargeting";
+import { cameraErrorMessage } from "@/domain/cameraErrors";
 import type { CameraCapture, Joint, LandmarkFrame, Robot, SimulationState } from "@/types";
 
 type Props = {
@@ -145,7 +146,8 @@ export function CameraTeachingPage({ robot, state, joints, neutral, onPreview, o
       tick();
     } catch (cause) {
       stopCamera();
-      setStatus(cause instanceof Error ? `Camera unavailable: ${cause.message}` : "Camera unavailable.");
+      const devices = await navigator.mediaDevices.enumerateDevices().catch(() => []);
+      setStatus(cameraErrorMessage(cause, devices.filter((device) => device.kind === "videoinput").length));
     }
   }
 
