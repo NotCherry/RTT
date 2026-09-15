@@ -56,6 +56,7 @@ import { WorkbenchProvider } from "./workbench/context";
 import { RouteFrame } from "./components/app/RouteFrame";
 import { TeachingPosePage } from "./components/app/TeachingPosePage";
 import { TeachingTimelinePage } from "./components/app/TeachingTimelinePage";
+import { CameraTeachingPage } from "./components/app/CameraTeachingPage";
 import { ArchivePage } from "./components/app/ArchivePage";
 import { TrainingPage } from "./components/app/TrainingPage";
 import { EvaluatePage } from "./components/app/EvaluatePage";
@@ -70,6 +71,7 @@ import {
   type TrainingMetric,
 } from "./workbench/workbenchTypes";
 import type {
+  CameraCapture,
   Dataset,
   Demonstration,
   DemonstrationFrame,
@@ -84,6 +86,7 @@ import type {
   ExperimentSpec,
   OptimizationStatus,
 } from "./types";
+import { saveCameraCapture } from "./domain/cameraArchive";
 
 export default function App() {
   return (
@@ -1489,12 +1492,45 @@ function Workbench() {
     setTrained(false);
   }
 
+  async function saveCameraTeaching(capture: CameraCapture, mappedFrames: number[][]) {
+    if (!robot || !mappedFrames.length) return;
+    const id = `camera-demo-${Date.now()}`;
+    const frames = mappedFrames.map((positions, index) => ({
+      timestamp: capture.frames[index]?.timestamp ?? index * (1000 / capture.sample_rate),
+      positions,
+    }));
+    const demonstration: Demonstration = {
+      id,
+      name: capture.name,
+      kind: capture.mode === "simple" ? "pose" : "gesture",
+      current: [...mappedFrames[0]],
+      target: [...mappedFrames[mappedFrames.length - 1]],
+      frames,
+      dataset_id: activeDatasetId ?? undefined,
+      source: "camera",
+      camera_capture_id: capture.id,
+      retargeting_profile: capture.retargeting_profile,
+      retargeting_profile_version: capture.retargeting_profile_version,
+    };
+    try {
+      await saveCameraCapture(robot.id, { ...capture, demonstration_id: id });
+    } catch {
+      setError("The landmark capture could not be stored in this browser.");
+      return;
+    }
+    persistDemonstrations([...demonstrations, demonstration]);
+    setSelectedDemoId(id);
+    setTrained(false);
+    setMessage(`Saved ${capture.name}; its robot frames are ready to train.`);
+  }
+
   const routePage = (() => {
     if (location.pathname === "/") return <Navigate to="/teach/pose" replace />;
     if (
       ![
         "/teach/pose",
         "/teach/timeline",
+        "/teach/camera",
         "/archive",
         "/train",
         "/evaluate",
@@ -1541,6 +1577,18 @@ function Workbench() {
           onSaveAndNew={saveTimelineAndNew}
           onFpsChange={setTimelineFps}
           onDurationChange={setTimelineDurationFrames}
+        />
+      );
+    }
+    if (location.pathname === "/teach/camera") {
+      return (
+        <CameraTeachingPage
+          robot={robot}
+          state={displayState}
+          joints={controllableJoints}
+          neutral={positions}
+          onPreview={applyPreviewPositions}
+          onSave={saveCameraTeaching}
         />
       );
     }

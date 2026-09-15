@@ -31,6 +31,7 @@ export function RouteFrame({
   const navigation = [
     ["/teach/pose", "Pose"],
     ["/teach/timeline", "Timeline"],
+    ["/teach/camera", "Camera"],
     ["/archive", "Archive"],
     ["/train", "Train"],
     ["/evaluate", "Evaluate"],

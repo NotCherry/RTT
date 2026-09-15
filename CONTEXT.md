@@ -28,6 +28,18 @@ _Avoid_: Pose, trajectory label
 A recorded pose or gesture that expresses expected robot behavior and can be archived or used for training.
 _Avoid_: Random test, model output
 
+**Camera capture**:
+A device-local sequence of body and hand landmarks used as the source for a camera-derived demonstration. Camera pixels are transient and never part of the Archive.
+_Avoid_: Uploaded video, robot frame
+
+**Landmark frame**:
+A timestamped stick-figure observation from a camera capture. It becomes a robot Frame only after retargeting.
+_Avoid_: Robot state, authored Keyframe
+
+**Retargeting profile**:
+A versioned mapping from observable human landmarks to a robot's controllable joints, including neutral-pose preservation and joint-limit clamping.
+_Avoid_: Model prediction, training configuration
+
 **Archive**:
 The durable collection of robot context, demonstrations, annotations, and related experiment records.
 _Avoid_: Dataset-only, model checkpoint

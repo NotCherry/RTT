@@ -73,10 +73,10 @@ export function ArchivePage({
                   <div>
                     <strong>{demonstration.name}</strong>
                     <span>
-                      {demonstration.kind} ·{" "}
+                      {demonstration.source === "camera" ? "camera · " : ""}{demonstration.kind} ·{" "}
                       {demonstration.keyframes?.length ??
                         demonstration.frames.length}{" "}
-                      authored keyframes
+                      {demonstration.keyframes?.length ? "authored keyframes" : "captured frames"}
                     </span>
                   </div>
                   <div className="demo-card-actions">

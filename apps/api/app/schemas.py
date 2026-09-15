@@ -59,6 +59,10 @@ class Demonstration(BaseModel):
     duration_frames: int = Field(0, ge=0, le=100000)
     start_frame_index: int = Field(0, ge=0)
     dataset_id: str | None = None
+    source: Literal["camera"] | None = None
+    camera_capture_id: str | None = None
+    retargeting_profile: str | None = None
+    retargeting_profile_version: Literal[1] | None = None
 
 
 class Dataset(BaseModel):

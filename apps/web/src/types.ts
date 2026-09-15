@@ -87,6 +87,41 @@ export type Demonstration = {
   duration_frames?: number;
   start_frame_index?: number;
   dataset_id?: string;
+  source?: "camera";
+  camera_capture_id?: string;
+  retargeting_profile?: string;
+  retargeting_profile_version?: 1;
+};
+
+export type LandmarkPoint = {
+  x: number;
+  y: number;
+  z: number;
+  visibility?: number;
+};
+
+export type LandmarkFrame = {
+  timestamp: number;
+  pose: LandmarkPoint[];
+  left_hand: LandmarkPoint[];
+  right_hand: LandmarkPoint[];
+  confidence: number;
+};
+
+/** A device-local stick-figure source for a camera-derived demonstration. */
+export type CameraCapture = {
+  id: string;
+  version: 1;
+  name: string;
+  created_at: string;
+  mode: "simple" | "continuous";
+  sample_rate: 10 | 15 | 30;
+  source: { kind: "local-media-stream"; stream_count: 1 };
+  frames: LandmarkFrame[];
+  quality: { accepted_frames: number; rejected_frames: number };
+  retargeting_profile: "g1-upper-body" | "g1-single-arm";
+  retargeting_profile_version: 1;
+  demonstration_id?: string;
 };
 export type Dataset = {
   id: string;

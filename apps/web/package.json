@@ -13,6 +13,7 @@
     "test:e2e:open": "cypress open"
   },
   "dependencies": {
+    "@mediapipe/tasks-vision": "^1.0.1",
     "@vitejs/plugin-react": "latest",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
