@@ -7,6 +7,7 @@ import type {
   Robot,
   RolloutFrame,
   RolloutResponse,
+  RobotExample,
   SimulationState,
   TrainingConfig,
 } from "./types";
@@ -58,6 +59,18 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export function loadDemoRobot() {
   return request<Robot>("/api/robots/demo");
+}
+
+export function loadDefaultRobot() {
+  return request<Robot>("/api/robots/default");
+}
+
+export function loadRobotExample(exampleId: string) {
+  return request<Robot>(`/api/robots/examples/${exampleId}`);
+}
+
+export function loadRobotExamples() {
+  return request<RobotExample[]>("/api/robots/examples");
 }
 
 export function uploadRobot(file: File) {

@@ -54,6 +54,13 @@ export type Robot = {
   use_fixed_base?: boolean;
   physics_timestep?: number;
 };
+export type RobotExample = {
+  id: string;
+  name: string;
+  description: string;
+  filename: string;
+  dof: number;
+};
 export type SimulationState = { positions: number[]; training: boolean };
 export type DemonstrationFrame = {
   timestamp: number;

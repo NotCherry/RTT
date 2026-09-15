@@ -270,6 +270,7 @@
   .upload-icon { @apply grid h-[26px] w-[26px] place-items-center rounded-full border border-upload-icon-border text-base text-accent-300; }
   .or-divider { @apply mx-[18px] mb-3 flex items-center gap-2 font-mono text-[10px] text-text-700; }
   .or-divider::before, .or-divider::after { content: ''; @apply h-px flex-1 bg-divider; }
+  .stacked-actions { @apply mx-[18px] flex flex-col gap-2; }
   .section-divider { @apply mx-[18px] mt-[19px] h-px bg-line-800; }
   .empty-note { @apply m-4 mx-[18px] rounded-md bg-empty-bg p-[11px] text-xs leading-[1.45] text-text-600; }
   .joint-list { @apply px-[18px] pt-0.5; }

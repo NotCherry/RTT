@@ -4,7 +4,10 @@ import {
   closeSession,
   createSession,
   exportUrl,
+  loadDefaultRobot,
   loadDemoRobot,
+  loadRobotExample,
+  loadRobotExamples,
   optimizeSession,
   predictPose,
   rolloutSession,
@@ -71,6 +74,7 @@ import type {
   Demonstration,
   DemonstrationFrame,
   Robot,
+  RobotExample,
   RolloutFrame,
   SimulationState,
   TrainingConfig,
@@ -92,6 +96,7 @@ export default function App() {
 function Workbench() {
   const location = useLocation();
   const [robot, setRobot] = useState<Robot | null>(null);
+  const [robotExamples, setRobotExamples] = useState<RobotExample[]>([]);
   const [state, setState] = useState<SimulationState | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [demonstrations, setDemonstrations] = useState<Demonstration[]>([]);
@@ -112,7 +117,7 @@ function Workbench() {
     OptimizationStatus
   >("idle");
   const [message, setMessage] = useState(
-    "Load the sample robot or upload a primitive URDF.",
+    "Choose a Unitree G1 example or upload a primitive URDF.",
   );
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -165,6 +170,7 @@ function Workbench() {
     experiments: [],
   });
   const robotIdRef = useRef<string | null>(null);
+  const defaultRobotLoadRef = useRef(true);
   const optimizationTargetRef = useRef<Pick<Demonstration, "id" | "name"> | null>(null);
 
   useEffect(() => {
@@ -268,14 +274,20 @@ function Workbench() {
     }
   }, [location.pathname, stopReplay]);
 
-  // Auto-load sample robot on first mount if none present (vertical stance pre-configured)
+  useEffect(() => {
+    void loadRobotExamples().then(setRobotExamples).catch(() => {
+      // The default still loads when the example catalog is temporarily unavailable.
+    });
+  }, []);
+
+  // Auto-load the default supported robot on first mount.
   useEffect(() => {
     if (robot || busy) return;
     let cancelled = false;
-    void loadDemoRobot()
-      .then((demo) => {
-        if (cancelled) return;
-        return openRobot(demo);
+    void loadDefaultRobot()
+      .then((defaultRobot) => {
+        if (cancelled || !defaultRobotLoadRef.current) return;
+        return openRobot(defaultRobot);
       })
       .catch(() => {
         // keep error handling in openRobot; swallow here for auto-load
@@ -1060,6 +1072,7 @@ function Workbench() {
   }
 
   async function handleDemo() {
+    defaultRobotLoadRef.current = false;
     setBusy(true);
     setError(null);
     try {
@@ -1074,9 +1087,26 @@ function Workbench() {
     }
   }
 
+  async function handleExample(exampleId: string) {
+    defaultRobotLoadRef.current = false;
+    setBusy(true);
+    setError(null);
+    try {
+      await openRobot(await loadRobotExample(exampleId));
+    } catch (cause) {
+      setError(
+        cause instanceof Error
+          ? cause.message
+          : "Unable to load the robot example.",
+      );
+      setBusy(false);
+    }
+  }
+
   async function handleUpload(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
+    defaultRobotLoadRef.current = false;
     setBusy(true);
     setError(null);
     try {
@@ -1633,8 +1663,10 @@ function Workbench() {
         controllableJoints={controllableJoints}
         positions={positions}
         busy={busy}
+        robotExamples={robotExamples}
         onUpload={handleUpload}
         onDemo={handleDemo}
+        onExample={handleExample}
         onReset={resetPose}
         onUpdateJoint={updateJoint}
         onCapture={captureDemonstration}
@@ -1783,9 +1815,22 @@ function Workbench() {
           <div className="or-divider">
             <span>or</span>
           </div>
-          <Button variant="secondary" full onClick={handleDemo} disabled={busy}>
-            Load the 2-joint sample arm
-          </Button>
+          <div className="stacked-actions">
+            {robotExamples.map((example) => (
+              <Button
+                key={example.id}
+                variant="secondary"
+                full
+                onClick={() => handleExample(example.id)}
+                disabled={busy}
+              >
+                {example.name}
+              </Button>
+            ))}
+            <Button variant="secondary" full onClick={handleDemo} disabled={busy}>
+              Load the 2-joint sample arm
+            </Button>
+          </div>
           <div className="section-divider" />
           <div className="panel-header compact">
             <div>

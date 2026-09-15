@@ -200,7 +200,7 @@ export function RobotScene({ robot, state }: Props) {
         <div className="scene-empty">
           <span className="scene-empty-icon">◎</span>
           <strong>Load a robot to begin</strong>
-          <span>Upload a primitive URDF or open the sample arm.</span>
+          <span>Choose a Unitree G1 example or upload a primitive URDF.</span>
         </div>
       )}
       <div ref={mountRef} className="scene-mount" />

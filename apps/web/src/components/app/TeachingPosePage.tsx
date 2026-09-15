@@ -4,7 +4,7 @@ import { Button, Panel, PanelHeader, PanelLabel } from "@/components/ui";
 import { H2, H3, IntroCopy, Kicker } from "@/components/ui/typography";
 import { RobotViewport } from "@/components/workbench/RobotViewport";
 import { DraftNumberInput } from "@/components/ui/draft-number-input";
-import type { Joint, Robot, SimulationState } from "@/types";
+import type { Joint, Robot, RobotExample, SimulationState } from "@/types";
 
 type TeachingPosePageProps = {
   robot: Robot | null;
@@ -12,8 +12,10 @@ type TeachingPosePageProps = {
   controllableJoints: Joint[];
   positions: number[];
   busy: boolean;
+  robotExamples?: RobotExample[];
   onUpload: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onDemo: () => void;
+  onExample?: (exampleId: string) => void;
   onReset: () => void;
   onUpdateJoint: (index: number, value: number) => void;
   onCapture: (name?: string) => void;
@@ -26,8 +28,10 @@ export function TeachingPosePage({
   controllableJoints,
   positions,
   busy,
+  robotExamples = [],
   onUpload,
   onDemo,
+  onExample = () => undefined,
   onReset,
   onUpdateJoint,
   onCapture,
@@ -57,7 +61,17 @@ export function TeachingPosePage({
               Upload URDF
             </label>
           </Button>
-          <Button variant="primary" onClick={onDemo} disabled={busy}>
+          {robotExamples.map((example) => (
+            <Button
+              key={example.id}
+              variant="secondary"
+              onClick={() => onExample(example.id)}
+              disabled={busy}
+            >
+              {example.name}
+            </Button>
+          ))}
+          <Button variant="ghost" onClick={onDemo} disabled={busy}>
             Open sample robot
           </Button>
         </div>

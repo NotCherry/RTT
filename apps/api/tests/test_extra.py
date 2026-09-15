@@ -45,6 +45,23 @@ def test_demo_robot_idempotent():
     assert len(first["joints"]) == len(second["joints"])
 
 
+def test_unitree_g1_examples_are_listed_and_preserve_official_dof_counts():
+    examples = client.get("/api/robots/examples")
+    assert examples.status_code == 200
+    assert {(item["id"], item["dof"]) for item in examples.json()} == {
+        ("unitree-g1-basic-23dof", 23),
+        ("unitree-g1-edu-29dof", 29),
+    }
+
+    basic = client.get("/api/robots/default")
+    edu = client.get("/api/robots/examples/unitree-g1-edu-29dof")
+    assert basic.status_code == edu.status_code == 200
+    assert basic.json()["name"] == "Unitree G1 Basic (23 DOF)"
+    assert len([joint for joint in basic.json()["joints"] if joint["controllable"]]) == 23
+    assert len([joint for joint in edu.json()["joints"] if joint["controllable"]]) == 29
+    assert any(link["visuals"] for link in basic.json()["links"])
+
+
 def test_reupload_preserves_robot_identity():
     from app.main import DEMO_URDF
     first = client.post("/api/robots/parse", files={"file": ("arm.urdf", DEMO_URDF.encode(), "text/xml")})

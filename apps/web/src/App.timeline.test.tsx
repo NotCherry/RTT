@@ -24,7 +24,10 @@ vi.mock("./api", () => ({
   createSession: vi.fn(),
   closeSession: vi.fn(() => Promise.resolve()),
   exportUrl: vi.fn(() => "#export"),
+  loadDefaultRobot: vi.fn(),
   loadDemoRobot: vi.fn(),
+  loadRobotExample: vi.fn(),
+  loadRobotExamples: vi.fn(),
   predictPose: vi.fn(),
   rolloutSession: vi.fn(),
   saveDatasets: vi.fn(() => Promise.resolve()),
@@ -90,6 +93,9 @@ beforeEach(() => {
   window.localStorage.clear();
   vi.stubGlobal("WebSocket", MockWebSocket);
   vi.mocked(api.loadDemoRobot).mockResolvedValue(robot);
+  vi.mocked(api.loadDefaultRobot).mockResolvedValue(robot);
+  vi.mocked(api.loadRobotExample).mockResolvedValue(robot);
+  vi.mocked(api.loadRobotExamples).mockResolvedValue([]);
   vi.mocked(api.createSession).mockResolvedValue({
     session_id: "session-1",
     robot,

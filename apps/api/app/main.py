@@ -23,6 +23,7 @@ from fastapi import FastAPI, File, HTTPException, UploadFile, WebSocket, WebSock
 from fastapi.middleware.cors import CORSMiddleware  # type: ignore[import-not-found]
 from fastapi.responses import StreamingResponse  # type: ignore[import-not-found]
 from pydantic import BaseModel, Field  # type: ignore[import-not-found]
+from .bundled_robots import bundled_example_source, create_bundled_robot_router
 from .session_runtime import SessionEvents, serialized
 from .modeling import compile_policy, legacy_model_spec
 from .schemas import (
@@ -94,6 +95,7 @@ DEMO_URDF = """<?xml version="1.0"?>
     <limit lower="-2.2" upper="2.2" effort="100" velocity="5"/>
   </joint>
 </robot>"""
+
 
 
 def floats(value: str | None, fallback: list[float]) -> list[float]:
@@ -348,8 +350,11 @@ def parse_urdf(raw: bytes, filename: str, stored_path: Path) -> dict[str, Any]:
 
     if not links:
         raise ValueError("The URDF does not contain any links.")
-    if len(joints) > MAX_JOINTS:
-        raise ValueError(f"This MVP supports at most {MAX_JOINTS} joints.")
+    controllable_joint_count = sum(joint["controllable"] for joint in joints)
+    if controllable_joint_count > MAX_JOINTS:
+        raise ValueError(
+            f"This MVP supports at most {MAX_JOINTS} controllable joints."
+        )
     roots = link_names - child_names
     root_link = sorted(roots)[0] if roots else links[0]["name"]
     return {
@@ -368,6 +373,19 @@ def parse_urdf(raw: bytes, filename: str, stored_path: Path) -> dict[str, Any]:
 
 def serializable_robot(robot: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in robot.items() if key != "path"}
+
+
+def load_bundled_example(example_id: str) -> dict[str, Any]:
+    robot = ROBOTS.get(example_id)
+    if robot is not None:
+        return robot
+    example, proxy = bundled_example_source(example_id)
+    path = robot_file_path(example_id)
+    path.write_bytes(proxy)
+    robot = parse_urdf(proxy, str(example["filename"]), path)
+    robot["name"] = str(example["name"])
+    ROBOTS[example_id] = robot
+    return robot
 
 
 def clamp(value: float, lower: float, upper: float) -> float:
@@ -2009,6 +2027,9 @@ def demo_robot() -> dict[str, Any]:
         path.write_text(DEMO_URDF)
         ROBOTS[robot_id] = parse_urdf(DEMO_URDF.encode(), "slider-arm.urdf", path)
     return serializable_robot(ROBOTS[robot_id])
+
+
+app.include_router(create_bundled_robot_router(load_bundled_example, serializable_robot))
 
 
 @app.post("/api/sessions")
