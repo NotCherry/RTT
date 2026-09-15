@@ -5,6 +5,7 @@ import { RobotViewport } from "@/components/workbench/RobotViewport";
 import { hasUsablePose, retargetLandmarkFrame, type RetargetingAdjustments, type RetargetingProfile } from "@/domain/retargeting";
 import { cameraErrorMessage } from "@/domain/cameraErrors";
 import { directIpCameraStreamUrl } from "@/domain/ipCamera";
+import { saveCameraVideo } from "@/domain/cameraArchive";
 import type { CameraCapture, Joint, LandmarkFrame, Robot, SimulationState } from "@/types";
 
 type Props = {
@@ -33,6 +34,8 @@ export function CameraTeachingPage({ robot, state, joints, neutral, onPreview, o
   const rafRef = useRef<number | null>(null);
   const replayTimerRef = useRef<number | null>(null);
   const recordedVideoUrlRef = useRef<string | null>(null);
+  const recordedVideoBlobRef = useRef<Blob | null>(null);
+  const captureIdRef = useRef<string | null>(null);
   const countdownRef = useRef<number | null>(null);
   const recordingRef = useRef<LandmarkFrame[]>([]);
   const isRecordingRef = useRef(false);
@@ -200,6 +203,7 @@ export function CameraTeachingPage({ robot, state, joints, neutral, onPreview, o
 
   function startGesture() {
     recordingRef.current = [];
+    captureIdRef.current = `camera-${Date.now()}`;
     lastSampleRef.current = -Infinity;
     let remaining = countdown;
     setStatus(`Recording begins in ${remaining}…`);
@@ -240,7 +244,21 @@ export function CameraTeachingPage({ robot, state, joints, neutral, onPreview, o
     const url = URL.createObjectURL(blob);
     if (recordedVideoUrlRef.current) URL.revokeObjectURL(recordedVideoUrlRef.current);
     recordedVideoUrlRef.current = url;
+    recordedVideoBlobRef.current = blob;
     setRecordedVideoUrl(url);
+    if (robot && captureIdRef.current) {
+      await saveCameraVideo(robot.id, captureIdRef.current, blob).catch(() =>
+        setStatus("Video preview is available, but browser storage could not save it."),
+      );
+    }
+    setStatus("Video saved locally. Select Extract stick figure to process it.");
+  }
+
+  async function extractRecordedVideo() {
+    const blob = recordedVideoBlobRef.current;
+    if (!blob) return;
+    setStatus("Extracting stick-figure frames from saved video…");
+    const url = URL.createObjectURL(blob);
     const video = document.createElement("video");
     video.muted = true;
     video.src = url;
@@ -269,11 +287,12 @@ export function CameraTeachingPage({ robot, state, joints, neutral, onPreview, o
         }
         await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
       }
-      saveGesture(captured);
+      setFrames(captured);
+      setStatus(`Extracted ${captured.length} stick-figure frames. Replay or save the robot gesture.`);
     } catch (cause) {
       setStatus(cause instanceof Error ? cause.message : "Local video processing failed.");
     } finally {
-      // Keep this local-only URL alive for the on-page recording review.
+      URL.revokeObjectURL(url);
     }
   }
 
@@ -284,12 +303,15 @@ export function CameraTeachingPage({ robot, state, joints, neutral, onPreview, o
       setStatus("No confident frames were captured.");
       return;
     }
-    const capture = buildCapture("continuous", captured);
-    const mapped = captured.map((frame) => retargetLandmarkFrame(frame, joints, neutral, profile, adjustments));
+    setStatus(`Captured ${captured.length} live stick-figure frames. Replay or save the robot gesture.`);
+  }
+
+  function saveExtractedGesture() {
+    if (!frames.length) return;
+    const capture = buildCapture("continuous", frames);
+    const mapped = frames.map((frame) => retargetLandmarkFrame(frame, joints, neutral, profile, adjustments));
     onPreview(mapped[mapped.length - 1]);
-    void onSave(capture, mapped).then(() =>
-      setStatus(`Saved ${captured.length} local landmark frames and a trainable gesture.`),
-    );
+    void onSave(capture, mapped).then(() => setStatus(`Saved ${frames.length} stick-figure frames and a trainable robot gesture.`));
   }
 
   function replayGestureOnRobot() {
@@ -308,7 +330,7 @@ export function CameraTeachingPage({ robot, state, joints, neutral, onPreview, o
 
   function buildCapture(captureMode: "simple" | "continuous", captured: LandmarkFrame[]): CameraCapture {
     return {
-      id: `camera-${Date.now()}`,
+      id: captureIdRef.current ?? `camera-${Date.now()}`,
       version: 1,
       name: captureMode === "simple" ? "Camera pose" : "Camera gesture",
       created_at: new Date().toISOString(),
@@ -319,6 +341,7 @@ export function CameraTeachingPage({ robot, state, joints, neutral, onPreview, o
       quality: { accepted_frames: captured.length, rejected_frames: 0 },
       retargeting_profile: profile,
       retargeting_profile_version: 1,
+      ...(recordedVideoBlobRef.current ? { video_id: captureIdRef.current ?? undefined } : {}),
     };
   }
 
@@ -333,7 +356,7 @@ export function CameraTeachingPage({ robot, state, joints, neutral, onPreview, o
       <Panel className="route-content-panel"><PanelHeader><div><PanelLabel>CAMERA TEACHING</PanelLabel><H3>{mode === "simple" ? "Select a pose" : "Record a gesture"}</H3></div><span className="count-badge">{frames.length} frames</span></PanelHeader>
         <div className="route-form-grid"><label>Capture mode<select aria-label="Capture mode" value={mode} onChange={(event) => setMode(event.target.value as typeof mode)}><option value="simple">Simple pose</option><option value="continuous">Continuous gesture</option></select></label><label>Processing<select aria-label="Processing mode" value={processing} onChange={(event) => setProcessing(event.target.value as typeof processing)} disabled={cameraSource === "ip"}><option value="live">Live preview</option><option value="offline">Record then process</option></select></label><label>Sample rate<select aria-label="Sample rate" value={sampleRate} onChange={(event) => setSampleRate(Number(event.target.value) as typeof sampleRate)}><option value={10}>10 fps</option><option value={15}>15 fps</option><option value={30}>30 fps</option></select></label><label>Mapping profile<select aria-label="Mapping profile" value={profile} onChange={(event) => setProfile(event.target.value as RetargetingProfile)}><option value="g1-upper-body">G1 upper body</option><option value="g1-single-arm">Single right arm</option></select></label>{mode === "continuous" && <label>Countdown<select aria-label="Countdown" value={countdown} onChange={(event) => setCountdown(Number(event.target.value))}>{Array.from({ length: 10 }, (_, index) => <option key={index + 1} value={index + 1}>{index + 1} seconds</option>)}</select></label>}</div>
         <RobotViewport robot={robot} state={state} title="Retargeted preview" label="ROBOT PREVIEW" />
-        <div className="route-actions">{mode === "simple" ? <Button variant="primary" onClick={selectPose} disabled={!latest}>Select pose</Button> : recording ? <Button variant="recording" onClick={stopGesture}>Stop and save gesture</Button> : <Button variant="primary" onClick={startGesture} disabled={!landmarkerRef.current}>Start stick-figure capture</Button>}{frames.length > 1 && <Button variant="secondary" onClick={replayGestureOnRobot}>Play stick figure on robot</Button>}</div>
+        <div className="route-actions">{mode === "simple" ? <Button variant="primary" onClick={selectPose} disabled={!latest}>Select pose</Button> : recording ? <Button variant="recording" onClick={stopGesture}>Stop recording</Button> : <Button variant="primary" onClick={startGesture} disabled={!landmarkerRef.current}>1. Start stick-figure capture</Button>}{recordedVideoUrl && <Button variant="secondary" onClick={extractRecordedVideo}>2. Extract / re-extract stick figure</Button>}{frames.length > 1 && <Button variant="secondary" onClick={replayGestureOnRobot}>Play stick figure on robot</Button>}{frames.length > 0 && <Button variant="primary" onClick={saveExtractedGesture}>3. Save robot gesture</Button>}</div>
         <p className="helper-text">{status}. Video is never archived; only landmark frames and the derived robot demonstration are saved.</p>
       </Panel>
     </div>

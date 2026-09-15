@@ -125,6 +125,7 @@ export type CameraCapture = {
   quality: { accepted_frames: number; rejected_frames: number };
   retargeting_profile: "g1-upper-body" | "g1-single-arm";
   retargeting_profile_version: 1;
+  video_id?: string;
   demonstration_id?: string;
 };
 export type Dataset = {
