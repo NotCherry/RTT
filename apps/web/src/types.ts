@@ -118,7 +118,9 @@ export type CameraCapture = {
   created_at: string;
   mode: "simple" | "continuous";
   sample_rate: 10 | 15 | 30;
-  source: { kind: "local-media-stream"; stream_count: 1 };
+  source:
+    | { kind: "local-media-stream"; stream_count: 1 }
+    | { kind: "ip-image-stream"; url: string };
   frames: LandmarkFrame[];
   quality: { accepted_frames: number; rejected_frames: number };
   retargeting_profile: "g1-upper-body" | "g1-single-arm";
