@@ -1,50 +1,143 @@
-import type { CameraCapture } from "@/types";
+import type { CameraCapture, LandmarkFrame } from "@/types";
 
+export type CameraRecording = {
+  id: string;
+  name: string;
+  created_at: string;
+  source: CameraCapture["source"];
+  sample_rate: CameraCapture["sample_rate"];
+  duration_ms: number;
+  width?: number;
+  height?: number;
+  frames: LandmarkFrame[];
+  rejected_frames?: number;
+  processed?: boolean;
+  video?: Blob;
+};
+export type CameraRecordingSummary = Omit<CameraRecording, "video" | "frames"> & {
+  frame_count: number;
+  has_video: boolean;
+};
 const DATABASE = "robot-learning-workbench-camera-v1";
-const STORE = "captures";
-const VIDEO_STORE = "videos";
+const stores = ["captures", "videos", "recordings"];
 
 function openDatabase() {
   return new Promise<IDBDatabase>((resolve, reject) => {
-    const request = indexedDB.open(DATABASE, 2);
+    const request = indexedDB.open(DATABASE, 3);
     request.onupgradeneeded = () => {
-      if (!request.result.objectStoreNames.contains(STORE)) request.result.createObjectStore(STORE);
-      if (!request.result.objectStoreNames.contains(VIDEO_STORE)) request.result.createObjectStore(VIDEO_STORE);
+      for (const store of stores)
+        if (!request.result.objectStoreNames.contains(store)) request.result.createObjectStore(store);
     };
     request.onerror = () => reject(request.error);
+    request.onblocked = () => reject(new Error("Close other workbench tabs and retry local storage."));
     request.onsuccess = () => resolve(request.result);
   });
 }
 
-export async function saveCameraVideo(robotId: string, captureId: string, video: Blob) {
+async function transaction<T>(
+  names: string[],
+  mode: IDBTransactionMode,
+  work: (tx: IDBTransaction, result: (value: T) => void) => void,
+): Promise<T> {
   const database = await openDatabase();
-  await new Promise<void>((resolve, reject) => {
-    const transaction = database.transaction(VIDEO_STORE, "readwrite");
-    transaction.objectStore(VIDEO_STORE).put(video, `${robotId}:${captureId}`);
-    transaction.oncomplete = () => resolve();
-    transaction.onerror = () => reject(transaction.error);
-  });
-  database.close();
+  try {
+    return await new Promise<T>((resolve, reject) => {
+      const tx = database.transaction(names, mode);
+      let value: T;
+      tx.oncomplete = () => resolve(value);
+      tx.onerror = tx.onabort = () => reject(tx.error ?? new Error("Local camera storage failed."));
+      work(tx, (next) => {
+        value = next;
+      });
+    });
+  } finally {
+    database.close();
+  }
 }
 
+export async function saveCameraRecording(robotId: string, recording: CameraRecording) {
+  const { video, ...metadata } = recording;
+  return transaction<void>(["recordings", "videos"], "readwrite", (tx) => {
+    const key = `${robotId}:${recording.id}`;
+    tx.objectStore("recordings").put(metadata, key);
+    if (video) tx.objectStore("videos").put(video, key);
+  });
+}
+
+/** Read legacy captures and orphan videos too; upgrade without discarding old data. */
+async function readRecordings(robotId: string) {
+  return transaction<Map<string, CameraRecording>>(stores, "readonly", (tx, result) => {
+    const rows = new Map<string, CameraRecording>();
+    const captures = new Map<string, CameraCapture>();
+    const videos = new Map<string, Blob>();
+    let pending = stores.length;
+    for (const name of stores) {
+      const request = tx.objectStore(name).openCursor();
+      request.onsuccess = () => {
+        const cursor = request.result;
+        if (cursor) {
+          const key = String(cursor.key);
+          if (key.startsWith(`${robotId}:`)) {
+            const id = key.slice(robotId.length + 1);
+            if (name === "recordings") rows.set(id, cursor.value);
+            if (name === "captures") captures.set(id, cursor.value);
+            if (name === "videos") videos.set(id, cursor.value);
+          }
+          cursor.continue();
+        } else if (--pending === 0) {
+          for (const id of new Set([...captures.keys(), ...videos.keys()])) {
+            const capture = captures.get(id);
+            if (!rows.has(id))
+              rows.set(id, {
+                id,
+                name: capture?.name ?? "Recovered recording",
+                created_at:
+                  capture?.created_at ??
+                  (Number.isFinite(Number(id.replace("camera-", "")))
+                    ? new Date(Number(id.replace("camera-", ""))).toISOString()
+                    : ""),
+                source: capture?.source ?? { kind: "local-media-stream", stream_count: 1 },
+                sample_rate: capture?.sample_rate ?? 15,
+                duration_ms: capture?.frames.length
+                  ? capture.frames.at(-1)!.timestamp - capture.frames[0].timestamp
+                  : 0,
+                frames:
+                  capture?.frames.map((frame) => ({
+                    ...frame,
+                    timestamp: frame.timestamp - capture.frames[0].timestamp,
+                  })) ?? [],
+                processed: Boolean(capture?.frames.length),
+              });
+          }
+          for (const [id, video] of videos) rows.get(id)!.video = video;
+          result(rows);
+        }
+      };
+    }
+  });
+}
+
+export async function listCameraRecordings(robotId: string): Promise<CameraRecordingSummary[]> {
+  const rows = await readRecordings(robotId);
+  return [...rows.values()]
+    .sort((a, b) => b.created_at.localeCompare(a.created_at))
+    .map(({ video, frames, ...row }) => ({ ...row, frame_count: frames.length, has_video: Boolean(video) }));
+}
+export async function loadCameraRecording(robotId: string, id: string) {
+  return (await readRecordings(robotId)).get(id) ?? null;
+}
+export async function deleteCameraRecording(robotId: string, id: string) {
+  return transaction<void>(stores, "readwrite", (tx) => {
+    for (const name of stores) tx.objectStore(name).delete(`${robotId}:${id}`);
+  });
+}
 export async function saveCameraCapture(robotId: string, capture: CameraCapture) {
-  const database = await openDatabase();
-  await new Promise<void>((resolve, reject) => {
-    const transaction = database.transaction(STORE, "readwrite");
-    transaction.objectStore(STORE).put(capture, `${robotId}:${capture.id}`);
-    transaction.oncomplete = () => resolve();
-    transaction.onerror = () => reject(transaction.error);
+  return transaction<void>(["captures"], "readwrite", (tx) => {
+    tx.objectStore("captures").put(capture, `${robotId}:${capture.id}`);
   });
-  database.close();
 }
-
-export async function deleteCameraCapture(robotId: string, captureId: string) {
-  const database = await openDatabase();
-  await new Promise<void>((resolve, reject) => {
-    const transaction = database.transaction(STORE, "readwrite");
-    transaction.objectStore(STORE).delete(`${robotId}:${captureId}`);
-    transaction.oncomplete = () => resolve();
-    transaction.onerror = () => reject(transaction.error);
+export async function deleteCameraCapture(robotId: string, id: string) {
+  return transaction<void>(["captures"], "readwrite", (tx) => {
+    tx.objectStore("captures").delete(`${robotId}:${id}`);
   });
-  database.close();
 }

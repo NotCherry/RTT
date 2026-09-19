@@ -29,8 +29,12 @@ A recorded pose or gesture that expresses expected robot behavior and can be arc
 _Avoid_: Random test, model output
 
 **Camera capture**:
-A device-local sequence of body and hand landmarks used as the source for a camera-derived demonstration. Camera pixels are transient and never part of the Archive.
+A device-local sequence of body and hand landmarks used as the source for a camera-derived demonstration. The source video may be retained as a Local recording but is never part of the Archive.
 _Avoid_: Uploaded video, robot frame
+
+**Local recording**:
+A robot-scoped camera video retained on the current device for later extraction and inspection. Deleting a local recording does not delete robot demonstrations already saved to the Archive.
+_Avoid_: Archived video, uploaded video
 
 **Landmark frame**:
 A timestamped stick-figure observation from a camera capture. It becomes a robot Frame only after retargeting.

@@ -514,3 +514,28 @@
   .scene-shell { @apply min-h-[280px] max-h-[380px]; }
   .app-shell { @apply px-[10px]; }
 }
+
+/* Camera capture and synchronized recording inspection. */
+@layer components {
+  .camera-live-preview { @apply relative aspect-[4/3] overflow-hidden rounded border border-border bg-ink-950; }
+  .camera-video { @apply aspect-[4/3] w-full object-contain; }
+  .camera-skeleton, .camera-skeleton-overlay { @apply aspect-[4/3] w-full text-accent-500; }
+  .camera-skeleton { @apply rounded border border-border bg-ink-950; }
+  .camera-skeleton-overlay { @apply pointer-events-none absolute inset-0 h-full; }
+  .camera-skeleton line, .camera-skeleton-overlay line { stroke: currentColor; stroke-width: 2; }
+  .camera-skeleton circle, .camera-skeleton-overlay circle { fill: currentColor; }
+  .camera-skeleton text, .camera-skeleton-overlay text { @apply fill-text-500 text-sm; }
+  .camera-comparison { @apply grid grid-cols-1 gap-3 p-3 xl:grid-cols-2; }
+  .camera-inspection { @apply p-3; }
+  .camera-recordings { @apply flex flex-col gap-2 p-3; }
+  .camera-recordings button { @apply h-auto justify-start whitespace-normal text-left; }
+  .camera-timeline { @apply flex min-w-32 flex-1 flex-col gap-1 font-mono text-xs; }
+}
+@layer components {
+  .camera-library { @apply grid items-start gap-3 lg:grid-cols-[240px_minmax(0,1fr)]; }
+  .camera-library-panel { @apply min-w-0; }
+  .camera-comparison { @apply items-stretch md:grid-cols-2; }
+  .camera-comparison .camera-skeleton { @apply h-full min-h-64; }
+  .camera-comparison .route-viewport-panel, .camera-inspection .route-viewport-panel { @apply min-h-80 max-h-96; }
+  .camera-inspection-settings { @apply grid-cols-1 sm:grid-cols-2; }
+}

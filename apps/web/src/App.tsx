@@ -1493,7 +1493,7 @@ function Workbench() {
   }
 
   async function saveCameraTeaching(capture: CameraCapture, mappedFrames: number[][]) {
-    if (!robot || !mappedFrames.length) return;
+    if (!robot || !mappedFrames.length) throw new Error("Open a robot and extract frames before saving.");
     const id = `camera-demo-${Date.now()}`;
     const frames = mappedFrames.map((positions, index) => ({
       timestamp: capture.frames[index]?.timestamp ?? index * (1000 / capture.sample_rate),
@@ -1516,9 +1516,18 @@ function Workbench() {
       await saveCameraCapture(robot.id, { ...capture, demonstration_id: id });
     } catch {
       setError("The landmark capture could not be stored in this browser.");
-      return;
+      throw new Error("The landmark capture could not be stored in this browser.");
     }
-    persistDemonstrations([...demonstrations, demonstration]);
+    const nextDemonstrations = [...demonstrations, demonstration];
+    const nextArchive = normalizeArchive({
+      demonstrations: nextDemonstrations,
+      datasets,
+      activeDatasetId,
+      experiments,
+    });
+    if (!saveBrowserArchive(browserStorage, robot.id, nextArchive))
+      throw new Error("Browser storage is unavailable. The demonstration was not saved.");
+    persistDemonstrations(nextDemonstrations);
     setSelectedDemoId(id);
     setTrained(false);
     setMessage(`Saved ${capture.name}; its robot frames are ready to train.`);
