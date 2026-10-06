@@ -55,7 +55,6 @@ export function CameraCapturePanel({
           </select>
         </label>
       </div>
-      <div className="camera-live-robot"><RobotScene robot={robot} state={state} /></div>
       <p className="camera-capture-status" aria-live="polite">{status}</p>
       <div className="route-actions">
         {remaining !== null ? (
@@ -68,6 +67,7 @@ export function CameraCapturePanel({
           <Button disabled={!latest || locked} onClick={savePose}>Save pose</Button>
         )}
       </div>
+      <div className="camera-live-robot"><RobotScene robot={robot} state={state} /></div>
     </Panel>
   );
 }

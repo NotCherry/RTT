@@ -83,7 +83,7 @@ it("reopens extracted frames and reports archive save failures without claiming 
   expect(await screen.findByText(/Save failed: Storage quota exceeded/)).toBeInTheDocument();
   expect(screen.queryByText(/Saved to Archive/)).not.toBeInTheDocument();
   expect(save.mock.calls[0][0].frames).toHaveLength(2);
-  expect(save.mock.calls[0][0].retargeting_profile_version).toBe(2);
+  expect(save.mock.calls[0][0].retargeting_profile_version).toBe(3);
   expect(save.mock.calls[0][0].retargeting_profile).toBe("g1-full-body");
 });
 

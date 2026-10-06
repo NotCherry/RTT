@@ -92,7 +92,7 @@ export type Demonstration = {
   source?: "camera";
   camera_capture_id?: string;
   retargeting_profile?: string;
-  retargeting_profile_version?: 1 | 2;
+  retargeting_profile_version?: 1 | 2 | 3;
 };
 
 export type LandmarkPoint = {
@@ -126,7 +126,7 @@ export type CameraCapture = {
   frames: LandmarkFrame[];
   quality: { accepted_frames: number; rejected_frames: number };
   retargeting_profile: "g1-upper-body" | "g1-single-arm" | "g1-left-arm" | "g1-full-body";
-  retargeting_profile_version: 1 | 2;
+  retargeting_profile_version: 1 | 2 | 3;
   video_id?: string;
   demonstration_id?: string;
 };

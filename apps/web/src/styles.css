@@ -576,3 +576,24 @@
   .camera-capture-settings, .camera-inspection-settings, .camera-mapping-controls { grid-template-columns: minmax(0, 1fr); }
   .camera-mapping-controls .helper-text { padding-top: 0; }
 }
+
+/* Live capture keeps the complete camera frame and overlay in the same fitted bounds. */
+.camera-live-layout { grid-template-columns: minmax(0, 1.8fr) minmax(300px, .8fr); align-items: start; }
+.camera-source-panel { min-width: 0; min-height: 0; max-height: none; overflow: visible; }
+.camera-source-panel .camera-live-preview { height: clamp(360px, 62vh, 720px); aspect-ratio: auto; margin: 0 12px; }
+.camera-live-media { position: absolute; inset: 0; display: block; width: 100%; height: 100%; object-fit: contain; }
+.camera-source-panel .camera-skeleton-overlay { width: 100%; height: 100%; aspect-ratio: auto; }
+.camera-side-label { font-size: 20px; font-weight: 700; paint-order: stroke; stroke: var(--color-ink-950); stroke-width: 3px; }
+.camera-framing-status { padding: 12px 18px; font-family: var(--font-mono); font-size: 11px; color: var(--color-text-500); }
+.camera-source-expanded { grid-column: 1 / -1; }
+.camera-source-expanded + .camera-capture-panel { grid-column: 1 / -1; }
+.camera-source-expanded + .camera-capture-panel .camera-live-robot { height: 360px; flex: none; }
+.camera-live-robot .scene-shell { width: 100%; aspect-ratio: auto; }
+.camera-source-expanded .camera-live-preview { height: clamp(420px, 76vh, 900px); }
+@media (max-width: 1024px) {
+  .camera-live-layout { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 700px) {
+  .camera-source-panel .camera-live-preview { height: clamp(320px, 60vh, 640px); }
+  .camera-source-expanded .camera-live-preview { height: 76vh; }
+}

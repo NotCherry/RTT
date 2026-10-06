@@ -22,7 +22,7 @@ const robot = {
     },
   ],
 };
-function openCameraPage(fakeCamera = false) {
+function openCameraPage(fakeCamera = false, dimensions = { width: 320, height: 240 }) {
   cy.intercept("GET", "/api/robots/demo", { body: robot });
   cy.intercept("GET", "/api/robots/default", { body: robot }).as("defaultRobot");
   cy.intercept("POST", "/api/sessions", {
@@ -35,16 +35,21 @@ function openCameraPage(fakeCamera = false) {
       if (!fakeCamera) return;
       Object.defineProperty(win.navigator.mediaDevices, "getUserMedia", {
         configurable: true,
-        value: async () => {
+        value: async (constraints: MediaStreamConstraints) => {
+          expect((constraints.video as MediaTrackConstraints & { resizeMode: string }).resizeMode).to.equal("none");
           const canvas = win.document.createElement("canvas");
-          canvas.width = 320;
-          canvas.height = 240;
+          canvas.width = dimensions.width;
+          canvas.height = dimensions.height;
           const context = canvas.getContext("2d")!;
           const stream = canvas.captureStream(10);
           let frame = 0;
           const timer = win.setInterval(() => {
             context.fillStyle = frame++ % 2 ? "#333" : "#444";
-            context.fillRect(0, 0, 320, 240);
+            context.fillRect(0, 0, dimensions.width, dimensions.height);
+            context.fillStyle = "#2687e8";
+            context.fillRect(0, 0, dimensions.width, 16);
+            context.fillStyle = "#e85826";
+            context.fillRect(0, dimensions.height - 16, dimensions.width, 16);
             if (stream.getTracks().every((track) => track.readyState === "ended")) win.clearInterval(timer);
           }, 100);
           return stream;
@@ -57,6 +62,41 @@ function openCameraPage(fakeCamera = false) {
   cy.contains("a", "Camera").click();
 }
 describe("Camera recordings", () => {
+  for (const dimensions of [{ width: 1280, height: 720 }, { width: 720, height: 1280 }]) {
+    it(`fits the entire ${dimensions.width}×${dimensions.height} live frame and expands without clipping`, () => {
+      openCameraPage(true, dimensions);
+      cy.contains("button", "Open camera").click();
+      cy.contains("button", "Start recording").should("be.enabled");
+      cy.contains(`${dimensions.width} × ${dimensions.height} · entire camera frame`).should("exist");
+      cy.get(".camera-source-panel").should(($panel) => {
+        const panel = $panel[0].getBoundingClientRect();
+        const video = $panel[0].querySelector("video")!;
+        const frame = video.getBoundingClientRect();
+        expect(video.videoWidth).to.equal(dimensions.width);
+        expect(video.videoHeight).to.equal(dimensions.height);
+        expect(getComputedStyle(video).objectFit).to.equal("contain");
+        expect(frame.bottom).to.be.lessThan(panel.bottom);
+        expect(frame.height).to.be.at.least(360);
+      });
+      cy.contains("button", "Expand camera").click();
+      cy.get(".camera-source-expanded").should("exist");
+      cy.get(".camera-live-preview").should(($stage) => expect($stage[0].getBoundingClientRect().height).to.be.at.least(650));
+      cy.get(".camera-capture-panel").should(($panel) => {
+        const capture = $panel[0];
+        const source = capture.previousElementSibling!.getBoundingClientRect();
+        expect(capture.getBoundingClientRect().width).to.be.closeTo(source.width, 1);
+        expect(capture.querySelector(".route-actions")!.getBoundingClientRect().bottom)
+          .to.be.at.most(capture.querySelector(".camera-live-robot")!.getBoundingClientRect().top);
+      });
+      cy.screenshot(`camera-live-${dimensions.width}-${dimensions.height}`);
+      cy.viewport(390, 844);
+      cy.window().then(win => expect(win.document.documentElement.scrollWidth).to.be.at.most(win.innerWidth));
+      cy.contains("button", "Reduce camera").click();
+      cy.get(".camera-source-expanded").should("not.exist");
+      cy.contains("button", "Close camera").click();
+    });
+  }
+
   it("reopens stored landmarks, plays both previews, and preserves saved demonstrations on deletion", () => {
     openCameraPage();
     cy.window().then(
@@ -170,6 +210,13 @@ describe("Camera recordings", () => {
     cy.get('[aria-label="Processing mode"]').select("live");
     cy.contains("button", "Open camera").click();
     cy.contains("Live processing ready", { timeout: 120000 }).should("exist");
+    cy.get(".camera-source-panel svg").should("have.attr", "viewBox", "0 0 320 240");
+    cy.get(".camera-live-preview").should(($stage) => {
+      const video = $stage[0].querySelector("video")!.getBoundingClientRect();
+      const overlay = $stage[0].querySelector("svg")!.getBoundingClientRect();
+      expect(overlay.width).to.be.closeTo(video.width, 1);
+      expect(overlay.height).to.be.closeTo(video.height, 1);
+    });
     cy.contains("button", "Close camera").click();
   });
   it("records a browser-readable IP image stream for later extraction", () => {

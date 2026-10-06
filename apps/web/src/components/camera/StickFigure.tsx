@@ -46,11 +46,13 @@ function visible(point?: LandmarkPoint) {
 export function StickFigure({
   frame,
   overlay = false,
+  showSides = false,
   width = 640,
   height = 480,
 }: {
   frame: LandmarkFrame | null;
   overlay?: boolean;
+  showSides?: boolean;
   width?: number;
   height?: number;
 }) {
@@ -79,6 +81,11 @@ export function StickFigure({
           )}
         </g>
       ))}
+      {showSides && [[11, "L"], [12, "R"]].map(([index, label]) => {
+        const point = frame?.pose[Number(index)];
+        return visible(point) ? <text key={index} className="camera-side-label"
+          x={point!.x * width} y={point!.y * height - 12} textAnchor="middle">{label}</text> : null;
+      })}
       {!frame && (
         <text x={width / 2} y={height / 2} textAnchor="middle">
           No confident pose at this time

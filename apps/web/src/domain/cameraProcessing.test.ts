@@ -82,3 +82,13 @@ it("uses retained recording duration without seeking beyond a durationless video
   expect(vi.mocked(Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, "currentTime")!.set!)
     .mock.calls.every(([seconds]) => seconds < 1)).toBe(true);
 });
+it("retains confident upper-body observations when hidden legs lower the aggregate score", async () => {
+  const pose = Array.from({ length: 33 }, (_, i) => ({ x: i % 2 ? .3 : .7, y: .3, z: 0,
+    visibility: [11,12,13,14,15,16].includes(i) ? 1 : .05 }));
+  detector.detectForVideo.mockReturnValue({ poseLandmarks: [pose], poseWorldLandmarks: [pose] });
+  const result = await extractCameraRecording(new Blob(), 10, 300, new AbortController().signal, vi.fn());
+  expect(result.frames).toHaveLength(3);
+  expect(result.frames[0].confidence).toBeLessThan(.5);
+  expect(result.frames[0].pose_world).toHaveLength(33);
+  expect(result.rejected_frames).toBe(0);
+});

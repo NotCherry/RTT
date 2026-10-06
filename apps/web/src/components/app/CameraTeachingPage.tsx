@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui";
 import { H2, IntroCopy, Kicker } from "@/components/ui/typography";
 import { MappingControls } from "@/components/camera/MappingControls";
-import { MappingInspector } from "@/components/camera/MappingInspector";
 import { CameraCapturePanel } from "@/components/camera/CameraCapturePanel";
 import { RecordingLibrary } from "@/components/camera/RecordingLibrary";
 import { CameraSourcePanel } from "@/components/camera/CameraSourcePanel";
@@ -310,9 +309,8 @@ function CameraWorkspace({ robot, state, joints, neutral, onPreview, onSave }: P
           </select>
         </label>
       </div>
-      {tab === "live" && <MappingInspector frame={latest} joints={joints} profile={profile} />}
       {tab === "live" ? (
-        <div className="route-two-column">
+        <div className="route-two-column camera-live-layout">
           <CameraSourcePanel
             source={source}
             setSource={setSource}
@@ -323,6 +321,8 @@ function CameraWorkspace({ robot, state, joints, neutral, onPreview, onSave }: P
             setMode={setMode}
             camera={camera}
             latest={latest}
+            joints={joints}
+            profile={profile}
             locked={locked}
             disabled={!robot}
             onToggle={() => {

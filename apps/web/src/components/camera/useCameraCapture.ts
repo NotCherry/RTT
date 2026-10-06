@@ -89,7 +89,13 @@ export function useCameraCapture(options: {
       if (source === "local") {
         if (!navigator.mediaDevices?.getUserMedia)
           throw new Error("Camera access requires localhost or HTTPS and browser camera support.");
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        const videoConstraints: MediaTrackConstraints & { resizeMode: string } = {
+          width: { ideal: 1280 }, resizeMode: "none",
+        };
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: videoConstraints,
+          audio: false,
+        });
         if (generation !== r.generation) {
           stream.getTracks().forEach((track) => track.stop());
           return;

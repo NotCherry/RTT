@@ -1,7 +1,9 @@
-import type { Dispatch, SetStateAction } from "react";
+import { useState, type Dispatch, type SetStateAction } from "react";
 import { Button, Panel, PanelHeader, PanelLabel } from "@/components/ui";
 import { H3 } from "@/components/ui/typography";
-import type { LandmarkFrame } from "@/types";
+import type { Joint, LandmarkFrame } from "@/types";
+import type { RetargetingProfile } from "@/domain/retargeting";
+import { MappingInspector } from "./MappingInspector";
 import { StickFigure } from "./StickFigure";
 import type { useCameraCapture } from "./useCameraCapture";
 
@@ -15,6 +17,8 @@ type Props = {
   setMode: Dispatch<SetStateAction<"simple" | "continuous">>;
   camera: ReturnType<typeof useCameraCapture>;
   latest: LandmarkFrame | null;
+  joints: Joint[];
+  profile: RetargetingProfile;
   locked: boolean;
   disabled: boolean;
   onToggle: () => void;
@@ -29,17 +33,25 @@ export function CameraSourcePanel({
   setMode,
   camera,
   latest,
+  joints,
+  profile,
   locked,
   disabled,
   onToggle,
 }: Props) {
+  const [expanded, setExpanded] = useState(false);
+  const width = (source === "local" ? camera.videoRef.current?.videoWidth : camera.imageRef.current?.naturalWidth) || 640;
+  const height = (source === "local" ? camera.videoRef.current?.videoHeight : camera.imageRef.current?.naturalHeight) || 480;
   return (
-    <Panel className="route-viewport-panel">
+    <Panel className={`route-viewport-panel camera-source-panel${expanded ? " camera-source-expanded" : ""}`}>
       <PanelHeader>
         <div>
           <PanelLabel>CAMERA</PanelLabel>
           <H3>Live preview</H3>
         </div>
+        <Button variant="secondary" aria-pressed={expanded} onClick={() => setExpanded(!expanded)}>
+          {expanded ? "Reduce camera" : "Expand camera"}
+        </Button>
       </PanelHeader>
       <div className="route-form-grid">
         <label>
@@ -54,8 +66,7 @@ export function CameraSourcePanel({
             <option value="ip">Android IP camera</option>
           </select>
         </label>
-        {processing === "offline" && <p className="helper-text">Capture video first. Extract its landmarks from Recordings when you are ready.</p>}
-      {source === "ip" && (
+        {source === "ip" && (
           <label>
             IP camera URL
             <input
@@ -84,19 +95,21 @@ export function CameraSourcePanel({
         </label>
       </div>
       <div className="camera-live-preview">
-        <video ref={camera.videoRef} muted playsInline className={source === "local" ? "camera-video" : "hidden"} />
-        <img ref={camera.imageRef} alt="IP camera stream" className={source === "ip" ? "camera-video" : "hidden"} />
+        <video ref={camera.videoRef} muted playsInline className={source === "local" ? "camera-live-media" : "hidden"} />
+        <img ref={camera.imageRef} alt="IP camera stream" className={source === "ip" ? "camera-live-media" : "hidden"} />
         {processing === "live" && camera.connected && <StickFigure
           frame={latest}
           overlay
-          width={
-            (source === "local" ? camera.videoRef.current?.videoWidth : camera.imageRef.current?.naturalWidth) || 640
-          }
-          height={
-            (source === "local" ? camera.videoRef.current?.videoHeight : camera.imageRef.current?.naturalHeight) || 480
-          }
+          showSides
+          width={width}
+          height={height}
         />}
       </div>
+      <p className="camera-framing-status">
+        {camera.connected ? `${width} × ${height} · entire camera frame` : "Entire camera frame · no crop or zoom"}.
+        Unmirrored: L and R mark your own left and right.
+      </p>
+      {processing === "live" && <MappingInspector frame={latest} joints={joints} profile={profile} />}
       <div className="route-actions">
         <Button disabled={disabled || locked} onClick={onToggle}>
           {camera.connected ? "Close camera" : "Open camera"}
