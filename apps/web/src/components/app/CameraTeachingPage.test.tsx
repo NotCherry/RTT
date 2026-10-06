@@ -116,3 +116,36 @@ it("holds the entry neutral across preview feedback and prevents saving unmappab
   expect(screen.getByRole("button", { name: "Save robot gesture" })).toBeDisabled();
   expect(screen.getByText(/No joints can be mapped/)).toBeInTheDocument();
 });
+
+it("expands the robot while retaining the hidden camera resources", async () => {
+  storage.list.mockResolvedValue([]);
+  render(<CameraTeachingPage robot={{ id: "robot" } as never} state={null} joints={[]} neutral={[]} onPreview={vi.fn()} onSave={vi.fn()} />);
+  fireEvent.click(screen.getByRole("button", { name: "Expand robot" }));
+  expect(screen.getByRole("button", { name: "Show camera" })).toHaveAttribute("aria-pressed", "true");
+  expect(screen.getByText("Video source").closest(".camera-source-container, .hidden")).toHaveClass("hidden");
+  expect(screen.getByText("Robot scene")).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Show camera" }));
+  expect(screen.getByRole("button", { name: "Expand robot" })).toHaveAttribute("aria-pressed", "false");
+});
+
+it("reports where a tracking gap stops an archived gesture", async () => {
+  vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
+  const recording = {
+    id: "gap", name: "Interrupted motion", created_at: "2026-10-06", duration_ms: 500,
+    source: { kind: "local-media-stream", stream_count: 1 }, sample_rate: 10, processed: true,
+    frames: [0, 500].map(timestamp => ({ timestamp, confidence: 1, left_hand: [], right_hand: [],
+      pose: Array.from({ length: 33 }, (_, i) => ({ x: i % 2 ? .3 : .7,
+        y: i <= 12 ? .2 : i <= 14 ? .4 : i <= 16 ? .6 : .8, z: 0 })) })),
+  };
+  storage.list.mockResolvedValue([recording]);
+  storage.load.mockResolvedValue(recording);
+  const save = vi.fn().mockResolvedValue(undefined);
+  render(<CameraTeachingPage robot={{ id: "robot" } as never} state={null}
+    joints={[{ name: "right_shoulder_roll_joint", lower: -3, upper: 3, controllable: true } as never]}
+    neutral={[0]} onPreview={vi.fn()} onSave={save} />);
+  fireEvent.click(screen.getByRole("button", { name: "Recordings" }));
+  fireEvent.click(await screen.findByRole("button", { name: /Interrupted motion/ }));
+  fireEvent.click(await screen.findByRole("button", { name: "Save robot gesture" }));
+  expect(await screen.findByText(/Motion holds after 0.50 s because tracking changed/)).toBeInTheDocument();
+  expect(save.mock.calls[0][1]).toEqual([[0], [0]]);
+});

@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui";
 import { RobotViewport } from "@/components/workbench/RobotViewport";
 import type { CameraRecording } from "@/domain/cameraArchive";
-import { retargetLandmarkFrame, type RetargetingProfile } from "@/domain/retargeting";
+import { useSafeCameraMotion } from "./useSafeCameraMotion";
+import type { RetargetingProfile } from "@/domain/retargeting";
 import type { Joint, Robot, SimulationState } from "@/types";
 import { StickFigure } from "./StickFigure";
 import { MappingInspector } from "./MappingInspector";
@@ -37,8 +38,7 @@ export function RecordingPlayer({
   const [mediaDuration, setMediaDuration] = useState(0);
   const videoRef = useRef<HTMLVideoElement>(null);
   const timeRef = useRef(0);
-  const preview = useRef(onPreview);
-  preview.current = onPreview;
+  const motion = useSafeCameraMotion(joints, neutral, profile, onPreview, state?.positions ?? neutral);
   const duration = Math.max(recording.duration_ms, recording.frames.at(-1)?.timestamp ?? 0, mediaDuration);
   useEffect(() => {
     if (!recording.video) {
@@ -95,8 +95,11 @@ export function RecordingPlayer({
   }
   const frame = candidate && time - candidate.timestamp <= 2000 / recording.sample_rate ? candidate : null;
   useEffect(() => {
-    preview.current(frame ? retargetLandmarkFrame(frame, joints, neutral, profile) : [...neutral]);
-  }, [frame, joints, neutral, profile]);
+    motion.observe(frame);
+    // A selected recorded frame remains an intentional preview target while paused.
+    const timer = setInterval(() => motion.observe(frame), 100);
+    return () => clearInterval(timer);
+  }, [frame, time, joints, neutral, profile]);
   function seek(next: number) {
     setPlaying(false);
     timeRef.current = next;
@@ -162,8 +165,10 @@ export function RecordingPlayer({
       <p className="camera-tracking-status" aria-live="polite">
         {!recording.frames.length
           ? recording.processed ? "No confident pose found. Re-extract with a clearer view." : "Video ready. Extract its stick figure to inspect robot motion."
-          : frame ? "Tracking available at this frame." : "Tracking lost at this time. Robot held at neutral pose."}
+          : frame ? "Tracking available at this frame." : "Tracking lost at this time. Robot holds its last position."}
       </p>
+      <p aria-live="polite" className="helper-text">{motion.status}</p>
+      {motion.paused && <Button variant="secondary" disabled={!motion.canResume} onClick={motion.resume}>Resume checked person</Button>}
       <div className="route-actions">
         <Button
           variant="secondary"

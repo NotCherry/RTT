@@ -27,6 +27,7 @@ from fastapi.staticfiles import StaticFiles  # type: ignore[import-not-found]
 from pydantic import BaseModel, Field  # type: ignore[import-not-found]
 from .bundled_robots import ASSETS_DIR, attach_bundled_meshes, bundled_example_source, create_bundled_robot_router
 from .session_runtime import SessionEvents, serialized
+from .robot_transport import router as robot_transport_router
 from .modeling import compile_policy, legacy_model_spec
 from .schemas import (
     Dataset,
@@ -70,6 +71,7 @@ MAX_DEMONSTRATIONS = 2000
 SESSION_IDLE_SECONDS = 30 * 60
 
 app = FastAPI(title="Robot Learning Workbench", version="0.1.0")
+app.include_router(robot_transport_router)
 app.mount(
     "/api/robot-meshes",
     StaticFiles(directory=ASSETS_DIR / "unitree_g1" / "meshes"),

@@ -6,6 +6,12 @@ import type { Robot, SimulationState, LandmarkFrame } from "@/types";
 import type { useCameraCapture } from "./useCameraCapture";
 
 type Props = {
+  robotOnly: boolean;
+  onToggleView: () => void;
+  motionStatus: string;
+  motionPaused: boolean;
+  canResume: boolean;
+  onResume: () => void;
   mode: "simple" | "continuous";
   setMode: Dispatch<SetStateAction<"simple" | "continuous">>;
   countdown: number;
@@ -22,6 +28,7 @@ type Props = {
   savePose: () => void;
 };
 export function CameraCapturePanel({
+  robotOnly, onToggleView, motionStatus, motionPaused, canResume, onResume,
   mode, setMode, countdown, setCountdown, processing, locked,
   robot, state, latest, remaining, camera, cancelCountdown, start, savePose,
 }: Props) {
@@ -37,6 +44,7 @@ export function CameraCapturePanel({
           <PanelLabel>RETARGETED ROBOT</PanelLabel>
           <H3>Capture movement</H3>
         </div>
+        <Button variant="secondary" aria-pressed={robotOnly} onClick={onToggleView}>{robotOnly ? "Show camera" : "Expand robot"}</Button>
       </PanelHeader>
       <div className="route-form-grid camera-capture-settings">
         <label>
@@ -67,6 +75,8 @@ export function CameraCapturePanel({
           <Button disabled={!latest || locked} onClick={savePose}>Save pose</Button>
         )}
       </div>
+      <p aria-live="polite" className="helper-text">{motionStatus}</p>
+      {motionPaused && <Button variant="secondary" disabled={!canResume} onClick={onResume}>Resume checked person</Button>}
       <div className="camera-live-robot"><RobotScene robot={robot} state={state} /></div>
     </Panel>
   );

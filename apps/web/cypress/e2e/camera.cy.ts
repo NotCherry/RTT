@@ -64,6 +64,7 @@ function openCameraPage(fakeCamera = false, dimensions = { width: 320, height: 2
 describe("Camera recordings", () => {
   for (const dimensions of [{ width: 1280, height: 720 }, { width: 720, height: 1280 }]) {
     it(`fits the entire ${dimensions.width}×${dimensions.height} live frame and expands without clipping`, () => {
+      cy.viewport(1280, 900);
       openCameraPage(true, dimensions);
       cy.contains("button", "Open camera").click();
       cy.contains("button", "Start recording").should("be.enabled");
@@ -88,6 +89,13 @@ describe("Camera recordings", () => {
         expect(capture.querySelector(".route-actions")!.getBoundingClientRect().bottom)
           .to.be.at.most(capture.querySelector(".camera-live-robot")!.getBoundingClientRect().top);
       });
+      cy.contains("button", "Expand robot").click();
+      cy.get(".camera-source-container").should("not.be.visible");
+      cy.get(".camera-live-robot").should(($robot) => expect($robot[0].getBoundingClientRect().height).to.be.at.least(480));
+      cy.contains("button", "Start recording").should("be.enabled");
+      cy.screenshot(`camera-robot-expanded-${dimensions.width}-${dimensions.height}`);
+      cy.contains("button", "Show camera").click();
+      cy.get(".camera-source-container").should("be.visible");
       cy.screenshot(`camera-live-${dimensions.width}-${dimensions.height}`);
       cy.viewport(390, 844);
       cy.window().then(win => expect(win.document.documentElement.scrollWidth).to.be.at.most(win.innerWidth));

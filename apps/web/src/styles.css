@@ -585,9 +585,9 @@
 .camera-source-panel .camera-skeleton-overlay { width: 100%; height: 100%; aspect-ratio: auto; }
 .camera-side-label { font-size: 20px; font-weight: 700; paint-order: stroke; stroke: var(--color-ink-950); stroke-width: 3px; }
 .camera-framing-status { padding: 12px 18px; font-family: var(--font-mono); font-size: 11px; color: var(--color-text-500); }
-.camera-source-expanded { grid-column: 1 / -1; }
-.camera-source-expanded + .camera-capture-panel { grid-column: 1 / -1; }
-.camera-source-expanded + .camera-capture-panel .camera-live-robot { height: 360px; flex: none; }
+.camera-source-container:has(.camera-source-expanded) { grid-column: 1 / -1; }
+.camera-source-container:has(.camera-source-expanded) + .camera-capture-panel { grid-column: 1 / -1; }
+.camera-source-container:has(.camera-source-expanded) + .camera-capture-panel .camera-live-robot { height: 360px; flex: none; }
 .camera-live-robot .scene-shell { width: 100%; aspect-ratio: auto; }
 .camera-source-expanded .camera-live-preview { height: clamp(420px, 76vh, 900px); }
 @media (max-width: 1024px) {
@@ -597,3 +597,9 @@
   .camera-source-panel .camera-live-preview { height: clamp(320px, 60vh, 640px); }
   .camera-source-expanded .camera-live-preview { height: 76vh; }
 }
+
+.camera-source-container { min-width: 0; }
+.camera-robot-only { grid-template-columns: minmax(0, 1fr); }
+.camera-live-layout.camera-robot-only .camera-capture-panel .camera-live-robot { height: clamp(480px, 75vh, 900px); flex: none; }
+.camera-inspection .route-viewport-panel { min-height: 65vh; max-height: 85vh; }
+.camera-inspection .scene-shell { min-height: 55vh; }
