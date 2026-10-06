@@ -1,5 +1,8 @@
 # Camera motion guard and preparation for robot transport
 
+The manual recovery and preparation-only restriction below are superseded by
+[ADR 0004](./0004-live-arm-dds-control.md).
+
 ## Decision
 
 Keep this stage simulation-only. Camera observations are desired joint targets;

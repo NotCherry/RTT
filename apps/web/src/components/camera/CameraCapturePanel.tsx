@@ -9,9 +9,6 @@ type Props = {
   robotOnly: boolean;
   onToggleView: () => void;
   motionStatus: string;
-  motionPaused: boolean;
-  canResume: boolean;
-  onResume: () => void;
   mode: "simple" | "continuous";
   setMode: Dispatch<SetStateAction<"simple" | "continuous">>;
   countdown: number;
@@ -28,7 +25,7 @@ type Props = {
   savePose: () => void;
 };
 export function CameraCapturePanel({
-  robotOnly, onToggleView, motionStatus, motionPaused, canResume, onResume,
+  robotOnly, onToggleView, motionStatus,
   mode, setMode, countdown, setCountdown, processing, locked,
   robot, state, latest, remaining, camera, cancelCountdown, start, savePose,
 }: Props) {
@@ -76,7 +73,6 @@ export function CameraCapturePanel({
         )}
       </div>
       <p aria-live="polite" className="helper-text">{motionStatus}</p>
-      {motionPaused && <Button variant="secondary" disabled={!canResume} onClick={onResume}>Resume checked person</Button>}
       <div className="camera-live-robot"><RobotScene robot={robot} state={state} /></div>
     </Panel>
   );

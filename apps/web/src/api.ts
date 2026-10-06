@@ -215,3 +215,15 @@ export function websocketUrl(sessionId: string) {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
   return `${protocol}//${window.location.host}/ws/sessions/${sessionId}`;
 }
+
+export function robotTransportRequest<T>(action: string, body?: unknown, headers?: Record<string, string>) {
+  return request<T>(`/api/robot-transport/${action}`, body === undefined ? undefined : {
+    method: "POST", headers: { "Content-Type": "application/json", ...headers }, body: JSON.stringify(body),
+  });
+}
+
+export function robotTransportSocketUrl() {
+  const url = new URL(`${API_BASE}/api/robot-transport/stream`, window.location.origin);
+  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  return url.toString();
+}

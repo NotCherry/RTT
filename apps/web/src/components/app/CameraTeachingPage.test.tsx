@@ -146,6 +146,6 @@ it("reports where a tracking gap stops an archived gesture", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Recordings" }));
   fireEvent.click(await screen.findByRole("button", { name: /Interrupted motion/ }));
   fireEvent.click(await screen.findByRole("button", { name: "Save robot gesture" }));
-  expect(await screen.findByText(/Motion holds after 0.50 s because tracking changed/)).toBeInTheDocument();
+  expect(await screen.findByText(/A tracking break at 0.50 s/)).toBeInTheDocument();
   expect(save.mock.calls[0][1]).toEqual([[0], [0]]);
 });

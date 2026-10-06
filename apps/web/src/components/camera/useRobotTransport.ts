@@ -1,0 +1,93 @@
+import { useEffect, useRef, useState } from "react";
+import { connectRobotTransport, createRobotTargetSocket, getRobotTransportStatus, robotTransportAction, type RobotConnectionConfig, type RobotTransportStatus } from "@/domain/robotTransport";
+
+export function useRobotTransport() {
+  const [status, setStatus] = useState<RobotTransportStatus | null>(null);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [owned, setOwned] = useState(false);
+  const token = useRef("");
+  const socket = useRef<WebSocket | null>(null);
+  const ready = useRef(false);
+  const sequence = useRef(0);
+  const clockOffset = useRef(0);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    const poll = () => void getRobotTransportStatus().then(next => { if (mounted.current) setStatus(next); }).catch(() => {});
+    poll();
+    const timer = setInterval(poll, 500);
+    return () => {
+      mounted.current = false;
+      clearInterval(timer);
+      socket.current?.close();
+      const owner = token.current;
+      if (owner) void robotTransportAction("disconnect", owner).catch(() => {});
+    };
+  }, []);
+  async function operate(action: () => Promise<void>) {
+    setBusy(true);
+    setError("");
+    try { await action(); }
+    catch (failure) { if (mounted.current) setError(failure instanceof Error ? failure.message : "Robot connection failed"); }
+    finally { if (mounted.current) setBusy(false); }
+  }
+  return {
+    status, error, busy, owned,
+    connect: (config: RobotConnectionConfig, key: string) => operate(async () => {
+      const next = await connectRobotTransport(config, key);
+      if (!mounted.current) { await robotTransportAction("disconnect", next.token); return; }
+      token.current = next.token;
+      sequence.current = 0;
+      setOwned(true);
+      setStatus(next);
+      let stream: WebSocket;
+      try { stream = createRobotTargetSocket(); }
+      catch (failure) {
+        await robotTransportAction("disconnect", next.token);
+        token.current = "";
+        setOwned(false);
+        setStatus(previous => previous ? { ...previous, connected: false, armed: false } : null);
+        throw failure;
+      }
+      socket.current = stream;
+      stream.onopen = () => stream.send(JSON.stringify({ token: next.token }));
+      stream.onmessage = event => {
+        const response = JSON.parse(event.data);
+        ready.current = response.ready === true;
+        if (ready.current && Number.isFinite(response.server_time_ms)) clockOffset.current = response.server_time_ms - Date.now();
+        if (response.error && mounted.current) setError(response.error);
+      };
+      stream.onerror = () => { if (mounted.current) setError("Robot target stream failed"); };
+      stream.onclose = () => {
+        if (socket.current !== stream) return;
+        // A failed handshake may never attach a server-side stream owner.
+        void robotTransportAction("disconnect", next.token).catch(() => {});
+        ready.current = false;
+        token.current = "";
+        if (mounted.current) {
+          setOwned(false);
+          setStatus(previous => previous ? { ...previous, connected: false, armed: false, reason: "Camera stream disconnected · disarmed" } : null);
+        }
+      };
+    }),
+    action: (action: "arm" | "disarm" | "disconnect") => operate(async () => {
+      const next = await robotTransportAction(action, token.current);
+      if (mounted.current) setStatus(next);
+      if (action === "disconnect") {
+        token.current = "";
+        ready.current = false;
+        socket.current?.close();
+        socket.current = null;
+        if (mounted.current) setOwned(false);
+      }
+    }),
+    submit(positions: Record<string, number> | null) {
+      const stream = socket.current;
+      if (!ready.current || stream?.readyState !== WebSocket.OPEN) return;
+      // Drop rather than queue targets when the network is congested.
+      if (stream.bufferedAmount > 0) { stream.close(); return; }
+      stream.send(JSON.stringify({ sequence: sequence.current++, sent_at_ms: Date.now() + clockOffset.current, tracking: Boolean(positions), positions: positions ?? {} }));
+    },
+  };
+}

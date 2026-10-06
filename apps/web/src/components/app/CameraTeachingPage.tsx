@@ -3,6 +3,8 @@ import { Button } from "@/components/ui";
 import { H2, IntroCopy, Kicker } from "@/components/ui/typography";
 import { safeCameraGesture } from "@/domain/cameraMotionSafety";
 import { useSafeCameraMotion } from "@/components/camera/useSafeCameraMotion";
+import { useRobotTransport } from "@/components/camera/useRobotTransport";
+import { RobotConnectionPanel } from "@/components/camera/RobotConnectionPanel";
 import { MappingControls } from "@/components/camera/MappingControls";
 import { CameraCapturePanel } from "@/components/camera/CameraCapturePanel";
 import { RecordingLibrary } from "@/components/camera/RecordingLibrary";
@@ -36,12 +38,13 @@ export function CameraTeachingPage(props: Props) {
   return <CameraWorkspace key={props.robot?.id ?? "none"} {...props} />;
 }
 function CameraWorkspace({ robot, state, joints, neutral, onPreview, onSave }: Props) {
+  const [previewSpeed, setPreviewSpeed] = useState(3);
   const [robotOnly, setRobotOnly] = useState(false);
   const [tab, setTab] = useState<"live" | "recordings">("live");
   const [source, setSource] = useState<"local" | "ip">("local");
   const [address, setAddress] = useState("");
   const [processing, setProcessing] = useState<"live" | "offline">("offline");
-  const [sampleRate, setSampleRate] = useState<10 | 15 | 30>(15);
+  const [sampleRate, setSampleRate] = useState<10 | 15 | 30>(30);
   const [mode, setMode] = useState<"simple" | "continuous">("continuous");
   const [profile, setProfile] = useState<RetargetingProfile>("g1-upper-body");
   const [countdown, setCountdown] = useState(3);
@@ -59,7 +62,8 @@ function CameraWorkspace({ robot, state, joints, neutral, onPreview, onSave }: P
   const countdownTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   // Preview positions feed back through props; keep the entry pose as a stable neutral.
   const baseline = useRef([...neutral]);
-  const motion = useSafeCameraMotion(joints, baseline.current, profile, onPreview, state?.positions ?? neutral);
+  const connection = useRobotTransport();
+  const motion = useSafeCameraMotion(joints, baseline.current, profile, onPreview, state?.positions ?? neutral, previewSpeed);
   async function refresh() {
     if (robot) {
       const next = await listCameraRecordings(robot.id);
@@ -80,7 +84,12 @@ function CameraWorkspace({ robot, state, joints, neutral, onPreview, onSave }: P
     sampleRate,
     onFrame: (frame) => {
       setLatest(frame);
-      motion.observe(frame);
+      const target = motion.observe(frame);
+      const visible = frame ? new Set(mappingCoverage(frame, joints, profile).mapped) : new Set<string>();
+      const positions = target ? Object.fromEntries(joints.flatMap((joint, i) =>
+        visible.has(joint.name) && /^(left|right)_(shoulder_(pitch|roll|yaw)|elbow|wrist_(roll|pitch|yaw))_joint$/.test(joint.name)
+          ? [[joint.name, target[i]]] : [])) : null;
+      connection.submit(positions && Object.keys(positions).length ? positions : null);
     },
     onRecording: async (recording) => {
       if (!robot) return;
@@ -201,7 +210,7 @@ function CameraWorkspace({ robot, state, joints, neutral, onPreview, onSave }: P
     try {
       await onSave(capture, guarded?.positions ?? recording.frames.map((frame) => retargetLandmarkFrame(frame, joints, baseline.current, profile)));
       setStatus(guarded?.pausedAt != null
-        ? `Saved to Archive. Motion holds after ${(guarded.pausedAt / 1000).toFixed(2)} s because tracking changed. Inspect the gesture or re-record a continuous take.`
+        ? `Saved to Archive. A tracking break at ${(guarded.pausedAt / 1000).toFixed(2)} s was held and recovered automatically. Inspect the gesture before training.`
         : "Saved to Archive. The robot demonstration is ready for training.");
     } catch (error) {
       setStatus(`Save failed: ${message(error)}`);
@@ -293,8 +302,14 @@ function CameraWorkspace({ robot, state, joints, neutral, onPreview, onSave }: P
       <div role="status" className="helper-text">
         {status || (tab === "live" ? camera.status : "Select a recording to process or replay.")}
       </div>
+      <RobotConnectionPanel connection={connection} live={tab === "live" && camera.connected && processing === "live"} />
       <MappingControls profile={profile} disabled={locked} onChange={setProfile} />
       <div className="route-form-grid camera-inspection-settings">
+        <label>Preview speed
+          <select aria-label="Preview speed" value={previewSpeed} onChange={(event) => setPreviewSpeed(Number(event.target.value))}>
+            {[1, 2, 3, 5].map(speed => <option key={speed} value={speed}>{speed} rad/s</option>)}
+          </select>
+        </label>
         <label>
           Sample rate
           <select
@@ -337,7 +352,7 @@ function CameraWorkspace({ robot, state, joints, neutral, onPreview, onSave }: P
               }}
             />
           </div>
-          <CameraCapturePanel robotOnly={robotOnly} onToggleView={() => setRobotOnly(!robotOnly)} motionStatus={motion.status} motionPaused={motion.paused} canResume={motion.canResume} onResume={motion.resume} mode={mode} setMode={setMode} countdown={countdown} setCountdown={setCountdown}
+          <CameraCapturePanel robotOnly={robotOnly} onToggleView={() => setRobotOnly(!robotOnly)} motionStatus={motion.status} mode={mode} setMode={setMode} countdown={countdown} setCountdown={setCountdown}
             processing={processing} locked={locked} robot={robot} state={state} latest={latest && mappingCoverage(latest, joints, profile).mapped.length ? latest : null}
             remaining={remaining} camera={camera} cancelCountdown={cancelCountdown} start={start} savePose={savePose} />
         </div>
@@ -366,7 +381,7 @@ function CameraWorkspace({ robot, state, joints, neutral, onPreview, onSave }: P
       )}
       <p className="helper-text">
         Videos stay in this browser until deleted. Exported archives contain demonstrations, not videos. Left and right refer to your body.
-        Continuous gestures use bounded motion and hold after suspicious tracking changes. Single-camera tracking cannot guarantee person identity. Mapping drives compatible G1 joints; unsupported or unobserved joints keep the neutral pose.
+        Continuous gestures use bounded motion and recover automatically after tracking settles. Single-camera tracking cannot guarantee person identity. Mapping drives compatible G1 joints; unsupported or unobserved joints keep the neutral pose.
       </p>
     </div>
   );

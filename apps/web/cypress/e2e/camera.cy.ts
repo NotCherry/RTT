@@ -218,6 +218,19 @@ describe("Camera recordings", () => {
     cy.get('[aria-label="Processing mode"]').select("live");
     cy.contains("button", "Open camera").click();
     cy.contains("Live processing ready", { timeout: 120000 }).should("exist");
+    cy.get('[aria-label="Preview speed"]').select("5");
+    cy.contains("button", "Connect mock robot").click();
+    cy.contains("button", "Arm live control").should("be.enabled").click();
+    cy.contains("button", "Stop / disarm").should("exist");
+    cy.get('[aria-label="Robot connection controls"]', { timeout: 15000 }).should($panel => {
+      const packets = $panel.text().match(/(\d+) packets/);
+      expect(Number(packets?.[1] ?? 0)).to.be.greaterThan(0);
+    });
+    cy.contains("button", /Resume/).should("not.exist");
+    cy.contains("button", "Stop / disarm").click();
+    cy.contains("button", "Arm live control").should("exist");
+    cy.contains("button", "Disconnect robot").click();
+    cy.contains("button", "Connect mock robot").should("exist");
     cy.get(".camera-source-panel svg").should("have.attr", "viewBox", "0 0 320 240");
     cy.get(".camera-live-preview").should(($stage) => {
       const video = $stage[0].querySelector("video")!.getBoundingClientRect();

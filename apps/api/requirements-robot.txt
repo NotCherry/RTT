@@ -1,0 +1,3 @@
+# Editable install retains the SDK's native CRC libraries, omitted by its wheel.
+# Install alongside requirements.txt; the robot image supplies native CycloneDDS.
+-e git+https://github.com/unitreerobotics/unitree_sdk2_python.git@814556d15970dd2ecf1c9984e845ca02ab07e206#egg=unitree_sdk2py

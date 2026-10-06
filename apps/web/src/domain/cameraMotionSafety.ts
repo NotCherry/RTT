@@ -1,62 +1,67 @@
 import type { Joint, LandmarkFrame } from "@/types";
 import { hasUsablePose, retargetLandmarkFrame, type RetargetingProfile } from "./retargeting";
 
-export const CAMERA_SPEED_LIMIT = 0.5; // radians/second; preview default, not a hardware rating
+export const CAMERA_SPEED_LIMIT = 3; // preview radians/second; hardware has independent limits
 export const CAMERA_STALE_MS = 250;
+const REACQUIRE_MS = 100;
 export type MotionGuard = {
   positions: number[];
   target: number[] | null;
   previous: LandmarkFrame | null;
-  previousTarget: number[] | null;
   receivedAt: number;
   paused: boolean;
+  candidate: { frame: LandmarkFrame; target: number[]; since: number } | null;
 };
 export function createMotionGuard(positions: number[]): MotionGuard {
-  return { positions: [...positions], target: null, previous: null, previousTarget: null, receivedAt: -Infinity, paused: false };
+  return { positions: [...positions], target: null, previous: null, receivedAt: -Infinity, paused: false, candidate: null };
 }
 function discontinuity(previous: LandmarkFrame, frame: LandmarkFrame) {
-  // Image-space torso continuity is a heuristic, not person identification.
-  const indices = [11, 12, 23, 24];
-  const visible = indices.filter((i) => [previous.pose[i], frame.pose[i]].every(
+  const visible = [11, 12, 23, 24].filter((i) => [previous.pose[i], frame.pose[i]].every(
     (p) => p && Number.isFinite(p.x) && Number.isFinite(p.y) && (p.visibility ?? 1) >= 0.5,
   ));
-  if (visible.length < 2) return true;
-  return visible.some((i) => Math.hypot(previous.pose[i].x - frame.pose[i].x, previous.pose[i].y - frame.pose[i].y) > 0.18);
+  // Missing torso points are common in arm teaching; they cannot establish an identity change.
+  return visible.length >= 2 && visible.some((i) => Math.hypot(previous.pose[i].x - frame.pose[i].x, previous.pose[i].y - frame.pose[i].y) > 0.18);
 }
 export function observeMotion(guard: MotionGuard, frame: LandmarkFrame | null, target: number[] | null, now: number) {
-  if (!Number.isFinite(now) || now < guard.receivedAt) {
+  if (!Number.isFinite(now) || now < guard.receivedAt || !frame || !hasUsablePose(frame)
+    || !target || target.length !== guard.positions.length || !target.every(Number.isFinite)) {
     guard.target = null;
-    guard.paused = true;
-    return;
-  }
-  if (!frame || !hasUsablePose(frame) || !target || target.length !== guard.positions.length || !target.every(Number.isFinite)) {
-    guard.target = null;
+    guard.candidate = null;
     return;
   }
   const gap = guard.previous && now - guard.receivedAt > CAMERA_STALE_MS;
-  const jump = guard.previous && (discontinuity(guard.previous, frame)
-    || (guard.previousTarget && target.some((q, i) => Math.abs(q - guard.previousTarget![i]) > 0.8)));
-  if (gap || jump) guard.paused = true;
+  if (guard.paused || gap || (guard.previous && discontinuity(guard.previous, frame))) {
+    guard.paused = true;
+    guard.target = null;
+    const candidate = guard.candidate;
+    if (!candidate || discontinuity(candidate.frame, frame)
+      || target.some((q, i) => Math.abs(q - candidate.target[i]) > 0.4)) {
+      guard.candidate = { frame, target: [...target], since: now };
+    } else {
+      guard.candidate = { ...candidate, frame, target: [...target] };
+      if (now - candidate.since >= REACQUIRE_MS) {
+        guard.paused = false;
+        guard.candidate = null;
+      }
+    }
+  }
   guard.previous = frame;
   guard.receivedAt = now;
-  guard.target = [...target];
-  guard.previousTarget = [...target];
+  if (!guard.paused) guard.target = [...target];
 }
-export function stepMotion(guard: MotionGuard, joints: Joint[], now: number, elapsedMs: number) {
-  if (!Number.isFinite(elapsedMs) || !Number.isFinite(now) || guard.paused || !guard.target || now - guard.receivedAt > CAMERA_STALE_MS) return [...guard.positions];
-  // Never spend a suspended tab's elapsed time as one large command step.
-  const dt = Math.max(0, Math.min(100, elapsedMs)) / 1000;
+export function stepMotion(guard: MotionGuard, joints: Joint[], now: number, elapsedMs: number, maxSpeed = CAMERA_SPEED_LIMIT) {
+  if (!Number.isFinite(elapsedMs) || !Number.isFinite(now) || !Number.isFinite(maxSpeed) || maxSpeed <= 0
+    || guard.paused || !guard.target || now - guard.receivedAt > CAMERA_STALE_MS) return [...guard.positions];
+  const dt = Math.max(0, Math.min(50, elapsedMs)) / 1000;
   guard.positions = guard.positions.map((q, i) => {
     const joint = joints[i];
     if (!joint || !Number.isFinite(q)) return q;
-    const speed = Math.min(CAMERA_SPEED_LIMIT, joint.velocity != null && joint.velocity > 0 ? joint.velocity : CAMERA_SPEED_LIMIT);
+    const speed = Math.min(maxSpeed, joint.velocity != null && joint.velocity > 0 ? joint.velocity : maxSpeed);
     const target = Math.max(joint.lower, Math.min(joint.upper, guard.target![i]));
     return q + Math.max(-speed * dt, Math.min(speed * dt, target - q));
   });
   return [...guard.positions];
 }
-
-/** Preserve observation timestamps; missing time never authorizes a teleport. */
 export function safeCameraGesture(frames: LandmarkFrame[], joints: Joint[], neutral: number[], profile: RetargetingProfile) {
   const guard = createMotionGuard(neutral);
   let previousTime = frames[0]?.timestamp ?? 0;

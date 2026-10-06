@@ -31,6 +31,7 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
+      "/api/robot-transport/stream": { target: wsProxyTarget, ws: true },
       "/api": apiProxyTarget,
       "/ws": {
         target: wsProxyTarget,

@@ -1,0 +1,41 @@
+# Linux host networking is required for DDS discovery. Start with ./start-local.sh --robot.
+services:
+  backend:
+    build:
+      context: apps/api
+      target: robot
+    network_mode: host
+    environment:
+      ROBOT_CONTROL_KEY: ${ROBOT_CONTROL_KEY:?Set ROBOT_CONTROL_KEY before starting}
+    volumes:
+      - robot-data:/app/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+  frontend:
+    image: localhost/rtt_frontend_dev:latest
+    build:
+      context: apps/web
+      dockerfile: Dockerfile.dev
+    command: ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "80"]
+    environment:
+      VITE_API_PROXY_TARGET: http://host.containers.internal:8000
+      VITE_WS_PROXY_TARGET: ws://host.containers.internal:8000
+    volumes:
+      - ./apps/web:/app
+      - web-node-modules:/app/node_modules
+    ports:
+      - "0.0.0.0:8080:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+volumes:
+  robot-data:
+  web-node-modules:

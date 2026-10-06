@@ -1,34 +1,104 @@
-"""Preparation-only contract: validates a DDS plan without creating a publisher."""
-from typing import Literal
-from fastapi import APIRouter
-from pydantic import BaseModel, ConfigDict, Field
+"""Robot control routes. Physical publication requires an explicit arm action."""
+import asyncio
+import json
+import os
+import secrets
+import time
+from fastapi import APIRouter, Header, HTTPException, WebSocket, WebSocketDisconnect
+from pydantic import ValidationError
+from .robot_controller import RobotController
+from .robot_transport_contract import ConnectionConfig, DDSConnectionPlan, TargetPacket
 
-router = APIRouter(prefix="/api/robot-transport", tags=["robot-transport"])
-
-
-class DDSConnectionPlan(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    transport: Literal["unitree-sdk2", "ros2"] = "unitree-sdk2"
-    network_interface: str = Field(min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9_.:-]+$")
-    domain_id: int = Field(default=0, ge=0, le=232)
-    robot_model: Literal["g1-29"] = "g1-29"
-    max_joint_speed: float = Field(default=0.5, gt=0, le=0.5, allow_inf_nan=False)
-    stale_after_ms: int = Field(default=250, ge=50, le=250)
+controller = RobotController()
 
 
-@router.post("/plan")
-def plan_connection(plan: DDSConnectionPlan):
-    return {
-        "config": plan.model_dump(),
-        "transmission_enabled": False,
-        "command_topic": "rt/arm_sdk" if plan.transport == "unitree-sdk2" else "arm_sdk",
-        "state_topic": "rt/lowstate" if plan.transport == "unitree-sdk2" else "lowstate",
-        "command_type": "unitree_hg/LowCmd",
-        "requires_robot_ip": False,
-        "required_before_activation": [
-            "verified single robot on isolated DDS network",
-            "fresh measured joint state and verified motor index map",
-            "backend speed and acceleration limits with watchdog",
-            "explicit arm authorization and local emergency stop",
-        ],
-    }
+def create_transport_router(runtime):
+    routes = APIRouter(prefix="/api/robot-transport", tags=["robot-transport"])
+
+    def call(operation, *args):
+        try:
+            return operation(*args)
+        except PermissionError as exc:
+            raise HTTPException(403, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(503, str(exc)) from exc
+
+    @routes.post("/plan")
+    def plan_connection(plan: DDSConnectionPlan):
+        return {"config": plan.model_dump(), "transmission_enabled": False,
+            "command_topic": "rt/arm_sdk" if plan.transport == "unitree-sdk2" else "arm_sdk",
+            "state_topic": "rt/lowstate" if plan.transport == "unitree-sdk2" else "lowstate",
+            "command_type": "unitree_hg/LowCmd", "requires_robot_ip": False,
+            "required_before_activation": ["isolated DDS network and verified robot model",
+                "fresh measured state", "explicit operator arm action"]}
+
+    @routes.get("/status")
+    def status():
+        return runtime.status()
+
+    @routes.post("/connect")
+    def connect(config: ConnectionConfig, x_robot_control_key: str | None = Header(default=None)):
+        if config.transport == "unitree-sdk2":
+            key = os.environ.get("ROBOT_CONTROL_KEY")
+            if not key:
+                raise HTTPException(503, "Set ROBOT_CONTROL_KEY on the robot backend before connecting hardware")
+            if not x_robot_control_key or not secrets.compare_digest(key, x_robot_control_key):
+                raise HTTPException(403, "Robot control key is invalid")
+        token = call(runtime.connect, config)
+        return {**runtime.status(), "token": token}
+
+    @routes.post("/arm")
+    def arm(x_robot_token: str | None = Header(default=None)):
+        call(runtime.arm, x_robot_token)
+        return runtime.status()
+
+    @routes.post("/disarm")
+    def disarm(x_robot_token: str | None = Header(default=None)):
+        call(runtime.disarm, x_robot_token)
+        return runtime.status()
+
+    @routes.post("/disconnect")
+    def disconnect(x_robot_token: str | None = Header(default=None)):
+        # None is reserved for process shutdown, never an unauthenticated HTTP call.
+        call(runtime.authorize, x_robot_token)
+        call(runtime.disconnect, x_robot_token)
+        return runtime.status()
+
+    @routes.websocket("/stream")
+    async def stream(socket: WebSocket):
+        await socket.accept()
+        owner = None
+        try:
+            credentials = await asyncio.wait_for(socket.receive_json(), timeout=5)
+            token = credentials.get("token") if isinstance(credentials, dict) else None
+            if not isinstance(token, str) or len(token) > 128:
+                raise PermissionError("Invalid controller token")
+            owner = runtime.attach_stream(token)
+            await socket.send_json({"ready": True, "server_time_ms": time.time() * 1000})
+            while True:
+                raw = await socket.receive_text()
+                if len(raw) > 4096:
+                    raise ValueError("Target packet is too large")
+                packet = TargetPacket.model_validate_json(raw)
+                runtime.receive(owner, packet)
+        except WebSocketDisconnect:
+            pass
+        except (PermissionError, ValueError, ValidationError, asyncio.TimeoutError, json.JSONDecodeError) as exc:
+            try:
+                await socket.send_json({"error": str(exc)})
+                await socket.close(code=1008)
+            except RuntimeError:
+                pass
+        finally:
+            if owner and runtime.detach_stream(owner):
+                try:
+                    await asyncio.to_thread(runtime.disconnect, token)
+                except PermissionError:
+                    pass
+
+    return routes
+
+
+router = create_transport_router(controller)

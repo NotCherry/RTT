@@ -168,7 +168,6 @@ export function RecordingPlayer({
           : frame ? "Tracking available at this frame." : "Tracking lost at this time. Robot holds its last position."}
       </p>
       <p aria-live="polite" className="helper-text">{motion.status}</p>
-      {motion.paused && <Button variant="secondary" disabled={!motion.canResume} onClick={motion.resume}>Resume checked person</Button>}
       <div className="route-actions">
         <Button
           variant="secondary"
