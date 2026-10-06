@@ -6,7 +6,7 @@ A demonstration-first robot teaching environment for uploading primitive-geometr
 
 ```text
 .
-├── start-local.sh       # canonical Docker startup entrypoint
+├── start-local.sh       # canonical Podman startup entrypoint
 ├── apps/
 │   ├── web/             # React/Vite/Three.js frontend and browser tests
 │   └── api/             # FastAPI/PyBullet/PyTorch backend and pytest tests
@@ -19,9 +19,9 @@ A demonstration-first robot teaching environment for uploading primitive-geometr
 
 Read [`AGENTS.md`](./AGENTS.md) for the working agreement and [`CONTEXT.md`](./CONTEXT.md) before changing domain terminology.
 
-## Docker development (recommended)
+## Podman development (recommended)
 
-Docker is the only runtime dependency required for the full stack. The root launcher starts the frontend and backend, preserves the named `robot-data` volume, waits for health checks, and uses cached Docker/npm/pip layers.
+Podman and `podman-compose` are the only runtime dependencies required for the full stack. The root launcher starts the frontend and backend, preserves the named `robot-data` volume, waits for health checks, and uses cached Podman/npm/pip layers.
 
 ```bash
 ./start-local.sh
@@ -38,7 +38,7 @@ The normal command does not force a rebuild. After changing a Dockerfile or depe
 ./start-local.sh --down
 ```
 
-For quick feedback while editing application code, use the Docker-backed development mode:
+For quick feedback while editing application code, use the Podman-backed development mode:
 
 ```bash
 ./start-local.sh --dev
@@ -46,9 +46,13 @@ For quick feedback while editing application code, use the Docker-backed develop
 
 This mode builds the development images on startup, bind-mounts `apps/web` and the backend source into their containers, runs Vite and Uvicorn with reload enabled, and keeps the `robot-data` volume separate. The frontend remains available at `http://localhost:8080`, so ordinary source edits do not require an image rebuild or stack restart. Run `./start-local.sh --dev --down` to stop this mode. Use the normal command when you want to inspect the production-style Nginx image instead.
 
+In WSL, run these commands inside your Linux distribution with Linux `podman` and `podman-compose` installed. Run `podman info` to verify the runtime before starting. Base images use full `docker.io/library/...` names, so no short-name aliases or default registry configuration are needed. Open `http://localhost:8080` in your Windows browser once both services are healthy.
+
+The first build downloads base images and dependencies. Later starts reuse existing images; `--build` and `--dev` reuse cached layers and package-manager caches. The development frontend has a separate image, so switching modes preserves the normal Nginx image. If a service exits or fails its health check, the launcher prints its recent logs.
+
 ## Optional direct development
 
-The direct workflow is useful when Docker is unavailable, but it requires local Node and Python dependencies. Docker-backed `--dev` mode is the recommended hot-reload workflow.
+The direct workflow is useful when Podman is unavailable, but it requires local Node and Python dependencies. Podman-backed `--dev` mode is the recommended hot-reload workflow.
 
 ```bash
 cd apps/web
@@ -93,7 +97,7 @@ pip install -r requirements-dev.txt
 python -m pytest -q tests
 ```
 
-Cypress uses the Docker frontend by default:
+Cypress uses the Podman frontend started by `./start-local.sh` by default:
 
 ```bash
 cd apps/web

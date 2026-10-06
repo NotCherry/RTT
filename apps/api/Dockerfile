@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.7
-FROM python:3.11-slim
+FROM docker.io/library/python:3.11-slim
 
 WORKDIR /app
 COPY requirements.txt .

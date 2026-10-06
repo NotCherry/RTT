@@ -33,6 +33,7 @@ services:
       retries: 6
 
   frontend:
+    image: localhost/rtt_frontend_dev:latest
     build:
       context: ./apps/web
       dockerfile: Dockerfile.dev

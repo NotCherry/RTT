@@ -2,7 +2,9 @@
 set -Eeuo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-COMPOSE=(docker compose --project-directory "$ROOT_DIR")
+PROJECT_NAME="rtt"
+COMPOSE_FILE=""
+COMPOSE=()
 FORCE_BUILD=0
 FOLLOW_LOGS=0
 DEV_MODE=0
@@ -13,13 +15,13 @@ usage() {
     cat <<'EOF'
 Usage: ./start-local.sh [options]
 
-Starts the local Robot Learning Workbench with Docker Compose. Docker Compose
-reuses existing images and containers by default; use --build when Dockerfiles
-or dependency lockfiles have changed. Use --dev for bind-mounted source and
-live reload during application development.
+Starts the local Robot Learning Workbench with Podman Compose. Podman reuses
+existing images and containers by default; use --build when Dockerfiles or
+dependency lockfiles have changed. Use --dev for bind-mounted source and live
+reload during application development.
 
 Options:
-  --build       Rebuild images using Docker's layer and package caches.
+  --build       Rebuild images using Podman's layer and package caches.
   --dev         Start bind-mounted frontend/backend development servers with live reload.
   --logs        Follow backend and frontend logs after startup.
   --down        Stop and remove the Compose containers, keeping robot data.
@@ -59,10 +61,34 @@ while (($# > 0)); do
 done
 
 if ((DEV_MODE)); then
-    COMPOSE+=(-f "$ROOT_DIR/infra/docker-compose.dev.yml")
+    SOURCE_COMPOSE_FILE="$ROOT_DIR/infra/docker-compose.dev.yml"
 else
-    COMPOSE+=(-f "$ROOT_DIR/infra/docker-compose.yml")
+    SOURCE_COMPOSE_FILE="$ROOT_DIR/infra/docker-compose.yml"
 fi
+
+if ! command -v podman >/dev/null 2>&1; then
+    echo "Podman is required. Install Podman and its Compose provider first." >&2
+    exit 1
+fi
+
+if ! command -v podman-compose >/dev/null 2>&1; then
+    echo "podman-compose is required. Install Podman's Compose provider first." >&2
+    exit 1
+fi
+
+if ! podman info >/dev/null 2>&1; then
+    echo "Podman is installed but its machine/service is not running." >&2
+    exit 1
+fi
+
+# podman-compose resolves build contexts and bind mounts relative to the
+# compose file, unlike Docker Compose's --project-directory behavior. Place a
+# short-lived copy in the repository root so the existing root-relative paths
+# continue to work with both normal and --dev stacks.
+COMPOSE_FILE="$(mktemp "$ROOT_DIR/.podman-compose.XXXXXX.yml")"
+trap 'rm -f "$COMPOSE_FILE"' EXIT
+cp "$SOURCE_COMPOSE_FILE" "$COMPOSE_FILE"
+COMPOSE=(podman-compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE")
 
 if ((STOP_STACK)); then
     "${COMPOSE[@]}" down
@@ -74,40 +100,65 @@ if ((SHOW_STATUS)); then
     exit 0
 fi
 
-if ! command -v docker >/dev/null 2>&1; then
-    echo "Docker is required. Install Docker Desktop or Docker Engine first." >&2
-    exit 1
-fi
-
-if ! docker info >/dev/null 2>&1; then
-    echo "Docker is installed but the Docker daemon is not running." >&2
-    exit 1
-fi
-
-# BuildKit keeps Dockerfile layers and package-manager cache mounts reusable.
-export DOCKER_BUILDKIT=1
-export COMPOSE_DOCKER_CLI_BUILD=1
-
 images_missing=0
-while IFS= read -r image; do
-    if ! docker image inspect "$image" >/dev/null 2>&1; then
+for image in "${PROJECT_NAME}_backend" "${PROJECT_NAME}_frontend"; do
+    if ! podman image exists "$image"; then
         images_missing=1
     fi
-done < <("${COMPOSE[@]}" config --images)
+done
 
 if ((DEV_MODE)); then
-    echo "Building the development images with the existing Docker cache."
+    echo "Building the development images with the existing Podman cache."
     "${COMPOSE[@]}" build
 elif ((FORCE_BUILD || images_missing)); then
-    echo "Building with the existing Docker cache (use --no-cache manually for a clean build)."
+    echo "Building with the existing Podman cache (use --no-cache manually for a clean build)."
     "${COMPOSE[@]}" build
 fi
 
 # --no-build makes the default path a true start-only operation. Use --build
 # after source or dependency changes when using the production-style images.
-"${COMPOSE[@]}" up -d --no-build --remove-orphans --wait
+# podman-compose does not implement Docker Compose's `up --wait` option.
+"${COMPOSE[@]}" up -d --no-build --remove-orphans
 
-LAN_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
+wait_for_health() {
+    local service="$1"
+    local container=""
+    local health=""
+    local state=""
+
+    for _ in {1..120}; do
+        container="$(podman ps -aq \
+            --filter "label=io.podman.compose.project=$PROJECT_NAME" \
+            --filter "label=io.podman.compose.service=$service" | head -n 1 || true)"
+        if [[ -n "$container" ]]; then
+            state="$(podman inspect --format '{{.State.Status}}' "$container" 2>/dev/null || true)"
+            if [[ "$state" == "exited" || "$state" == "dead" ]]; then
+                echo "$service stopped before becoming healthy." >&2
+                "${COMPOSE[@]}" logs --tail=50 "$service" >&2 || true
+                return 1
+            fi
+            health="$(podman inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{end}}' "$container" 2>/dev/null || true)"
+            if [[ "$health" == "healthy" ]]; then
+                return 0
+            fi
+            if [[ "$health" == "unhealthy" ]]; then
+                echo "$service failed its health check." >&2
+                "${COMPOSE[@]}" logs --tail=50 "$service" >&2 || true
+                return 1
+            fi
+        fi
+        sleep 1
+    done
+
+    echo "Timed out waiting for $service to become healthy." >&2
+    "${COMPOSE[@]}" logs --tail=50 "$service" >&2 || true
+    return 1
+}
+
+wait_for_health backend
+wait_for_health frontend
+
+LAN_IP="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"
 
 cat <<'EOF'
 
