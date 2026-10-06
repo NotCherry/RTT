@@ -92,7 +92,7 @@ export type Demonstration = {
   source?: "camera";
   camera_capture_id?: string;
   retargeting_profile?: string;
-  retargeting_profile_version?: 1;
+  retargeting_profile_version?: 1 | 2;
 };
 
 export type LandmarkPoint = {
@@ -105,6 +105,8 @@ export type LandmarkPoint = {
 export type LandmarkFrame = {
   timestamp: number;
   pose: LandmarkPoint[];
+  pose_world?: LandmarkPoint[];
+  source_aspect_ratio?: number;
   left_hand: LandmarkPoint[];
   right_hand: LandmarkPoint[];
   confidence: number;
@@ -123,8 +125,8 @@ export type CameraCapture = {
     | { kind: "ip-image-stream"; url: string };
   frames: LandmarkFrame[];
   quality: { accepted_frames: number; rejected_frames: number };
-  retargeting_profile: "g1-upper-body" | "g1-single-arm";
-  retargeting_profile_version: 1;
+  retargeting_profile: "g1-upper-body" | "g1-single-arm" | "g1-left-arm" | "g1-full-body";
+  retargeting_profile_version: 1 | 2;
   video_id?: string;
   demonstration_id?: string;
 };

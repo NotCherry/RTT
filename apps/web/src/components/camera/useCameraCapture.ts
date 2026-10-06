@@ -26,12 +26,14 @@ export function useCameraCapture(options: {
     start: number;
     rejected: number;
     recording: boolean;
+    processingFailed?: boolean;
   }>({ generation: 0, frames: [], start: 0, rejected: 0, recording: false });
   const [connected, setConnected] = useState(false);
   const [opening, setOpening] = useState(false);
   const [recording, setRecording] = useState(false);
   const [finalizing, setFinalizing] = useState(false);
   const stoppedAt = useRef(0);
+  const [elapsed, setElapsed] = useState(0);
   const [status, setStatus] = useState("Camera off");
   const mounted = useRef(true);
 
@@ -70,6 +72,12 @@ export function useCameraCapture(options: {
       close();
     };
   }, []);
+
+  useEffect(() => {
+    if (!recording) return;
+    const timer = setInterval(() => setElapsed(performance.now() - resources.current.start), 250);
+    return () => clearInterval(timer);
+  }, [recording]);
 
   async function open(source: "local" | "ip", address: string) {
     close();
@@ -153,6 +161,7 @@ export function useCameraCapture(options: {
             setStatus(
               `Live processing stopped: ${error instanceof Error ? error.message : "Unknown error"}. Reopen the camera to retry.`,
             );
+            r.processingFailed = true;
             r.detector.close();
             r.detector = undefined;
             current.current.onFrame(null);
@@ -241,7 +250,7 @@ export function useCameraCapture(options: {
           duration_ms: (stoppedAt.current || performance.now()) - r.start,
           frames: [...r.frames],
           rejected_frames: r.rejected,
-          processed,
+          processed: processed && !r.processingFailed,
           video: new Blob(chunks, { type: recorder.mimeType || mimeType || "video/webm" }),
         };
         r.recorder = undefined;
@@ -255,6 +264,8 @@ export function useCameraCapture(options: {
             });
       };
       stoppedAt.current = 0;
+      r.processingFailed = false;
+      setElapsed(0);
       r.frames = [];
       r.rejected = 0;
       r.start = performance.now();
@@ -278,6 +289,7 @@ export function useCameraCapture(options: {
     opening,
     recording,
     finalizing,
+    elapsed,
     status,
     open,
     close,

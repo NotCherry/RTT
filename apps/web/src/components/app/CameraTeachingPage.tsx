@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from "react";
-import { Button, Panel, PanelHeader, PanelLabel } from "@/components/ui";
-import { H2, H3, IntroCopy, Kicker } from "@/components/ui/typography";
-import { RobotViewport } from "@/components/workbench/RobotViewport";
+import { Button } from "@/components/ui";
+import { H2, IntroCopy, Kicker } from "@/components/ui/typography";
+import { MappingControls } from "@/components/camera/MappingControls";
+import { MappingInspector } from "@/components/camera/MappingInspector";
+import { CameraCapturePanel } from "@/components/camera/CameraCapturePanel";
 import { RecordingLibrary } from "@/components/camera/RecordingLibrary";
 import { CameraSourcePanel } from "@/components/camera/CameraSourcePanel";
 import { useCameraCapture } from "@/components/camera/useCameraCapture";
-import { retargetLandmarkFrame, type RetargetingProfile } from "@/domain/retargeting";
+import { mappingCoverage, retargetLandmarkFrame, RETARGETING_PROFILE_VERSION, type RetargetingProfile } from "@/domain/retargeting";
 import {
   deleteCameraRecording,
   listCameraRecordings,
@@ -36,7 +38,7 @@ function CameraWorkspace({ robot, state, joints, neutral, onPreview, onSave }: P
   const [tab, setTab] = useState<"live" | "recordings">("live");
   const [source, setSource] = useState<"local" | "ip">("local");
   const [address, setAddress] = useState("");
-  const [processing, setProcessing] = useState<"live" | "offline">("live");
+  const [processing, setProcessing] = useState<"live" | "offline">("offline");
   const [sampleRate, setSampleRate] = useState<10 | 15 | 30>(15);
   const [mode, setMode] = useState<"simple" | "continuous">("continuous");
   const [profile, setProfile] = useState<RetargetingProfile>("g1-upper-body");
@@ -49,9 +51,11 @@ function CameraWorkspace({ robot, state, joints, neutral, onPreview, onSave }: P
   const [busy, setBusy] = useState(false);
   const [extracting, setExtracting] = useState(false);
   const [progress, setProgress] = useState(0);
+  const [storageFailed, setStorageFailed] = useState(false);
   const abort = useRef<AbortController | null>(null);
   const mounted = useRef(true);
   const countdownTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Preview positions feed back through props; keep the entry pose as a stable neutral.
   const baseline = useRef([...neutral]);
   const preview = useRef(onPreview);
   preview.current = onPreview;
@@ -75,7 +79,7 @@ function CameraWorkspace({ robot, state, joints, neutral, onPreview, onSave }: P
     sampleRate,
     onFrame: (frame) => {
       setLatest(frame);
-      if (frame) preview.current(retargetLandmarkFrame(frame, joints, baseline.current, profile));
+      preview.current(frame ? retargetLandmarkFrame(frame, joints, baseline.current, profile) : [...baseline.current]);
     },
     onRecording: async (recording) => {
       if (!robot) return;
@@ -88,6 +92,7 @@ function CameraWorkspace({ robot, state, joints, neutral, onPreview, onSave }: P
       if (!mounted.current) return;
       camera.close();
       setSelected(recording);
+      setStorageFailed(!saved);
       setTab("recordings");
       setBusy(false);
       setStatus(
@@ -126,6 +131,7 @@ function CameraWorkspace({ robot, state, joints, neutral, onPreview, onSave }: P
       if (!recording) throw new Error("This recording no longer exists.");
       if (mounted.current) {
         setSelected(recording);
+        setStorageFailed(false);
         setSampleRate(recording.sample_rate);
       }
     } catch (error) {
@@ -152,7 +158,9 @@ function CameraWorkspace({ robot, state, joints, neutral, onPreview, onSave }: P
       controller.signal.throwIfAborted();
       const next = { ...selected, ...result, sample_rate: sampleRate };
       setSelected(next);
+      setStorageFailed(true);
       await saveCameraRecording(robot.id, next);
+      setStorageFailed(false);
       await refresh();
       setStatus(
         result.frames.length
@@ -172,7 +180,7 @@ function CameraWorkspace({ robot, state, joints, neutral, onPreview, onSave }: P
     }
   }
   async function saveDemonstration(recording: CameraRecording, captureMode: "simple" | "continuous") {
-    if (!recording.frames.length) return;
+    if (!recording.frames.some((frame) => mappingCoverage(frame, joints, profile).mapped.length)) return;
     setBusy(true);
     const capture: CameraCapture = {
       id: recording.id,
@@ -185,7 +193,7 @@ function CameraWorkspace({ robot, state, joints, neutral, onPreview, onSave }: P
       frames: recording.frames,
       quality: { accepted_frames: recording.frames.length, rejected_frames: recording.rejected_frames ?? 0 },
       retargeting_profile: profile,
-      retargeting_profile_version: 1,
+      retargeting_profile_version: RETARGETING_PROFILE_VERSION,
       ...(recording.video ? { video_id: recording.id } : {}),
     };
     try {
@@ -205,6 +213,7 @@ function CameraWorkspace({ robot, state, joints, neutral, onPreview, onSave }: P
     setBusy(true);
     try {
       await saveCameraRecording(robot.id, selected);
+      setStorageFailed(false);
       await refresh();
       setStatus("Recording saved on this device.");
     } catch (error) {
@@ -254,6 +263,9 @@ function CameraWorkspace({ robot, state, joints, neutral, onPreview, onSave }: P
           <IntroCopy>Record locally, extract a stick figure, then inspect and save its mapped robot motion.</IntroCopy>
         </div>
       </div>
+      <ol className="camera-workflow" aria-label="Camera teaching workflow">
+        <li>1 · Capture</li><li>2 · Process</li><li>3 · Inspect mapping</li><li>4 · Save to Archive</li>
+      </ol>
       <div className="route-actions">
         <Button
           variant={tab === "live" ? "primary" : "secondary"}
@@ -280,19 +292,8 @@ function CameraWorkspace({ robot, state, joints, neutral, onPreview, onSave }: P
       <div role="status" className="helper-text">
         {status || (tab === "live" ? camera.status : "Select a recording to process or replay.")}
       </div>
-      <div className="route-form-grid">
-        <label>
-          Mapping profile
-          <select
-            aria-label="Mapping profile"
-            value={profile}
-            disabled={busy || extracting}
-            onChange={(event) => setProfile(event.target.value as RetargetingProfile)}
-          >
-            <option value="g1-upper-body">G1 upper body</option>
-            <option value="g1-single-arm">Single right arm</option>
-          </select>
-        </label>
+      <MappingControls profile={profile} disabled={locked} onChange={setProfile} />
+      <div className="route-form-grid camera-inspection-settings">
         <label>
           Sample rate
           <select
@@ -309,6 +310,7 @@ function CameraWorkspace({ robot, state, joints, neutral, onPreview, onSave }: P
           </select>
         </label>
       </div>
+      {tab === "live" && <MappingInspector frame={latest} joints={joints} profile={profile} />}
       {tab === "live" ? (
         <div className="route-two-column">
           <CameraSourcePanel
@@ -327,66 +329,13 @@ function CameraWorkspace({ robot, state, joints, neutral, onPreview, onSave }: P
               setStatus("");
               if (camera.connected) camera.close();
               else {
-                baseline.current = [...neutral];
                 void camera.open(source, address);
               }
             }}
           />
-          <Panel className="route-content-panel">
-            <PanelHeader>
-              <div>
-                <PanelLabel>CAMERA TEACHING</PanelLabel>
-                <H3>Capture movement</H3>
-              </div>
-            </PanelHeader>
-            <div className="route-form-grid">
-              <label>
-                Capture mode
-                <select
-                  aria-label="Capture mode"
-                  value={mode}
-                  disabled={locked || processing === "offline"}
-                  onChange={(event) => setMode(event.target.value as typeof mode)}
-                >
-                  <option value="simple">Simple pose</option>
-                  <option value="continuous">Continuous gesture</option>
-                </select>
-              </label>
-              <label>
-                Countdown
-                <select
-                  aria-label="Countdown"
-                  value={countdown}
-                  disabled={locked}
-                  onChange={(event) => setCountdown(Number(event.target.value))}
-                >
-                  {[1, 3, 5, 10].map((seconds) => (
-                    <option key={seconds} value={seconds}>
-                      {seconds} seconds
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-            <RobotViewport robot={robot} state={state} title="Retargeted preview" label="ROBOT PREVIEW" />
-            <div className="route-actions">
-              {remaining !== null ? (
-                <Button onClick={cancelCountdown}>Cancel countdown ({remaining})</Button>
-              ) : camera.recording ? (
-                <Button variant="recording" onClick={camera.stopRecording}>
-                  Stop recording
-                </Button>
-              ) : mode === "continuous" ? (
-                <Button disabled={!camera.connected || locked} onClick={start}>
-                  Start recording
-                </Button>
-              ) : (
-                <Button disabled={!latest || locked} onClick={savePose}>
-                  Save pose
-                </Button>
-              )}
-            </div>
-          </Panel>
+          <CameraCapturePanel mode={mode} setMode={setMode} countdown={countdown} setCountdown={setCountdown}
+            processing={processing} locked={locked} robot={robot} state={state} latest={latest && mappingCoverage(latest, joints, profile).mapped.length ? latest : null}
+            remaining={remaining} camera={camera} cancelCountdown={cancelCountdown} start={start} savePose={savePose} />
         </div>
       ) : (
         <RecordingLibrary
@@ -395,6 +344,8 @@ function CameraWorkspace({ robot, state, joints, neutral, onPreview, onSave }: P
           locked={locked}
           extracting={extracting}
           progress={progress}
+          storageFailed={storageFailed}
+          canSave={Boolean(selected?.frames.some((frame) => mappingCoverage(frame, joints, profile).mapped.length))}
           robot={robot}
           state={state}
           joints={joints}
@@ -410,8 +361,8 @@ function CameraWorkspace({ robot, state, joints, neutral, onPreview, onSave }: P
         />
       )}
       <p className="helper-text">
-        Videos stay in this browser until deleted. Exported archives contain demonstrations, not videos. Existing
-        profiles map compatible G1 upper-body joints; other joints retain the neutral pose.
+        Videos stay in this browser until deleted. Exported archives contain demonstrations, not videos. Left and right refer to your body.
+        Mapping drives compatible G1 joints; unsupported or unobserved joints keep the neutral pose.
       </p>
     </div>
   );

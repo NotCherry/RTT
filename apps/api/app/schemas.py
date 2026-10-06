@@ -62,7 +62,7 @@ class Demonstration(BaseModel):
     source: Literal["camera"] | None = None
     camera_capture_id: str | None = None
     retargeting_profile: str | None = None
-    retargeting_profile_version: Literal[1] | None = None
+    retargeting_profile_version: Literal[1, 2] | None = None
 
 
 class Dataset(BaseModel):

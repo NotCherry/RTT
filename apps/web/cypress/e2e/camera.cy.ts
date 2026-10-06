@@ -10,7 +10,7 @@ const robot = {
   ],
   joints: [
     {
-      name: "right_shoulder_pitch_joint",
+      name: "right_shoulder_roll_joint",
       type: "revolute",
       parent: "base",
       child: "arm",
@@ -113,7 +113,17 @@ describe("Camera recordings", () => {
     cy.contains("button", /^Pause$/).should("exist");
     cy.contains("button", "Restart").click();
     cy.get('[aria-label="Playback time"]').should("contain", "0.00");
-    cy.get('[aria-label="Mapping profile"]').select("g1-single-arm");
+    cy.contains("button", "Next frame").click();
+    cy.get('[aria-label="Playback time"]').should("contain", "0.10");
+    cy.get('[aria-label="Playback speed"]').select("0.5");
+    cy.get('[aria-label="Inspection mode"]').select("robot");
+    cy.get('[aria-label="Playback time"]').should("contain", "0.10");
+    cy.get('[aria-label="Inspection mode"]').select("side-by-side");
+    cy.get('[aria-label="Mapping scope"]').select("single");
+    cy.get('[aria-label="Arm selection"]').select("g1-left-arm");
+    cy.contains("button", "Save robot gesture").should("be.disabled");
+    cy.get('[aria-label="Mapping scope"]').select("g1-full-body");
+    cy.get('[aria-label="Mapping scope"]').select("single");
     cy.contains("button", "Save robot gesture").click();
     cy.get("@saveDemo.all").should((requests: any) => {
       expect(
@@ -124,7 +134,15 @@ describe("Camera recordings", () => {
         ),
       ).to.equal(true);
     });
+    cy.window().then((win) => expect(win.document.documentElement.scrollWidth).to.be.at.most(win.innerWidth));
+    cy.get(".camera-comparison .route-viewport-panel").should(($panel) => {
+      expect($panel[0].getBoundingClientRect().height).to.be.at.most(400);
+    });
     cy.screenshot("camera-recording-inspector");
+    cy.viewport(390, 844);
+    cy.window().then((win) => expect(win.document.documentElement.scrollWidth).to.be.at.most(win.innerWidth));
+    cy.screenshot("camera-recording-mobile");
+    cy.viewport(1280, 900);
     cy.contains("button", "Delete local recording").click();
     cy.contains("a", "Archive").click();
     cy.contains("Saved movement").should("exist");
@@ -139,6 +157,10 @@ describe("Camera recordings", () => {
     cy.wait(1200);
     cy.contains("button", "Stop recording").click();
     cy.contains("Recording saved on this device", { timeout: 15000 }).should("exist");
+    cy.get(".camera-recorded-source").should("be.visible");
+    cy.contains("button", /^Play$/).click();
+    cy.contains("button", /^Pause$/).click();
+    cy.screenshot("camera-video-comparison");
     cy.contains("button", "Extract stick figure").click();
     cy.contains("No confident pose found", { timeout: 120000 }).should("exist");
     cy.contains("button", "Re-extract stick figure").should("be.enabled");

@@ -61,3 +61,24 @@ it("fails on decoder errors instead of waiting indefinitely", async () => {
   );
   expect(create).not.toHaveBeenCalled();
 });
+it("rejects invalid sample rates before allocating decoder resources", async () => {
+  for (const rate of [0, -1, NaN, Infinity, 100]) {
+    await expect(extractCameraRecording(new Blob(), rate, 300, new AbortController().signal, vi.fn()))
+      .rejects.toThrow("sample rate");
+  }
+  expect(URL.createObjectURL).not.toHaveBeenCalled();
+});
+it("does not open media for an already cancelled extraction", async () => {
+  const controller = new AbortController();
+  controller.abort();
+  await expect(extractCameraRecording(new Blob(), 10, 300, controller.signal, vi.fn()))
+    .rejects.toMatchObject({ name: "AbortError" });
+  expect(URL.createObjectURL).not.toHaveBeenCalled();
+});
+it("uses retained recording duration without seeking beyond a durationless video", async () => {
+  vi.spyOn(HTMLMediaElement.prototype, "duration", "get").mockReturnValue(Infinity);
+  const result = await extractCameraRecording(new Blob(), 10, 300, new AbortController().signal, vi.fn());
+  expect(result.duration_ms).toBe(300);
+  expect(vi.mocked(Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, "currentTime")!.set!)
+    .mock.calls.every(([seconds]) => seconds < 1)).toBe(true);
+});

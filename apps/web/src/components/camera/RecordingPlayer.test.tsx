@@ -121,3 +121,70 @@ it("projects landscape and portrait overlays in source coordinates", () => {
   expect(container.querySelector("svg")).toHaveAttribute("viewBox", "0 0 1080 1920");
   expect(container.querySelector("circle")).toHaveAttribute("cy", "1440");
 });
+
+const playableRecording = {
+  id: "inspect",
+  name: "Movement",
+  created_at: "",
+  sample_rate: 10 as const,
+  source: { kind: "local-media-stream" as const, stream_count: 1 as const },
+  duration_ms: 2000,
+  frames: [{ timestamp: 0, pose: [], left_hand: [], right_hand: [], confidence: 1 }],
+  video: new Blob(),
+};
+const playerProps = {
+  recording: playableRecording,
+  robot: null,
+  state: null,
+  joints: [],
+  neutral: [],
+  profile: "g1-upper-body" as const,
+  onPreview: vi.fn(),
+};
+it("compares source video and robot, retaining the media cursor through views and speed changes", () => {
+  const { container } = render(<RecordingPlayer {...playerProps} />);
+  const video = container.querySelector("video")!;
+  expect(screen.getByText("SOURCE VIDEO")).toBeVisible();
+  expect(screen.getByText("Robot preview")).toBeVisible();
+  fireEvent.change(screen.getByLabelText("Playback position"), { target: { value: "750" } });
+  fireEvent.change(screen.getByLabelText("Inspection mode"), { target: { value: "stick" } });
+  expect(video.currentTime).toBe(0.75);
+  fireEvent.change(screen.getByLabelText("Playback speed"), { target: { value: "0.5" } });
+  fireEvent.click(screen.getByRole("button", { name: "Play" }));
+  expect(video.playbackRate).toBe(0.5);
+  video.currentTime = 0.9;
+  act(() => tick(900));
+  expect(screen.getByLabelText("Playback time")).toHaveTextContent("0.90");
+  expect(screen.getByText(/Tracking lost/)).toBeInTheDocument();
+});
+it("steps the synchronized cursor by sample frames and freezes it during extraction", () => {
+  const { container, rerender } = render(<RecordingPlayer {...playerProps} />);
+  const video = container.querySelector("video")!;
+  fireEvent.click(screen.getByRole("button", { name: "Next frame" }));
+  expect(video.currentTime).toBe(0.1);
+  fireEvent.click(screen.getByRole("button", { name: "Previous frame" }));
+  expect(video.currentTime).toBe(0);
+  fireEvent.click(screen.getByRole("button", { name: "Play" }));
+  rerender(<RecordingPlayer {...playerProps} locked />);
+  expect(screen.getByRole("button", { name: "Play" })).toBeDisabled();
+  expect(screen.getByLabelText("Playback position")).toBeDisabled();
+  expect(screen.getByLabelText("Playback speed")).toBeDisabled();
+  expect(screen.getByLabelText("Inspection mode")).toBeDisabled();
+});
+it("reports unprocessed and empty extracted recordings with distinct next actions", () => {
+  const { rerender } = render(<RecordingPlayer {...playerProps} recording={{ ...playableRecording, frames: [] }} />);
+  expect(screen.getByText(/Video ready. Extract/)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Play" })).toBeEnabled();
+  rerender(<RecordingPlayer {...playerProps} recording={{ ...playableRecording, frames: [], processed: true }} />);
+  expect(screen.getByText(/No confident pose found. Re-extract/)).toBeInTheDocument();
+});
+it("offers landmark playback when the recorded video cannot play", async () => {
+  vi.mocked(HTMLMediaElement.prototype.play).mockRejectedValueOnce(new Error("Decoder failed"));
+  render(<RecordingPlayer {...playerProps} />);
+  fireEvent.click(screen.getByRole("button", { name: "Play" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Replay extracted motion" }));
+  fireEvent.click(screen.getByRole("button", { name: "Play" }));
+  expect(screen.getByRole("button", { name: "Pause" })).toBeEnabled();
+  expect(HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(1);
+  expect(screen.getByLabelText("Inspection mode")).toHaveValue("stick");
+});

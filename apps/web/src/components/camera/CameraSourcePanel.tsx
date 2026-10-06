@@ -54,7 +54,8 @@ export function CameraSourcePanel({
             <option value="ip">Android IP camera</option>
           </select>
         </label>
-        {source === "ip" && (
+        {processing === "offline" && <p className="helper-text">Capture video first. Extract its landmarks from Recordings when you are ready.</p>}
+      {source === "ip" && (
           <label>
             IP camera URL
             <input
@@ -85,7 +86,7 @@ export function CameraSourcePanel({
       <div className="camera-live-preview">
         <video ref={camera.videoRef} muted playsInline className={source === "local" ? "camera-video" : "hidden"} />
         <img ref={camera.imageRef} alt="IP camera stream" className={source === "ip" ? "camera-video" : "hidden"} />
-        <StickFigure
+        {processing === "live" && camera.connected && <StickFigure
           frame={latest}
           overlay
           width={
@@ -94,13 +95,14 @@ export function CameraSourcePanel({
           height={
             (source === "local" ? camera.videoRef.current?.videoHeight : camera.imageRef.current?.naturalHeight) || 480
           }
-        />
+        />}
       </div>
       <div className="route-actions">
         <Button disabled={disabled || locked} onClick={onToggle}>
           {camera.connected ? "Close camera" : "Open camera"}
         </Button>
       </div>
+      {processing === "offline" && <p className="helper-text">Capture video first. Extract its landmarks from Recordings when you are ready.</p>}
       {source === "ip" && (
         <p className="helper-text">IP capture requires a browser-readable stream with CORS enabled on the camera.</p>
       )}

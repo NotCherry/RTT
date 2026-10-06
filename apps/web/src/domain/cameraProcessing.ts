@@ -30,6 +30,10 @@ export function detectCameraFrame(
   return {
     timestamp,
     pose: points(pose),
+    pose_world: points(result.poseWorldLandmarks?.[0] ?? []),
+    source_aspect_ratio: source instanceof HTMLVideoElement
+      ? source.videoWidth / (source.videoHeight || 1)
+      : source.naturalWidth / (source.naturalHeight || 1),
     left_hand: points(result.leftHandLandmarks?.[0] ?? []),
     right_hand: points(result.rightHandLandmarks?.[0] ?? []),
     confidence: pose.reduce((sum, point) => sum + (point.visibility ?? 1), 0) / pose.length,
@@ -71,6 +75,9 @@ export async function extractCameraRecording(
   signal: AbortSignal,
   progress: (percent: number) => void,
 ) {
+  signal.throwIfAborted();
+  if (!Number.isFinite(sampleRate) || sampleRate <= 0 || sampleRate > 60)
+    throw new Error("Choose a sample rate between 1 and 60 fps.");
   const video = document.createElement("video");
   video.muted = true;
   video.preload = "auto";
@@ -82,7 +89,7 @@ export async function extractCameraRecording(
       video.load();
     });
     // MediaRecorder WebM often has no duration header. A large seek discovers its end.
-    if (!Number.isFinite(video.duration))
+    if (!Number.isFinite(video.duration) && !(Number.isFinite(durationMs) && durationMs > 0))
       await waitForMedia(video, "seeked", signal, () => {
         video.currentTime = 1e10;
       });
