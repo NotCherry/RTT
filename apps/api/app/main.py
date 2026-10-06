@@ -2576,7 +2576,8 @@ async def session_socket(websocket: WebSocket, session_id: str) -> None:
                 pass
             except ValueError as exc:
                 await websocket.send_json({"type": "error", "message": str(exc)})
-            await asyncio.to_thread(session.step)
+            # Streaming editor state must not advance physics: gravity and motor
+            # targets would otherwise move an authored pose between edits.
             await websocket.send_json(await asyncio.to_thread(session.state))
             for event in session.events.drain():
                 await websocket.send_json(event)
