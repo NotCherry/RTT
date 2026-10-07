@@ -14,10 +14,14 @@ from app.robot_motion import ARM_LIMITS, arm_names
 from app.robot_transport_contract import ConnectionConfig, TargetPacket
 
 
-def sequence_plan(initial, joint, delta):
+def sequence_plan(initial, joint, delta=.08, target_rad=None, return_to_initial=True):
     if joint not in initial or joint not in ARM_LIMITS:
         raise ValueError("Choose a joint available in the measured arm state")
-    if not math.isfinite(delta) or not 0 < abs(delta) <= .1:
+    if target_rad is not None:
+        delta = target_rad - initial[joint]
+        if not math.isfinite(delta) or abs(delta) > .35:
+            raise ValueError("Absolute probe target must be within 0.35 rad of measured position")
+    elif not math.isfinite(delta) or not 0 < abs(delta) <= .1:
         raise ValueError("Probe displacement must be nonzero and at most 0.1 rad")
     if any(not math.isfinite(q) or not ARM_LIMITS[name][0] <= q <= ARM_LIMITS[name][1]
            for name, q in initial.items()):
@@ -25,7 +29,10 @@ def sequence_plan(initial, joint, delta):
     target = {**initial, joint: initial[joint] + delta}
     if not ARM_LIMITS[joint][0] <= target[joint] <= ARM_LIMITS[joint][1]:
         raise ValueError("Probe target would exceed the selected joint's limit")
-    return [("hold initial", dict(initial)), ("move out", target), ("return", dict(initial))]
+    phases = [("hold initial", dict(initial)), ("move out", target)]
+    if return_to_initial:
+        phases.append(("return", dict(initial)))
+    return phases
 
 
 def require_backend_stopped(url):
@@ -50,7 +57,7 @@ def wait_for_state(runtime, timeout=5):
     raise RuntimeError("No fresh CRC-validated lowstate arrived within five seconds")
 
 
-def run_sequence(runtime, token, plan, joint, log=print, clock=time.monotonic, sleep=time.sleep):
+def run_sequence(runtime, token, plan, joint, log=print, clock=time.monotonic, sleep=time.sleep, hold_seconds=1):
     """50 Hz commands, measured startup, engagement ramp, outward move and return."""
     stream = runtime.attach_stream(token)
     runtime.arm(token)
@@ -97,7 +104,7 @@ def run_sequence(runtime, token, plan, joint, log=print, clock=time.monotonic, s
                 elif arrived:
                     if settled is None:
                         settled = now
-                    if now - settled >= 1:
+                    if now - settled >= hold_seconds:
                         if phase == "move out" and peak_motion < abs(target[joint] - plan[0][1][joint]) * .25:
                             raise RuntimeError("Commands published but measured joint did not follow; check arm SDK acceptance/mode")
                         if abs(status["measured"][joint] - target[joint]) > .03:
@@ -105,8 +112,9 @@ def run_sequence(runtime, token, plan, joint, log=print, clock=time.monotonic, s
                         break
                 else:
                     settled = None
-                if now - start > 8:
-                    raise RuntimeError("Probe phase exceeded eight seconds")
+                phase_timeout = max(8, abs(target[joint] - plan[0][1][joint]) / runtime.config.max_joint_speed + hold_seconds + 3)
+                if now - start > phase_timeout:
+                    raise RuntimeError("Probe phase exceeded its bounded time limit")
                 next_tick += .02
                 sleep(max(0, next_tick - clock()))
     finally:
@@ -123,10 +131,16 @@ def main(argv=None):
     parser.add_argument("--execute", action="store_true", help="Publish the small motion sequence")
     parser.add_argument("--confirm-g1-29", action="store_true", help="Operator confirms one G1 EDU 29 DOF on this DDS network")
     parser.add_argument("--joint", choices=arm_names("g1-29"), default="right_elbow_joint")
-    parser.add_argument("--delta", type=float, default=.08)
+    destination = parser.add_mutually_exclusive_group()
+    destination.add_argument("--delta", type=float, default=.08)
+    destination.add_argument("--target-deg", type=float, help="Absolute joint angle, within 0.35 rad of freshly measured position")
+    parser.add_argument("--no-return", action="store_true", help="Release after holding the target instead of returning")
+    parser.add_argument("--hold-seconds", type=float, default=1)
     parser.add_argument("--backend-url", default="http://127.0.0.1:8000")
     parser.add_argument("--report", type=Path)
     args = parser.parse_args(argv)
+    if not math.isfinite(args.hold_seconds) or not 1 <= args.hold_seconds <= 5:
+        parser.error("--hold-seconds must be between one and five seconds")
     if args.execute and not args.mock:
         if not args.confirm_g1_29:
             parser.error("Physical execution requires --confirm-g1-29")
@@ -141,7 +155,9 @@ def main(argv=None):
         token = runtime.connect(config, run_worker=False)
         state = wait_for_state(runtime)
         initial = dict(state.positions)
-        plan = sequence_plan(initial, args.joint, args.delta)
+        plan = sequence_plan(initial, args.joint, args.delta,
+            target_rad=math.radians(args.target_deg) if args.target_deg is not None else None,
+            return_to_initial=not args.no_return)
         report.update(initial=initial, mode_machine=state.mode_machine,
                       joint=args.joint, phases=[{"phase": phase, "positions": q} for phase, q in plan])
         print(json.dumps(report, indent=2), flush=True)
@@ -150,7 +166,7 @@ def main(argv=None):
             def record(line):
                 report["samples"].append(json.loads(line))
                 print(line, flush=True)
-            run_sequence(runtime, token, plan, args.joint, log=record)
+            run_sequence(runtime, token, plan, args.joint, log=record, hold_seconds=args.hold_seconds)
         else:
             # Observe updates without arming or writing any command, including release.
             time.sleep(1)
@@ -158,7 +174,7 @@ def main(argv=None):
             report["final_measured"] = fresh.positions
             report["measured_updates_observed"] = fresh.received_at > state.received_at
             print("READ ONLY: no motor commands sent. Proposed displacement: "
-                  f"{args.joint} {initial[args.joint]:.4f} -> {plan[1][1][args.joint]:.4f} -> {initial[args.joint]:.4f} rad", flush=True)
+                  f"{args.joint}: " + " -> ".join(f"{q[args.joint]:.4f}" for _, q in plan) + " rad", flush=True)
         report["result"] = "completed"
     except (Exception, KeyboardInterrupt) as exc:
         report["result"], report["error"] = "aborted", str(exc) or "Interrupted"

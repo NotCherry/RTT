@@ -77,3 +77,14 @@ def test_read_only_cli_never_publishes_even_on_cleanup(monkeypatch, tmp_path):
     report = tmp_path / "probe.json"
     assert main(["--interface", "lo", "--mock", "--report", str(report)]) == 0
     assert json.loads(report.read_text())["packets_sent"] == 0
+
+
+def test_absolute_ninety_degree_target_starts_measured_and_can_skip_return():
+    import math
+    initial = {"right_elbow_joint": 1.4}
+    plan = sequence_plan(initial, "right_elbow_joint", target_rad=math.pi / 2, return_to_initial=False)
+    assert plan[0][1] == initial
+    assert plan[1][1]["right_elbow_joint"] == math.pi / 2
+    assert len(plan) == 2
+    with pytest.raises(ValueError, match="0.35 rad"):
+        sequence_plan({"right_elbow_joint": 0}, "right_elbow_joint", target_rad=math.pi / 2)

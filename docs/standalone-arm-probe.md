@@ -50,3 +50,26 @@ sample logs and result. Report directories must already exist. After an abort,
 the robot may not have returned to its initial posture: use the local stop and
 inspect it before retrying. Gains and bounds are application defaults requiring
 hardware validation.
+
+## Absolute angle test
+
+For an explicitly authorized nearby angle, use `--target-deg 90 --no-return
+--hold-seconds 3` instead of the relative displacement. Absolute targets must
+remain within 0.35 rad of the newly measured starting position and within joint
+limits. `--no-return` releases control after holding; it does not maintain the
+pose after release. Phase time limits include travel time and the requested hold.
+
+The October 7, 2026 physical right-elbow test published 277 packets while the
+Jetson's independent DDS subscriber observed 276 packets on `rt/arm_sdk`.
+Engagement reached 1. The commanded elbow rose from 1.4093 to 1.5603 rad toward
+1.5708 rad, but measured position remained about 1.4094 rad. The 0.15-rad tracking
+limit aborted the run and sent weight-zero release before the target/hold was
+completed. RTT's backend was restored afterward.
+
+A subsequent read-only `LocoClient.GetFsmId()` returned success with ID 0. The
+[official G1 client](https://github.com/unitreerobotics/unitree_sdk2_python/blob/master/unitree_sdk2py/g1/loco/g1_loco_client.py)
+maps `ZeroTorque()` to ID 0. Robot mode is therefore the leading explanation for
+the missing physical response. Packet delivery is established on the Jetson;
+command acceptance by the motor controller is not. No stance, torque mode, or
+locomotion transition was sent during the test. Operator selection of a suitable
+enabled robot mode is required before another arm test.
