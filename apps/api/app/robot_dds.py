@@ -61,7 +61,7 @@ class UnitreeArmAdapter:
             from unitree_sdk2py.idl.default import unitree_hg_msg_dds__LowCmd_
             from unitree_sdk2py.utils.crc import CRC
         except ImportError as exc:
-            raise RuntimeError("Unitree SDK is unavailable. Start with ./start-local.sh --robot or install requirements-robot.txt.") from exc
+            raise RuntimeError("Unitree SDK is unavailable. Start with ./start-local.sh or install requirements-robot.txt.") from exc
         binding = (self.config.domain_id, self.config.network_interface)
         with _factory_lock:
             if _factory_binding is not None and _factory_binding != binding:

@@ -1,12 +1,10 @@
-# Linux host networking is required for DDS discovery. Start with ./start-local.sh --robot.
+# Linux host networking is required for DDS discovery. This is the default stack.
 services:
   backend:
     build:
       context: apps/api
       target: robot
     network_mode: host
-    environment:
-      ROBOT_CONTROL_KEY: ${ROBOT_CONTROL_KEY:?Set ROBOT_CONTROL_KEY before starting}
     volumes:
       - robot-data:/app/data
     healthcheck:

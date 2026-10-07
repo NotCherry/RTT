@@ -36,9 +36,8 @@ the message does not cryptographically identify a particular physical robot.
 Only one G1 may be reachable on the chosen DDS network/domain.
 
 `POST /api/robot-transport/connect` returns an ownership token but does not arm or
-publish motor commands. Physical connections additionally require the backend's
-`ROBOT_CONTROL_KEY`, supplied in `X-Robot-Control-Key`. The owner authenticates
-`/api/robot-transport/stream` in its first WebSocket message, keeping tokens out
+publish motor commands. The owner authenticates `/api/robot-transport/stream` in
+its first WebSocket message, keeping tokens out
 of URLs. Named finite target packets carry a strictly increasing sequence and a send
 timestamp aligned to the backend clock during the stream handshake. Targets
 older than the watchdog bound, or implausibly in the future, are rejected; delayed
@@ -79,16 +78,15 @@ not implemented here. Full-body/locomotion control remains outside this stage.
 
 ## Running on the robot network
 
-The regular stack supports mock control. For physical DDS on a Linux host:
+The default stack includes physical DDS support on a Linux host:
 
 ```bash
-export ROBOT_CONTROL_KEY='choose-a-private-control-key'
-./start-local.sh --robot
+./start-local.sh
 ```
 
 Then open Camera, choose Live preview processing, open the camera, and select
 Unitree DDS in Robot connection. Select G1 EDU 29 DOF, enter the Linux host's
-robot-facing interface and the same control key, then Connect physical robot.
+robot-facing interface, then Connect physical robot.
 Once measured state is fresh, Arm live control enables publication. Stop / disarm
 releases SDK arm control; Disconnect robot closes the adapter. The UI does not
 arm automatically. Speed is chosen when connecting; disconnect to change it.

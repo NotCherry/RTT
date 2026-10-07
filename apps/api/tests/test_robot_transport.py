@@ -54,8 +54,8 @@ def test_mock_http_and_websocket_lifecycle():
     runtime.disconnect()
 
 
-def test_physical_connect_requires_configured_key(monkeypatch):
-    monkeypatch.delenv("ROBOT_CONTROL_KEY", raising=False)
-    assert client.post("/api/robot-transport/connect", json={"transport": "unitree-sdk2", "network_interface": "lo"}).status_code == 503
-    monkeypatch.setenv("ROBOT_CONTROL_KEY", "test-key")
-    assert client.post("/api/robot-transport/connect", json={"transport": "unitree-sdk2", "network_interface": "lo"}, headers={"X-Robot-Control-Key": "wrong"}).status_code == 403
+def test_physical_connect_does_not_require_an_operator_key(monkeypatch):
+    monkeypatch.setattr("app.robot_transport.controller.connect", lambda config: "owner")
+    response = client.post("/api/robot-transport/connect", json={"transport": "unitree-sdk2", "network_interface": "lo"})
+    assert response.status_code == 200
+    assert response.json()["token"] == "owner"

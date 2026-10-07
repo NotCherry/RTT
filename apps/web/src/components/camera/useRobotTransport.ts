@@ -34,8 +34,8 @@ export function useRobotTransport() {
   }
   return {
     status, error, busy, owned,
-    connect: (config: RobotConnectionConfig, key: string) => operate(async () => {
-      const next = await connectRobotTransport(config, key);
+    connect: (config: RobotConnectionConfig) => operate(async () => {
+      const next = await connectRobotTransport(config);
       if (!mounted.current) { await robotTransportAction("disconnect", next.token); return; }
       token.current = next.token;
       sequence.current = 0;

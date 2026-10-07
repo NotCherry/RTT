@@ -1,8 +1,6 @@
 """Robot control routes. Physical publication requires an explicit arm action."""
 import asyncio
 import json
-import os
-import secrets
 import time
 from fastapi import APIRouter, Header, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
@@ -39,13 +37,7 @@ def create_transport_router(runtime):
         return runtime.status()
 
     @routes.post("/connect")
-    def connect(config: ConnectionConfig, x_robot_control_key: str | None = Header(default=None)):
-        if config.transport == "unitree-sdk2":
-            key = os.environ.get("ROBOT_CONTROL_KEY")
-            if not key:
-                raise HTTPException(503, "Set ROBOT_CONTROL_KEY on the robot backend before connecting hardware")
-            if not x_robot_control_key or not secrets.compare_digest(key, x_robot_control_key):
-                raise HTTPException(403, "Robot control key is invalid")
+    def connect(config: ConnectionConfig):
         token = call(runtime.connect, config)
         return {**runtime.status(), "token": token}
 

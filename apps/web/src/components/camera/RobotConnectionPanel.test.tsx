@@ -10,16 +10,14 @@ it("offers a mock connection and distinct hardware speed", () => {
   render(<RobotConnectionPanel connection={c} live={false} />);
   fireEvent.change(screen.getByLabelText("Robot speed"), { target: { value: "1.5" } });
   fireEvent.click(screen.getByRole("button", { name: "Connect mock robot" }));
-  expect(c.connect).toHaveBeenCalledWith(expect.objectContaining({ transport: "mock", max_joint_speed: 1.5 }), "");
+  expect(c.connect).toHaveBeenCalledWith(expect.objectContaining({ transport: "mock", max_joint_speed: 1.5 }));
 });
-it("requires connection details for physical DDS and never arms automatically", () => {
+it("requires a network interface for physical DDS and never arms automatically", () => {
   const c = connection();
   render(<RobotConnectionPanel connection={c} live={true} />);
   fireEvent.change(screen.getByLabelText("Robot connection"), { target: { value: "unitree-sdk2" } });
-  expect(screen.getByRole("button", { name: "Connect physical robot" })).toBeDisabled();
-  fireEvent.change(screen.getByLabelText("Robot control key"), { target: { value: "test-key" } });
   fireEvent.click(screen.getByRole("button", { name: "Connect physical robot" }));
-  expect(c.connect).toHaveBeenCalledWith(expect.objectContaining({ transport: "unitree-sdk2", robot_model: "g1-29" }), "test-key");
+  expect(c.connect).toHaveBeenCalledWith(expect.objectContaining({ transport: "unitree-sdk2", robot_model: "g1-29" }));
   expect(c.action).not.toHaveBeenCalled();
 });
 it("exposes stop/disarm while the controller is armed", () => {

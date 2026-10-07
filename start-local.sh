@@ -8,7 +8,6 @@ COMPOSE=()
 FORCE_BUILD=0
 FOLLOW_LOGS=0
 DEV_MODE=0
-ROBOT_MODE=0
 STOP_STACK=0
 SHOW_STATUS=0
 
@@ -23,7 +22,6 @@ reload during application development.
 
 Options:
   --build       Rebuild images using Podman's layer and package caches.
-  --robot       Build SDK-enabled backend with host DDS networking (requires ROBOT_CONTROL_KEY).
   --dev         Start bind-mounted frontend/backend development servers with live reload.
   --logs        Follow backend and frontend logs after startup.
   --down        Stop and remove the Compose containers, keeping robot data.
@@ -35,10 +33,6 @@ EOF
 while (($# > 0)); do
     case "$1" in
     --build)
-        FORCE_BUILD=1
-        ;;
-    --robot)
-        ROBOT_MODE=1
         FORCE_BUILD=1
         ;;
     --dev)
@@ -66,20 +60,10 @@ while (($# > 0)); do
     shift
 done
 
-if ((ROBOT_MODE)); then
-    if [[ -z "${ROBOT_CONTROL_KEY:-}" ]]; then
-        echo "Set ROBOT_CONTROL_KEY before starting the physical robot backend."
-        exit 1
-    fi
-    if ((DEV_MODE)); then
-        echo "Use --robot or --dev separately. The robot stack includes live frontend reload."
-        exit 1
-    fi
-    SOURCE_COMPOSE_FILE="$ROOT_DIR/infra/docker-compose.robot.yml"
-elif ((DEV_MODE)); then
+if ((DEV_MODE)); then
     SOURCE_COMPOSE_FILE="$ROOT_DIR/infra/docker-compose.dev.yml"
 else
-    SOURCE_COMPOSE_FILE="$ROOT_DIR/infra/docker-compose.yml"
+    SOURCE_COMPOSE_FILE="$ROOT_DIR/infra/docker-compose.robot.yml"
 fi
 
 if ! command -v podman >/dev/null 2>&1; then

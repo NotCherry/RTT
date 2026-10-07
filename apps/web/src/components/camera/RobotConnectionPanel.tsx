@@ -7,7 +7,6 @@ export function RobotConnectionPanel({ connection, live }: { connection: ReturnT
   const [transport, setTransport] = useState<"mock" | "unitree-sdk2">("mock");
   const [model, setModel] = useState<"g1-29" | "g1-23">("g1-29");
   const [network, setNetwork] = useState("eth0");
-  const [key, setKey] = useState("");
   const [speed, setSpeed] = useState(1);
   const status = connection.status;
   return <Panel className="route-content-panel" aria-label="Robot connection controls">
@@ -24,15 +23,14 @@ export function RobotConnectionPanel({ connection, live }: { connection: ReturnT
       </select></label>
       {transport === "unitree-sdk2" && <>
         <label>Network interface<input aria-label="Robot network interface" value={network} onChange={e => setNetwork(e.target.value)} disabled={connection.busy} /></label>
-        <label>Robot control key<input aria-label="Robot control key" type="password" autoComplete="off" value={key} onChange={e => setKey(e.target.value)} disabled={connection.busy} /></label>
       </>}
     </div>}
     <p className="helper-text" aria-live="polite">{status?.reason ?? "Connect a mock robot or select Unitree DDS for your G1."}
       {status?.connected && ` · ${status.transport === "mock" ? "Mock" : "Physical"} · ${status.packets_sent} packets · state ${status.state_fresh ? "fresh" : "waiting"}`}
     </p>
     <div className="route-actions">
-      {!status?.connected ? <Button disabled={connection.busy || (transport === "unitree-sdk2" && (!network || !key))}
-        onClick={() => void connection.connect({ transport, robot_model: model, network_interface: network, domain_id: 0, max_joint_speed: speed, max_joint_acceleration: 3 }, key)}>
+      {!status?.connected ? <Button disabled={connection.busy || (transport === "unitree-sdk2" && !network)}
+        onClick={() => void connection.connect({ transport, robot_model: model, network_interface: network, domain_id: 0, max_joint_speed: speed, max_joint_acceleration: 3 })}>
         {transport === "mock" ? "Connect mock robot" : "Connect physical robot"}
       </Button> : <>
         {status.armed ? <Button variant="recording" disabled={connection.busy || !connection.owned} onClick={() => void connection.action("disarm")}>Stop / disarm</Button>

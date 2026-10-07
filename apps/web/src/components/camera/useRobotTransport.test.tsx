@@ -14,7 +14,7 @@ it("authenticates its stream, sends latest tracking targets, and drops congestio
   api.action.mockResolvedValue({ ...status, connected: false });
   api.socket.mockReturnValue(stream);
   const { result, unmount } = renderHook(() => useRobotTransport());
-  await act(async () => { await result.current.connect({ transport: "mock", robot_model: "g1-29", network_interface: "lo", domain_id: 0, max_joint_speed: 1, max_joint_acceleration: 3 }, ""); });
+  await act(async () => { await result.current.connect({ transport: "mock", robot_model: "g1-29", network_interface: "lo", domain_id: 0, max_joint_speed: 1, max_joint_acceleration: 3 }); });
   act(() => { (stream.onopen as unknown as () => void)(); (stream.onmessage as unknown as (event: { data: string }) => void)({ data: '{"ready":true}' }); });
   expect(JSON.parse(stream.send.mock.calls[0][0])).toEqual({ token: "owner" });
   act(() => result.current.submit({ left_elbow_joint: .2 }));
@@ -35,7 +35,7 @@ it("releases controller ownership when the socket cannot be created", async () =
   api.action.mockResolvedValue({ connected: false });
   api.socket.mockImplementationOnce(() => { throw new Error("Socket unavailable"); });
   const { result } = renderHook(() => useRobotTransport());
-  await act(async () => { await result.current.connect({ transport: "mock", robot_model: "g1-29", network_interface: "lo", domain_id: 0, max_joint_speed: 1, max_joint_acceleration: 3 }, ""); });
+  await act(async () => { await result.current.connect({ transport: "mock", robot_model: "g1-29", network_interface: "lo", domain_id: 0, max_joint_speed: 1, max_joint_acceleration: 3 }); });
   expect(api.action).toHaveBeenCalledWith("disconnect", "failed-stream-owner");
   expect(result.current.owned).toBe(false);
   expect(result.current.status?.connected).toBe(false);

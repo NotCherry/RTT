@@ -19,6 +19,6 @@ RUN python -c 'from unitree_sdk2py.idl.default import unitree_hg_msg_dds__LowCmd
 FROM robot-dependencies AS robot
 COPY app ./app
 
-# The default target remains simulation-only; DDS is explicitly selected by --robot.
+# The simulation target remains available for development-only Compose stacks.
 FROM dependencies AS simulation
 COPY app ./app
