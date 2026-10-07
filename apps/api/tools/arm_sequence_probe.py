@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app.robot_controller import RobotController
 from app.robot_motion import ARM_LIMITS, arm_names
 from app.robot_transport_contract import ConnectionConfig, TargetPacket
+from tools.unitree_mode_preflight import read_fsm_id, require_arm_control_mode
 
 
 def sequence_plan(initial, joint, delta=.08, target_rad=None, return_to_initial=True):
@@ -160,8 +161,17 @@ def main(argv=None):
             return_to_initial=not args.no_return)
         report.update(initial=initial, mode_machine=state.mode_machine,
                       joint=args.joint, phases=[{"phase": phase, "positions": q} for phase, q in plan])
+        if not args.mock:
+            try:
+                report["fsm_id"] = read_fsm_id()
+            except Exception as exc:
+                report["fsm_error"] = str(exc)
+                if args.execute:
+                    raise RuntimeError("Cannot verify robot FSM; refusing physical probe") from exc
         print(json.dumps(report, indent=2), flush=True)
         if args.execute:
+            if not args.mock:
+                require_arm_control_mode(report["fsm_id"])
             report["samples"] = []
             def record(line):
                 report["samples"].append(json.loads(line))

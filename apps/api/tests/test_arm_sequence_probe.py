@@ -88,3 +88,20 @@ def test_absolute_ninety_degree_target_starts_measured_and_can_skip_return():
     assert len(plan) == 2
     with pytest.raises(ValueError, match="0.35 rad"):
         sequence_plan({"right_elbow_joint": 0}, "right_elbow_joint", target_rad=math.pi / 2)
+
+
+def test_physical_cli_in_zero_torque_never_publishes(monkeypatch, tmp_path):
+    import json
+    runtime = RobotController(adapter_factory=MockArmAdapter)
+    monkeypatch.setattr("tools.arm_sequence_probe.RobotController", lambda: runtime)
+    monkeypatch.setattr("tools.arm_sequence_probe.require_backend_stopped", lambda url: None)
+    monkeypatch.setattr("tools.arm_sequence_probe.read_fsm_id", lambda: 0)
+    def unexpected_publication(*args):
+        raise AssertionError("Disabled FSM must never publish")
+    monkeypatch.setattr(MockArmAdapter, "publish", unexpected_publication)
+    report = tmp_path / "blocked.json"
+    assert main(["--interface", "lo", "--execute", "--confirm-g1-29", "--report", str(report)]) == 1
+    result = json.loads(report.read_text())
+    assert result["fsm_id"] == 0
+    assert "ZeroTorque" in result["error"]
+    assert result["packets_sent"] == 0

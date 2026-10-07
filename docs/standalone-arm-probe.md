@@ -33,7 +33,9 @@ podman start rtt_backend_1
 ```
 
 The script refuses physical execution while the backend status endpoint is
-reachable. Configure `--backend-url` if RTT uses another address. Other DDS
+reachable. It also queries the locomotion FSM and refuses to arm in FSM 0
+(ZeroTorque), FSM 1 (Damp), or when the mode query fails. It never changes the
+whole-body mode. Other FSM values still require measured-response validation. Configure `--backend-url` if RTT uses another address. Other DDS
 publishers are not detected by this check; stop them separately. The defaults
 match the inspected WSL host; on the Jetson the interface is `enP8p1s0`.
 
@@ -66,10 +68,51 @@ Engagement reached 1. The commanded elbow rose from 1.4093 to 1.5603 rad toward
 limit aborted the run and sent weight-zero release before the target/hold was
 completed. RTT's backend was restored afterward.
 
-A subsequent read-only `LocoClient.GetFsmId()` returned success with ID 0. The
+A subsequent read-only locomotion query returned success with FSM ID 0. The
 [official G1 client](https://github.com/unitreerobotics/unitree_sdk2_python/blob/master/unitree_sdk2py/g1/loco/g1_loco_client.py)
-maps `ZeroTorque()` to ID 0. Robot mode is therefore the leading explanation for
-the missing physical response. Packet delivery is established on the Jetson;
-command acceptance by the motor controller is not. No stance, torque mode, or
-locomotion transition was sent during the test. Operator selection of a suitable
-enabled robot mode is required before another arm test.
+maps `ZeroTorque()` to ID 0. This is a likely acceptance blocker, rather than
+proof of a transport problem.
+
+## Native Jetson SDK test
+
+The same probe was deployed to `/home/unitree/rtt-arm-probe-20261007` on
+`192.168.123.164`. It runs with the existing Python SDK environment:
+
+```bash
+/home/unitree/Glos/repo/robot/venv/bin/python \
+  /home/unitree/rtt-arm-probe-20261007/tools/arm_sequence_probe.py \
+  --interface enP8p1s0 --target-deg 90 --no-return --hold-seconds 3
+```
+
+This command is read-only. Add `--execute --confirm-g1-29` only for an authorized
+physical test with RTT stopped and the robot in an appropriate enabled mode.
+The older Jetson SDK lacks a public `GetFsmId` method, so the preflight uses its
+registered read-only API 7001. Failure responses never count as a measured mode.
+
+The Jetson scripts `z2_trzymanie_obrot.py` and `z1_lastboss.py` publish to
+`rt/arm_sdk` and explicitly set arm motor `mode=1`. RTT now matches that field
+only for commanded arm joints; legs and waist remain untouched. A native test
+with that correction still failed: 277 packets including releases, engagement
+1, starting right elbow 1.2930 rad (74.09°), last command 1.4440 rad (82.74°),
+measured elbow still 1.2930 rad. The tracking limit aborted and released control.
+The mode correction alone has therefore **not** established physical movement.
+The robot again returned FSM ID 0 / FSM mode 0; the balance query failed with
+code 7301. No locomotion or whole-body mode transition was sent. RTT was restored.
+
+The operator reported standing with motors enabled. Independent observation of
+193 fresh `rt/sportmodestate` samples nevertheless returned FSM 0, FSM mode 0,
+task ID 4. Over a subsequent two-second sample, all 1,062 downstream `rt/lowcmd`
+messages had zero leg and elbow stiffness/damping, and measured arm torques were
+near zero. Motor-state `mode=1` alone does not establish active posture control.
+The physical mode discrepancy must be resolved using the robot's controller
+before a whole-body mode change or another motor test.
+
+A ROS Docker bridge was unnecessary for this test: the installed native SDK
+received valid measured state and wrote commands directly on the Jetson. Physical
+acceptance remains unresolved until an appropriate enabled robot mode is
+established and a fresh measured-response test succeeds.
+
+The correction and FSM preflight passed 118 backend tests, the SDK image build,
+and `git diff --check`. The deployed Jetson read-only probe returned FSM 0 and
+zero publications. The requested code-review skill was unavailable; the diff
+received manual review.

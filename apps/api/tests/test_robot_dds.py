@@ -47,6 +47,8 @@ def test_packet_encodes_arm_indices_crc_and_weight_without_touching_legs(sdk):
     assert packet.motor_cmd[18].q == .4
     assert packet.motor_cmd[28].q == -.2
     assert packet.motor_cmd[18].dq == .1
+    assert packet.motor_cmd[18].mode == packet.motor_cmd[28].mode == 1
+    assert all(motor.mode == 0 for index, motor in enumerate(packet.motor_cmd) if index not in (18, 28))
     assert packet.motor_cmd[29].q == .3
     assert packet.mode_machine == 7
     assert packet.crc == 123

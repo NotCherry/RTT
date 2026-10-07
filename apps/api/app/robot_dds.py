@@ -102,6 +102,7 @@ class UnitreeArmAdapter:
         command.mode_machine = mode_machine
         for name, q in positions.items():
             motor = command.motor_cmd[ARM_INDICES[name]]
+            motor.mode = 1  # Match the explicit servo mode used by the onboard G1 scripts.
             motor.q = q
             motor.dq = velocities.get(name, 0.0)
             motor.tau = 0.0
