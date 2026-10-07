@@ -1,0 +1,9 @@
+services:
+  rosbridge:
+    image: rtt/unitree-rosbridge:humble
+    build: .
+    container_name: rtt-unitree-rosbridge
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      ROSBRIDGE_ADDRESS: 192.168.123.164
