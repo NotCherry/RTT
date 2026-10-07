@@ -18,7 +18,7 @@ class LocalStartupTests(unittest.TestCase):
         (self.root / "infra").mkdir()
         (self.root / "bin").mkdir()
         (self.root / "start-local.sh").write_bytes((ROOT / "start-local.sh").read_bytes())
-        for name in ("docker-compose.yml", "docker-compose.dev.yml"):
+        for name in ("docker-compose.yml", "docker-compose.dev.yml", "docker-compose.robot.yml"):
             (self.root / "infra" / name).write_bytes((ROOT / "infra" / name).read_bytes())
         self.log = self.root / "calls"
         self.env = {
@@ -62,11 +62,12 @@ if [[ "$5" == build ]]; then exit "$BUILD_EXIT"; fi
         calls = self.log.read_text().splitlines() if self.log.exists() else []
         return result, calls
 
-    def test_cached_start_waits_for_health_without_building(self):
+    def test_cached_start_refreshes_images_and_containers_before_waiting_for_health(self):
         result, calls = self.launch()
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(len(calls), 1)
-        self.assertIn("up -d --no-build --remove-orphans", calls[0])
+        self.assertEqual(len(calls), 2)
+        self.assertTrue(calls[0].endswith(" build"))
+        self.assertIn("up -d --no-build --force-recreate --remove-orphans", calls[1])
         self.assertIn("http://localhost:8080", result.stdout)
 
     def test_build_missing_images_or_explicit_build(self):
@@ -114,10 +115,14 @@ cmp "$4" "$PWD/infra/docker-compose.dev.yml" || exit 92
 
     def test_base_images_do_not_require_short_name_registry_configuration(self):
         for file in ("apps/api/Dockerfile", "apps/web/Dockerfile", "apps/web/Dockerfile.dev"):
+            stages = set()
             for line in (ROOT / file).read_text().splitlines():
                 if line.startswith("FROM "):
                     with self.subTest(file=file, line=line):
-                        self.assertTrue(line.split()[1].startswith("docker.io/library/"))
+                        fields = line.split()
+                        self.assertTrue(fields[1].startswith("docker.io/library/") or fields[1] in stages)
+                        if len(fields) >= 4 and fields[2].lower() == "as":
+                            stages.add(fields[3])
 
     def test_dev_frontend_does_not_replace_normal_frontend_image(self):
         compose = (ROOT / "infra/docker-compose.dev.yml").read_text()

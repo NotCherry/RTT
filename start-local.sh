@@ -5,7 +5,6 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_NAME="rtt"
 COMPOSE_FILE=""
 COMPOSE=()
-FORCE_BUILD=0
 FOLLOW_LOGS=0
 DEV_MODE=0
 STOP_STACK=0
@@ -15,13 +14,12 @@ usage() {
     cat <<'EOF'
 Usage: ./start-local.sh [options]
 
-Starts the local Robot Learning Workbench with Podman Compose. Podman reuses
-existing images and containers by default; use --build when Dockerfiles or
-dependency lockfiles have changed. Use --dev for bind-mounted source and live
-reload during application development.
+Starts the local Robot Learning Workbench with Podman Compose. Each start builds
+with cached layers and recreates containers to load current code. Use --dev for
+bind-mounted source and live reload during application development.
 
 Options:
-  --build       Rebuild images using Podman's layer and package caches.
+  --build       Explicit cached build (also performed by default).
   --dev         Start bind-mounted frontend/backend development servers with live reload.
   --logs        Follow backend and frontend logs after startup.
   --down        Stop and remove the Compose containers, keeping robot data.
@@ -33,7 +31,7 @@ EOF
 while (($# > 0)); do
     case "$1" in
     --build)
-        FORCE_BUILD=1
+        : # Accepted for compatibility; every start builds with the cache.
         ;;
     --dev)
         DEV_MODE=1
@@ -100,25 +98,13 @@ if ((SHOW_STATUS)); then
     exit 0
 fi
 
-images_missing=0
-for image in "${PROJECT_NAME}_backend" "${PROJECT_NAME}_frontend"; do
-    if ! podman image exists "$image"; then
-        images_missing=1
-    fi
-done
+echo "Building current source with the existing Podman cache."
+"${COMPOSE[@]}" build
 
-if ((DEV_MODE)); then
-    echo "Building the development images with the existing Podman cache."
-    "${COMPOSE[@]}" build
-elif ((FORCE_BUILD || images_missing)); then
-    echo "Building with the existing Podman cache (use --no-cache manually for a clean build)."
-    "${COMPOSE[@]}" build
-fi
-
-# --no-build makes the default path a true start-only operation. Use --build
-# after source or dependency changes when using the production-style images.
+# Build above, then replace containers so an unchanged Compose configuration
+# cannot keep running an older image. Named data volumes are preserved.
 # podman-compose does not implement Docker Compose's `up --wait` option.
-"${COMPOSE[@]}" up -d --no-build --remove-orphans
+"${COMPOSE[@]}" up -d --no-build --force-recreate --remove-orphans
 
 wait_for_health() {
     local service="$1"

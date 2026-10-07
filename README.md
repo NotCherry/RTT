@@ -29,7 +29,7 @@ Podman and `podman-compose` are the only runtime dependencies required for the f
 
 Open `http://localhost:8080`. The backend health endpoint is available at `http://localhost:8000/api/health`.
 
-The normal command does not force a rebuild. After changing a Dockerfile or dependency lockfile, rebuild with the existing cache:
+Each start builds current source with cached layers and recreates the containers, so source updates take effect without an extra flag. Named robot data volumes are preserved:
 
 ```bash
 ./start-local.sh --build
@@ -44,11 +44,11 @@ For quick feedback while editing application code, use the Podman-backed develop
 ./start-local.sh --dev
 ```
 
-This mode builds the development images on startup, bind-mounts `apps/web` and the backend source into their containers, runs Vite and Uvicorn with reload enabled, and keeps the `robot-data` volume separate. The frontend remains available at `http://localhost:8080`, so ordinary source edits do not require an image rebuild or stack restart. Run `./start-local.sh --dev --down` to stop this mode. Use the normal command when you want to inspect the production-style Nginx image instead.
+This mode builds the development images on startup, bind-mounts `apps/web` and the backend source into their containers, runs Vite and Uvicorn with reload enabled, and keeps the `robot-data` volume separate. The frontend remains available at `http://localhost:8080`, so ordinary source edits do not require an image rebuild or stack restart. Run `./start-local.sh --dev --down` to stop this mode. The normal command includes the Unitree SDK and host networking for DDS, with a Vite frontend.
 
 In WSL, run these commands inside your Linux distribution with Linux `podman` and `podman-compose` installed. Run `podman info` to verify the runtime before starting. Base images use full `docker.io/library/...` names, so no short-name aliases or default registry configuration are needed. Open `http://localhost:8080` in your Windows browser once both services are healthy.
 
-The first build downloads base images and dependencies. Later starts reuse existing images; `--build` and `--dev` reuse cached layers and package-manager caches. The development frontend has a separate image, so switching modes preserves the normal Nginx image. If a service exits or fails its health check, the launcher prints its recent logs.
+The first build downloads base images and dependencies. Later starts reuse cached layers and package-manager caches. `--build` remains accepted for compatibility. `--status` and `--down` do not build. If a service exits or fails its health check, the launcher prints its recent logs.
 
 ## Optional direct development
 
