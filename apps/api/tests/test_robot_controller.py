@@ -48,6 +48,40 @@ def test_arm_starts_at_measured_state_and_ramps_weight(rig):
     assert mode == 7
 
 
+def test_disarmed_camera_diagnostics_never_publish_or_seed_armed_motion(rig):
+    runtime, token, stream, _ = rig
+    runtime.receive(stream, packet(runtime, sequence=0, tracking=True, positions={"left_elbow_joint": 1}))
+    runtime.tick()
+    status = runtime.status()
+    assert status["stream_connected"] is True
+    assert status["targets_received"] == 1
+    assert status["camera_target"] == {"left_elbow_joint": 1}
+    assert status["commanded"] == {}
+    assert status["packets_sent"] == 0
+    assert runtime.adapter.packets == []
+    runtime.arm(token)
+    runtime.tick()
+    assert runtime.positions["left_elbow_joint"] == .2
+    runtime.receive(stream, packet(runtime, sequence=1, tracking=True, positions={"left_elbow_joint": 1}))
+    runtime.tick()
+    assert runtime.positions["left_elbow_joint"] > .2
+    assert runtime.status()["packets_sent"] == 2
+
+
+def test_camera_diagnostics_expire_and_clear_on_tracking_loss(rig):
+    runtime, _, stream, clock = rig
+    runtime.receive(stream, packet(runtime, sequence=0, tracking=True, positions={"left_elbow_joint": 1}))
+    clock[0] = .3
+    assert runtime.status()["camera_target"] == {}
+    runtime.receive(stream, packet(runtime, sequence=1, tracking=True, positions={"left_elbow_joint": .5}))
+    assert runtime.status()["camera_target"] == {"left_elbow_joint": .5}
+    runtime.receive(stream, packet(runtime, sequence=2, tracking=False))
+    assert runtime.status()["camera_target"] == {}
+    assert runtime.status()["targets_received"] == 3
+    runtime.detach_stream(stream)
+    assert runtime.status()["stream_connected"] is False
+
+
 def test_latest_target_and_velocity_acceleration_limits(rig):
     runtime, token, stream, clock = rig
     runtime.arm(token)

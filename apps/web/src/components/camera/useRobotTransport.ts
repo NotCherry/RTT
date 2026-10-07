@@ -6,6 +6,7 @@ export function useRobotTransport() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [owned, setOwned] = useState(false);
+  const [streamReady, setStreamReady] = useState(false);
   const token = useRef("");
   const socket = useRef<WebSocket | null>(null);
   const ready = useRef(false);
@@ -33,8 +34,10 @@ export function useRobotTransport() {
     finally { if (mounted.current) setBusy(false); }
   }
   return {
-    status, error, busy, owned,
+    status, error, busy, owned, streamReady,
     connect: (config: RobotConnectionConfig) => operate(async () => {
+      ready.current = false;
+      setStreamReady(false);
       const next = await connectRobotTransport(config);
       if (!mounted.current) { await robotTransportAction("disconnect", next.token); return; }
       token.current = next.token;
@@ -55,6 +58,7 @@ export function useRobotTransport() {
       stream.onmessage = event => {
         const response = JSON.parse(event.data);
         ready.current = response.ready === true;
+        if (mounted.current) setStreamReady(ready.current);
         if (ready.current && Number.isFinite(response.server_time_ms)) clockOffset.current = response.server_time_ms - Date.now();
         if (response.error && mounted.current) setError(response.error);
       };
@@ -67,6 +71,7 @@ export function useRobotTransport() {
         token.current = "";
         if (mounted.current) {
           setOwned(false);
+          setStreamReady(false);
           setStatus(previous => previous ? { ...previous, connected: false, armed: false, reason: "Camera stream disconnected · disarmed" } : null);
         }
       };
@@ -80,6 +85,7 @@ export function useRobotTransport() {
         socket.current?.close();
         socket.current = null;
         if (mounted.current) setOwned(false);
+        if (mounted.current) setStreamReady(false);
       }
     }),
     submit(positions: Record<string, number> | null) {

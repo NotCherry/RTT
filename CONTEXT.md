@@ -44,6 +44,10 @@ _Avoid_: Robot state, authored Keyframe
 A versioned mapping from observable human landmarks to a robot's controllable joints, including neutral-pose preservation and joint-limit clamping.
 _Avoid_: Model prediction, training configuration
 
+**Camera target**:
+The latest visible arm joint positions retargeted from a live landmark frame and accepted by the robot backend. It can be inspected while disarmed; publishing a motor command requires explicit arming and applies independent motion limits.
+_Avoid_: Measured robot state, published motor command
+
 **Archive**:
 The durable collection of robot context, demonstrations, annotations, and related experiment records.
 _Avoid_: Dataset-only, model checkpoint

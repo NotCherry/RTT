@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { RobotConnectionPanel } from "./RobotConnectionPanel";
 afterEach(cleanup);
-const connection = () => ({ status: null, owned: false, busy: false, error: "", connect: vi.fn(), action: vi.fn(), submit: vi.fn() });
+const connection = () => ({ status: null, owned: false, streamReady: false, busy: false, error: "", connect: vi.fn(), action: vi.fn(), submit: vi.fn() });
+const connected = { connected: true, armed: false, transport: "mock" as const, state_fresh: true, reason: "Connected", measured: { left_elbow_joint: .2 }, commanded: {}, packets_sent: 0, engagement: 0, stream_connected: true, targets_received: 12, camera_target: { left_elbow_joint: .5 } };
 it("offers a mock connection and distinct hardware speed", () => {
   const c = connection();
   render(<RobotConnectionPanel connection={c} live={false} />);
@@ -21,9 +22,31 @@ it("requires a network interface for physical DDS and never arms automatically",
   expect(c.action).not.toHaveBeenCalled();
 });
 it("exposes stop/disarm while the controller is armed", () => {
-  const c = { ...connection(), owned: true, status: { connected: true, armed: true, transport: "mock" as const, state_fresh: true, reason: "Following live camera", measured: {}, commanded: {}, packets_sent: 1, engagement: 1 } };
+  const c = { ...connection(), owned: true, status: { ...connected, armed: true, reason: "Following live camera", packets_sent: 1, engagement: 1 } };
   render(<RobotConnectionPanel connection={c} live={true} />);
   fireEvent.click(screen.getByRole("button", { name: "Stop / disarm" }));
   expect(c.action).toHaveBeenCalledWith("disarm");
   expect(screen.queryByRole("button", { name: /Resume/ })).not.toBeInTheDocument();
+});
+
+it("shows received camera targets while disarmed and requires explicit arming", () => {
+  const c = { ...connection(), owned: true, streamReady: true, status: connected };
+  render(<RobotConnectionPanel connection={c} live={true} />);
+  expect(screen.getByText(/Disarmed · motor commands are not being published/)).toBeInTheDocument();
+  expect(screen.getByText(/12 camera frames received/)).toBeInTheDocument();
+  const row = screen.getByText("left_elbow_joint").closest("tr")!;
+  expect(within(row).getAllByRole("cell").map(cell => cell.textContent)).toEqual(["left_elbow_joint", "0.200", "0.500", "—"]);
+  expect(c.action).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Arm live control" }));
+  expect(c.action).toHaveBeenCalledWith("arm");
+});
+
+it("explains stream readiness and ownership blockers", () => {
+  const c = { ...connection(), owned: true, status: connected };
+  const view = render(<RobotConnectionPanel connection={c} live={true} />);
+  expect(screen.getByRole("button", { name: "Arm live control" })).toBeDisabled();
+  expect(screen.getByText(/Waiting for the camera target stream/)).toBeInTheDocument();
+  view.rerender(<RobotConnectionPanel connection={{ ...c, owned: false }} live={true} />);
+  expect(screen.getByText(/This browser does not own the connection/)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Arm live control" })).toBeDisabled();
 });

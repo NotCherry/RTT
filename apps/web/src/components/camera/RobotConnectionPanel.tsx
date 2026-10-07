@@ -9,6 +9,11 @@ export function RobotConnectionPanel({ connection, live }: { connection: ReturnT
   const [network, setNetwork] = useState("eth0");
   const [speed, setSpeed] = useState(1);
   const status = connection.status;
+  const armBlock = !connection.owned ? "This browser does not own the connection. Return to the browser that connected the robot and disconnect there first."
+    : !live ? "Open the camera with Live preview processing to arm."
+    : !connection.streamReady ? "Waiting for the camera target stream to connect."
+    : !status?.state_fresh ? "Waiting for fresh measured robot state before arming."
+    : "Choose Arm live control to start publishing motor commands.";
   return <Panel className="route-content-panel" aria-label="Robot connection controls">
     <PanelHeader><div><PanelLabel>ROBOT CONNECTION</PanelLabel><H3>Send live arm motion</H3></div></PanelHeader>
     {!status?.connected && <div className="route-form-grid">
@@ -26,7 +31,7 @@ export function RobotConnectionPanel({ connection, live }: { connection: ReturnT
       </>}
     </div>}
     <p className="helper-text" aria-live="polite">{status?.reason ?? "Connect a mock robot or select Unitree DDS for your G1."}
-      {status?.connected && ` · ${status.transport === "mock" ? "Mock" : "Physical"} · ${status.packets_sent} packets · state ${status.state_fresh ? "fresh" : "waiting"}`}
+      {status?.connected && ` · ${status.transport === "mock" ? "Mock" : "Physical"} · ${status.packets_sent} packets · state ${status.state_fresh ? "fresh" : "waiting"} · ${status.targets_received ?? 0} camera frames received`}
     </p>
     <div className="route-actions">
       {!status?.connected ? <Button disabled={connection.busy || (transport === "unitree-sdk2" && !network)}
@@ -34,15 +39,19 @@ export function RobotConnectionPanel({ connection, live }: { connection: ReturnT
         {transport === "mock" ? "Connect mock robot" : "Connect physical robot"}
       </Button> : <>
         {status.armed ? <Button variant="recording" disabled={connection.busy || !connection.owned} onClick={() => void connection.action("disarm")}>Stop / disarm</Button>
-          : <Button disabled={connection.busy || !connection.owned || !status.state_fresh || !live} onClick={() => void connection.action("arm")}>Arm live control</Button>}
+          : <Button disabled={connection.busy || !connection.owned || !connection.streamReady || !status.state_fresh || !live} onClick={() => void connection.action("arm")}>Arm live control</Button>}
         <Button variant="secondary" disabled={connection.busy || !connection.owned} onClick={() => void connection.action("disconnect")}>Disconnect robot</Button>
       </>}
     </div>
-    {status?.connected && !live && <p className="helper-text">Open the camera with Live preview processing to arm.</p>}
+    {status?.connected && !status.armed && <p className="helper-text">Disarmed · motor commands are not being published. The visualization previews camera motion. {armBlock}</p>}
+    {status?.connected && connection.streamReady && <p className="helper-text">
+      {Object.keys(status.camera_target ?? {}).length ? "Live arm targets are reaching the backend."
+        : "No fresh visible arm targets. Keep your arms in the camera view; the visualization can hold its last pose."}
+    </p>}
     {status?.connected && <details className="camera-mapping-inspector">
       <summary>Measured and commanded arm positions</summary>
-      <div className="overflow-x-auto rounded border border-line-650"><table className="w-full border-collapse text-left font-mono text-xs"><thead><tr><th className="px-3 py-2">Joint</th><th className="px-3 py-2">Measured · rad</th><th className="px-3 py-2">Commanded · rad</th></tr></thead>
-        <tbody>{Object.entries(status.measured).map(([name, measured]) => <tr key={name}><td className="px-3 py-2">{name}</td><td className="px-3 py-2">{measured.toFixed(3)}</td><td className="px-3 py-2">{status.commanded[name]?.toFixed(3) ?? "—"}</td></tr>)}</tbody>
+      <div className="overflow-x-auto rounded border border-line-650"><table className="w-full border-collapse text-left font-mono text-xs"><thead><tr><th className="px-3 py-2">Joint</th><th className="px-3 py-2">Measured · rad</th><th className="px-3 py-2">Camera target · rad</th><th className="px-3 py-2">{status.armed ? "Commanded · rad" : "Last command · rad"}</th></tr></thead>
+        <tbody>{Object.entries(status.measured).map(([name, measured]) => <tr key={name}><td className="px-3 py-2">{name}</td><td className="px-3 py-2">{measured.toFixed(3)}</td><td className="px-3 py-2">{status.camera_target?.[name]?.toFixed(3) ?? "—"}</td><td className="px-3 py-2">{status.commanded[name]?.toFixed(3) ?? "—"}</td></tr>)}</tbody>
       </table></div>
     </details>}
     <p className="helper-text">Only live, visible arm joints are sent. Preview speed is separate from robot speed. Arming takes control of the arms; use the robot’s local stop for an emergency.</p>

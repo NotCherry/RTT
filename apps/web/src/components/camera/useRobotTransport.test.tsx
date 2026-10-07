@@ -15,7 +15,9 @@ it("authenticates its stream, sends latest tracking targets, and drops congestio
   api.socket.mockReturnValue(stream);
   const { result, unmount } = renderHook(() => useRobotTransport());
   await act(async () => { await result.current.connect({ transport: "mock", robot_model: "g1-29", network_interface: "lo", domain_id: 0, max_joint_speed: 1, max_joint_acceleration: 3 }); });
+  expect(result.current.streamReady).toBe(false);
   act(() => { (stream.onopen as unknown as () => void)(); (stream.onmessage as unknown as (event: { data: string }) => void)({ data: '{"ready":true}' }); });
+  expect(result.current.streamReady).toBe(true);
   expect(JSON.parse(stream.send.mock.calls[0][0])).toEqual({ token: "owner" });
   act(() => result.current.submit({ left_elbow_joint: .2 }));
   expect(JSON.parse(stream.send.mock.calls[1][0])).toEqual({ sequence: 0, sent_at_ms: expect.any(Number), tracking: true, positions: { left_elbow_joint: .2 } });
@@ -25,6 +27,9 @@ it("authenticates its stream, sends latest tracking targets, and drops congestio
   act(() => result.current.submit({ left_elbow_joint: 1 }));
   expect(stream.close).toHaveBeenCalledTimes(1);
   expect(stream.send).toHaveBeenCalledTimes(3);
+  act(() => { (stream.onclose as unknown as () => void)(); });
+  expect(result.current.streamReady).toBe(false);
+  expect(result.current.owned).toBe(false);
   unmount();
   expect(api.action).toHaveBeenCalledWith("disconnect", "owner");
 });

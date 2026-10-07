@@ -22,7 +22,7 @@ const robot = {
     },
   ],
 };
-function openCameraPage(fakeCamera = false, dimensions = { width: 320, height: 240 }) {
+function openCameraPage(fakeCamera = false, dimensions = { width: 320, height: 240 }, fakeArmTargets = false) {
   cy.intercept("GET", "/api/robots/demo", { body: robot });
   cy.intercept("GET", "/api/robots/default", { body: robot }).as("defaultRobot");
   cy.intercept("POST", "/api/sessions", {
@@ -32,6 +32,18 @@ function openCameraPage(fakeCamera = false, dimensions = { width: 320, height: 2
   cy.intercept("PUT", "/api/sessions/camera-session/datasets", { body: { status: "saved" } });
   cy.visit("/teach/pose", {
     onBeforeLoad(win) {
+      if (fakeArmTargets) {
+        // Supply deterministic arm targets at the transport seam.
+        // Exercise the real authenticated stream and mock controller without hardware.
+        const send = win.WebSocket.prototype.send;
+        win.WebSocket.prototype.send = function (data) {
+          if (this.url.includes("/api/robot-transport/stream") && typeof data === "string") {
+            const packet = JSON.parse(data);
+            if ("tracking" in packet) data = JSON.stringify({ ...packet, tracking: true, positions: { right_shoulder_roll_joint: .4 } });
+          }
+          send.call(this, data);
+        };
+      }
       if (!fakeCamera) return;
       Object.defineProperty(win.navigator.mediaDevices, "getUserMedia", {
         configurable: true,
@@ -62,6 +74,31 @@ function openCameraPage(fakeCamera = false, dimensions = { width: 320, height: 2
   cy.contains("a", "Camera").click();
 }
 describe("Camera recordings", () => {
+  it("shows disarmed camera targets and produces commands only after explicit arming", () => {
+    openCameraPage(true, { width: 320, height: 240 }, true);
+    cy.get('[aria-label="Processing mode"]').select("live");
+    cy.contains("button", "Open camera").click();
+    cy.contains("Live processing ready", { timeout: 120000 }).should("exist");
+    cy.contains("button", "Connect mock robot").click();
+    cy.contains("Live arm targets are reaching the backend.", { timeout: 15000 }).should("exist");
+    cy.contains("Disarmed · motor commands are not being published.").should("exist");
+    cy.contains("summary", "Measured and commanded arm positions").click();
+    cy.contains("tr", "right_shoulder_roll_joint").within(() => {
+      cy.get("td").eq(2).should("have.text", "0.400");
+      cy.get("td").eq(3).should("have.text", "—");
+    });
+    cy.get('[aria-label="Robot connection controls"]').should("contain.text", "0 packets");
+    cy.intercept("POST", "/api/robot-transport/arm").as("armMock");
+    cy.contains("button", "Arm live control").should("be.enabled").click();
+    cy.wait("@armMock").its("response.body.armed").should("equal", true);
+    cy.contains("tr", "right_shoulder_roll_joint", { timeout: 15000 }).find("td").eq(3)
+      .should($cell => expect(Number($cell.text())).to.be.greaterThan(0));
+    cy.contains("button", "Stop / disarm").click();
+    cy.contains("Disarmed · motor commands are not being published.").should("exist");
+    cy.contains("button", "Disconnect robot").click();
+    cy.contains("button", "Connect mock robot").should("exist");
+  });
+
   for (const dimensions of [{ width: 1280, height: 720 }, { width: 720, height: 1280 }]) {
     it(`fits the entire ${dimensions.width}×${dimensions.height} live frame and expands without clipping`, () => {
       cy.viewport(1280, 900);

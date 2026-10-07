@@ -20,6 +20,9 @@ class RobotController:
         self.sequence = -1
         self.target = None
         self.target_at = -float("inf")
+        self.camera_target = None
+        self.camera_at = -float("inf")
+        self.received = 0
         self.positions, self.velocities = {}, {}
         self.weight = 0.0
         self.reason = "Disconnected"
@@ -39,6 +42,8 @@ class RobotController:
             self.token = secrets.token_urlsafe(32)
             self.armed, self.weight, self.sent = False, 0.0, 0
             self.positions, self.velocities = {}, {}
+            self.camera_target, self.camera_at, self.received = None, -float("inf"), 0
+            self.target, self.target_at, self.sequence = None, -float("inf"), -1
             self.reason = "Connected · waiting for measured state"
             self.stop_event.clear()
             if run_worker:
@@ -105,6 +110,10 @@ class RobotController:
             if any(name not in arm_names(self.config.robot_model) for name in packet.positions):
                 raise ValueError("Joint is unavailable on the selected robot model")
             self.sequence = packet.sequence
+            # Diagnostics remain visible while disarmed; they never initialize motion.
+            self.camera_target = dict(packet.positions) if packet.tracking and packet.positions else None
+            self.camera_at = self.clock()
+            self.received += 1
             # Disarmed targets never carry over to a subsequent arm action.
             if self.armed:
                 self.target = dict(packet.positions) if packet.tracking and packet.positions else None
@@ -154,10 +163,13 @@ class RobotController:
         with self.lock:
             state = self.fresh_state()
             reason = "Connected · ready to arm" if state and self.reason.startswith("Connected") else self.reason
+            camera_fresh = self.adapter is not None and self.stream is not None and self.clock() - self.camera_at <= self.config.stale_after_ms / 1000
             return {"connected": self.adapter is not None, "armed": self.armed, "reason": reason,
                 "transport": self.config.transport if self.config else None, "state_fresh": state is not None,
                 "measured": dict(state.positions) if state else {}, "commanded": dict(self.positions),
-                "packets_sent": self.sent, "engagement": self.weight}
+                "packets_sent": self.sent, "engagement": self.weight,
+                "stream_connected": self.stream is not None, "targets_received": self.received,
+                "camera_target": dict(self.camera_target) if camera_fresh and self.camera_target else {}}
 
     def _run(self):
         previous = self.clock()

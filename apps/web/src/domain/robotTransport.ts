@@ -17,6 +17,9 @@ export type RobotTransportStatus = {
   commanded: Record<string, number>;
   packets_sent: number;
   engagement: number;
+  stream_connected: boolean;
+  targets_received: number;
+  camera_target: Record<string, number>;
 };
 export const getRobotTransportStatus = () => robotTransportRequest<RobotTransportStatus>("status");
 export const connectRobotTransport = (config: RobotConnectionConfig) =>

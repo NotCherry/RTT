@@ -49,6 +49,12 @@ the controller. The frontend drops congested streams rather
 than replaying buffered camera movement. Recordings never drive the connection.
 The API routes also provide status, arm, disarm, and disconnect operations.
 
+Status exposes the fresh camera arm target and accepted camera-frame count even
+while disarmed, alongside measured positions and published command counts.
+These diagnostics never seed the armed trajectory. The connection panel explains
+that visualization remains a preview while disarmed and identifies ownership,
+camera, stream-handshake, and measured-state blockers before explicit arming.
+
 Arming requires fresh measured positions inside the G1 arm limits. It initializes
 the commanded trajectory from those positions, clears pre-arm targets, and ramps
 engagement from zero to one over two seconds. Commands encode the measured
