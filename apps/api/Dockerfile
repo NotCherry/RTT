@@ -18,7 +18,9 @@ RUN python -c 'from unitree_sdk2py.idl.default import unitree_hg_msg_dds__LowCmd
 
 FROM robot-dependencies AS robot
 COPY app ./app
+COPY tools ./tools
 
 # The simulation target remains available for development-only Compose stacks.
 FROM dependencies AS simulation
 COPY app ./app
+COPY tools ./tools
