@@ -10,6 +10,8 @@ export function useCameraCapture(options: {
   sampleRate: CameraCapture["sample_rate"];
   onFrame: (frame: LandmarkFrame | null) => void;
   onRecording: (recording: CameraRecording) => Promise<void>;
+  onRecordingError?: (message: string) => void;
+  acceptFrame?: (frame: LandmarkFrame) => boolean;
 }) {
   const current = useRef(options);
   current.current = options;
@@ -54,10 +56,11 @@ export function useCameraCapture(options: {
     if (r.raf) cancelAnimationFrame(r.raf);
     r.detector?.close();
     r.detector = undefined;
-    r.stream?.getTracks().forEach((track) => track.stop());
+    r.stream?.getTracks().forEach((track) => { track.onended = null; track.stop(); });
     r.stream = undefined;
     if (videoRef.current) videoRef.current.srcObject = null;
     if (imageRef.current) imageRef.current.removeAttribute("src");
+    r.source = undefined;
     if (mounted.current) {
       setConnected(false);
       setOpening(false);
@@ -79,7 +82,7 @@ export function useCameraCapture(options: {
     return () => clearInterval(timer);
   }, [recording]);
 
-  async function open(source: "local" | "ip", address: string) {
+  async function open(source: "local" | "ip", address: string, deviceId = "") {
     close();
     const r = resources.current;
     const generation = r.generation;
@@ -91,6 +94,7 @@ export function useCameraCapture(options: {
           throw new Error("Camera access requires localhost or HTTPS and browser camera support.");
         const videoConstraints: MediaTrackConstraints & { resizeMode: string } = {
           width: { ideal: 1280 }, resizeMode: "none",
+          ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
         };
         const stream = await navigator.mediaDevices.getUserMedia({
           video: videoConstraints,
@@ -101,6 +105,7 @@ export function useCameraCapture(options: {
           return;
         }
         r.stream = stream;
+        stream.getVideoTracks().forEach(track => { track.onended = () => { close(); current.current.onRecordingError?.("Camera disconnected. Reopen all views before recording."); }; });
         const video = videoRef.current;
         if (!video) throw new Error("Camera preview is unavailable.");
         video.srcObject = stream;
@@ -149,15 +154,21 @@ export function useCameraCapture(options: {
       setOpening(false);
       setStatus(r.detector ? "Live processing ready" : "Camera ready to record; extract landmarks later");
       let last = -Infinity;
+      let lastMediaTime = -Infinity;
       const tick = () => {
         if (generation !== r.generation) return;
         const timestamp = performance.now();
         const input = source === "local" ? videoRef.current : imageRef.current;
         if (input && r.detector && timestamp - last >= 1000 / current.current.sampleRate) {
+          if (input instanceof HTMLVideoElement && input.currentTime===lastMediaTime) {
+            r.raf=requestAnimationFrame(tick);
+            return;
+          }
+          if (input instanceof HTMLVideoElement) lastMediaTime=input.currentTime;
           last = timestamp;
           try {
             const frame = detectCameraFrame(r.detector, input, timestamp);
-            const accepted = frame && hasUsablePose(frame) ? frame : null;
+            const accepted = frame && (current.current.acceptFrame ?? hasUsablePose)(frame) ? frame : null;
             current.current.onFrame(accepted);
             if (r.recording) {
               if (accepted) r.frames.push({ ...accepted, timestamp: timestamp - r.start });
@@ -176,6 +187,7 @@ export function useCameraCapture(options: {
         r.raf = requestAnimationFrame(tick);
       };
       r.raf = requestAnimationFrame(tick);
+      return true;
     } catch (error) {
       if (generation !== r.generation) return;
       close();
@@ -242,6 +254,7 @@ export function useCameraCapture(options: {
           setFinalizing(false);
           setStatus("Video recording failed. Retry with a supported camera/browser.");
         }
+        current.current.onRecordingError?.("Video recording failed. Retry with a supported camera/browser.");
       };
       recorder.onstop = () => {
         cleanup();
@@ -257,6 +270,7 @@ export function useCameraCapture(options: {
           frames: [...r.frames],
           rejected_frames: r.rejected,
           processed: processed && !r.processingFailed,
+          recording_start_ms: r.start,
           video: new Blob(chunks, { type: recorder.mimeType || mimeType || "video/webm" }),
         };
         r.recorder = undefined;
@@ -286,6 +300,7 @@ export function useCameraCapture(options: {
       r.recording = false;
       r.recorder = undefined;
       setStatus(error instanceof Error ? error.message : "Recording could not start. Check IP camera CORS support.");
+      current.current.onRecordingError?.(error instanceof Error ? error.message : "Recording could not start.");
     }
   }
   return {

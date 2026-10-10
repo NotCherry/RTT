@@ -45,6 +45,7 @@ function openCameraPage(fakeCamera = false, dimensions = { width: 320, height: 2
         };
       }
       if (!fakeCamera) return;
+      Object.defineProperty(win.navigator.mediaDevices,"enumerateDevices",{configurable:true,value:async()=>[1,2,3].map(i=>({kind:"videoinput",deviceId:`camera-${i}`,label:`Test camera ${i}`,groupId:`group-${i}`}))});
       Object.defineProperty(win.navigator.mediaDevices, "getUserMedia", {
         configurable: true,
         value: async (constraints: MediaStreamConstraints) => {
@@ -54,6 +55,8 @@ function openCameraPage(fakeCamera = false, dimensions = { width: 320, height: 2
           canvas.height = dimensions.height;
           const context = canvas.getContext("2d")!;
           const stream = canvas.captureStream(10);
+          const deviceId=(constraints.video as MediaTrackConstraints).deviceId;
+          stream.getVideoTracks().forEach(track=>{const settings=track.getSettings.bind(track);track.getSettings=()=>({...settings(),deviceId:typeof deviceId==="object"?String(deviceId.exact):"camera-1"});});
           let frame = 0;
           const timer = win.setInterval(() => {
             context.fillStyle = frame++ % 2 ? "#333" : "#444";
@@ -74,6 +77,56 @@ function openCameraPage(fakeCamera = false, dimensions = { width: 320, height: 2
   cy.contains("a", "Camera").click();
 }
 describe("Camera recordings", () => {
+  it("records and reopens three independent cameras with retained pixels and timing",()=> {
+    openCameraPage(true);
+    cy.contains("button","Add camera").click();cy.contains("button","Add camera").click();
+    for (const i of [1,2,3]) cy.get(`[aria-label="USB camera ${i}"]`).select(`camera-${i}`);
+    cy.contains("button","Add camera").should("be.disabled");
+    for (const width of [1280,390]) {
+      cy.viewport(width,844);
+      cy.get(".camera-rig-controls").scrollIntoView();
+      cy.get(".camera-rig-controls input, .camera-rig-controls select, .camera-rig-controls button").each($control=> {
+        const bounds=$control[0].getBoundingClientRect();expect(bounds.left).to.be.at.least(0);expect(bounds.right).to.be.at.most(width);
+      });
+      cy.screenshot(`camera-three-inputs-${width}`);
+    }
+    cy.contains("button","Open cameras").click();
+    cy.contains("Camera 3: Camera ready to record",{timeout:20000}).should("exist");
+    cy.get('[aria-label="Countdown"]').select("1");
+    cy.contains("button","Start recording").click();
+    cy.contains("button","Stop recording",{timeout:10000}).should("exist");cy.wait(1100);
+    cy.contains("button","Stop recording").click();
+    cy.contains("Recording saved on this device",{timeout:20000}).should("exist");
+    cy.contains("3 cameras").should("exist");
+    cy.contains("button","Export camera videos").should("exist");
+    cy.window().then(win=>new Cypress.Promise<void>((resolve,reject)=> {
+      const request=win.indexedDB.open("robot-learning-workbench-camera-v1");request.onerror=()=>reject(request.error);
+      request.onsuccess=()=> {
+        const db=request.result,tx=db.transaction(["recordings","videos"],"readonly");
+        const metadata=tx.objectStore("recordings").getAll(),pixels=tx.objectStore("videos").getAll();
+        tx.oncomplete=()=> {
+          const record=metadata.result.find(row=>row.source.kind==="multi-camera");expect(record.views).to.have.length(3);
+          expect(record.views.map(v=>v.offset_ms)).to.satisfy(offsets=>offsets.every(v=>Number.isFinite(v) && v>=0));
+          const group=pixels.result.find(row=>row.views);expect(group.views).to.have.length(3);group.views.forEach(view=>expect(view.video.size).to.be.greaterThan(0));db.close();resolve();
+        };
+      };
+    }));
+    cy.reload();cy.wait("@defaultRobot");cy.wait("@createCameraSession");
+    cy.contains("button","Recordings").click();cy.contains("button",/3 cameras/).click();
+    cy.contains("button","Extract stick figure").should("be.enabled").click();
+    cy.contains("No confident pose found",{timeout:120000}).should("exist");
+    cy.contains("button","Export camera videos").should("exist");
+    cy.contains("button","Delete local recording").click();cy.contains("Local recording deleted").should("exist");
+  });
+  it("requires calibration and keeps per-camera source settings independent",()=> {
+    openCameraPage();cy.contains("button","Add camera").click();
+    cy.get('[aria-label="Camera 2 source"]').select("ip");cy.get('[aria-label="Camera 2 IP URL"]').type("http://camera-two/video");
+    cy.get('[aria-label="Multi-camera pose model"]').select("triangulated");
+    cy.get('[aria-label="Camera calibration JSON"]').should("exist");
+    cy.contains("button","Remove last camera").click();
+    cy.get('[aria-label="Camera 2 source"]').should("not.exist");
+    cy.contains("button","Open camera").should("exist");
+  });
   it("keeps ROS bridge connection controls aligned on desktop and mobile", () => {
     openCameraPage();
     cy.get('[aria-label="Robot connection"]').select("unitree-rosbridge");

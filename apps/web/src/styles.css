@@ -390,6 +390,9 @@
   @media (min-width: 701px) { .route-viewport-panel { min-height: 560px; } }
   @media (min-width: 1025px) { .route-viewport-panel { min-height: 620px; } }
   .route-content-panel { @apply min-w-0; }
+  .camera-rig-controls { @apply min-w-0 border-t border-border-soft pb-4; }
+  .camera-supplementary-views { @apply grid min-w-0 gap-4 p-[18px] xl:grid-cols-2; }
+  .camera-supplementary-view { @apply min-w-0 overflow-hidden rounded-lg border border-border-soft; }
   .route-archive-grid { @apply grid items-start gap-[13px]; grid-template-columns: minmax(360px, .8fr) minmax(0, 1.2fr); }
   .archive-demo-panel { @apply min-h-[420px]; }
   .archive-route-list { @apply grid gap-2 p-[18px]; }
@@ -581,6 +584,8 @@
 .camera-live-layout { grid-template-columns: minmax(0, 1.8fr) minmax(300px, .8fr); align-items: start; }
 .camera-source-panel { min-width: 0; min-height: 0; max-height: none; overflow: visible; }
 .camera-source-panel .camera-live-preview { height: clamp(360px, 62vh, 720px); aspect-ratio: auto; margin: 0 12px; }
+.camera-source-panel .camera-supplementary-view .camera-live-preview { height: auto; aspect-ratio: 4 / 3; }
+.camera-supplementary-view .route-form-grid h3 { grid-column: 1 / -1; }
 .camera-live-media { position: absolute; inset: 0; display: block; width: 100%; height: 100%; object-fit: contain; }
 .camera-source-panel .camera-skeleton-overlay { width: 100%; height: 100%; aspect-ratio: auto; }
 .camera-side-label { font-size: 20px; font-weight: 700; paint-order: stroke; stroke: var(--color-ink-950); stroke-width: 3px; }

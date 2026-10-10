@@ -107,9 +107,12 @@ export type LandmarkFrame = {
   pose: LandmarkPoint[];
   pose_world?: LandmarkPoint[];
   source_aspect_ratio?: number;
+  source_width?: number;
+  source_height?: number;
   left_hand: LandmarkPoint[];
   right_hand: LandmarkPoint[];
   confidence: number;
+  multi_view?: import("@/domain/multiCameraContract").MultiViewQuality;
 };
 
 /** A device-local stick-figure source for a camera-derived demonstration. */
@@ -122,7 +125,8 @@ export type CameraCapture = {
   sample_rate: 10 | 15 | 30;
   source:
     | { kind: "local-media-stream"; stream_count: 1 }
-    | { kind: "ip-image-stream"; url: string };
+    | { kind: "ip-image-stream"; url: string }
+    | import("@/domain/multiCameraContract").MultiCameraSource;
   frames: LandmarkFrame[];
   quality: { accepted_frames: number; rejected_frames: number };
   retargeting_profile: "g1-upper-body" | "g1-single-arm" | "g1-left-arm" | "g1-full-body";

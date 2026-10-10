@@ -127,6 +127,20 @@ it("expands the robot while retaining the hidden camera resources", async () => 
   fireEvent.click(screen.getByRole("button", { name: "Show camera" }));
   expect(screen.getByRole("button", { name: "Expand robot" })).toHaveAttribute("aria-pressed", "false");
 });
+it("adds and removes up to three cameras and exposes fusion and calibration setup",async()=> {
+  storage.list.mockResolvedValue([]);
+  render(<CameraTeachingPage robot={{id:"robot"} as never} state={null} joints={[]} neutral={[]} onPreview={vi.fn()} onSave={vi.fn()}/>);
+  fireEvent.click(screen.getByRole("button",{name:"Add camera"}));
+  expect(screen.getByLabelText("Camera 2 source")).toBeInTheDocument();
+  expect(screen.getByLabelText("USB camera 1")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button",{name:"Add camera"}));
+  expect(screen.getByLabelText("Camera 3 source")).toBeInTheDocument();
+  expect(screen.getByRole("button",{name:"Add camera"})).toBeDisabled();
+  fireEvent.change(screen.getByLabelText("Multi-camera pose model"),{target:{value:"triangulated"}});
+  expect(screen.getByLabelText("Camera calibration JSON")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button",{name:"Remove last camera"}));
+  expect(screen.queryByLabelText("Camera 3 source")).not.toBeInTheDocument();
+});
 
 it("reports where a tracking gap stops an archived gesture", async () => {
   vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});

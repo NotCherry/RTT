@@ -9,7 +9,7 @@ import { MappingControls } from "@/components/camera/MappingControls";
 import { CameraCapturePanel } from "@/components/camera/CameraCapturePanel";
 import { RecordingLibrary } from "@/components/camera/RecordingLibrary";
 import { CameraSourcePanel } from "@/components/camera/CameraSourcePanel";
-import { useCameraCapture } from "@/components/camera/useCameraCapture";
+import { useMultiCameraCapture } from "@/components/camera/useMultiCameraCapture";
 import { mappingCoverage, retargetLandmarkFrame, RETARGETING_PROFILE_VERSION, type RetargetingProfile } from "@/domain/retargeting";
 import {
   deleteCameraRecording,
@@ -20,7 +20,7 @@ import {
   type CameraRecordingSummary,
 } from "@/domain/cameraArchive";
 import { directIpCameraStreamUrl } from "@/domain/ipCamera";
-import { extractCameraRecording } from "@/domain/cameraProcessing";
+import { extractMultiCameraRecording } from "@/domain/multiCameraRecording";
 import type { CameraCapture, Joint, LandmarkFrame, Robot, SimulationState } from "@/types";
 
 type Props = {
@@ -41,8 +41,6 @@ function CameraWorkspace({ robot, state, joints, neutral, onPreview, onSave }: P
   const [previewSpeed, setPreviewSpeed] = useState(3);
   const [robotOnly, setRobotOnly] = useState(false);
   const [tab, setTab] = useState<"live" | "recordings">("live");
-  const [source, setSource] = useState<"local" | "ip">("local");
-  const [address, setAddress] = useState("");
   const [processing, setProcessing] = useState<"live" | "offline">("offline");
   const [sampleRate, setSampleRate] = useState<10 | 15 | 30>(30);
   const [mode, setMode] = useState<"simple" | "continuous">("continuous");
@@ -79,7 +77,7 @@ function CameraWorkspace({ robot, state, joints, neutral, onPreview, onSave }: P
       if (countdownTimer.current) clearInterval(countdownTimer.current);
     };
   }, []);
-  const camera = useCameraCapture({
+  const camera = useMultiCameraCapture({
     processing,
     sampleRate,
     onFrame: (frame) => {
@@ -113,6 +111,7 @@ function CameraWorkspace({ robot, state, joints, neutral, onPreview, onSave }: P
       if (saved) await refresh();
     },
   });
+  const source=camera.rig.inputs[0].kind, address=camera.rig.inputs[0].address;
   const locked = busy || extracting || camera.recording || camera.finalizing || camera.opening || remaining !== null;
   function cancelCountdown() {
     if (countdownTimer.current) clearInterval(countdownTimer.current);
@@ -158,10 +157,9 @@ function CameraWorkspace({ robot, state, joints, neutral, onPreview, onSave }: P
     setProgress(0);
     setStatus("Extracting stick figure locally…");
     try {
-      const result = await extractCameraRecording(
-        selected.video,
+      const result = await extractMultiCameraRecording(
+        selected,
         sampleRate,
-        selected.duration_ms,
         controller.signal,
         setProgress,
       );
@@ -253,8 +251,9 @@ function CameraWorkspace({ robot, state, joints, neutral, onPreview, onSave }: P
           id: `camera-${crypto.randomUUID()}`,
           name: "Camera pose",
           created_at: new Date().toISOString(),
-          source:
-            source === "local"
+          source: camera.rig.inputs.length>1
+            ? {kind:"multi-camera",stream_count:camera.rig.inputs.length as 2|3,model:camera.rig.model,calibration:camera.rig.calibration}
+            : source === "local"
               ? { kind: "local-media-stream", stream_count: 1 }
               : { kind: "ip-image-stream", url: directIpCameraStreamUrl(address) },
           sample_rate: sampleRate,
@@ -331,13 +330,14 @@ function CameraWorkspace({ robot, state, joints, neutral, onPreview, onSave }: P
           <div className={`camera-source-container${robotOnly ? " hidden" : ""}`}>
             <CameraSourcePanel
               source={source}
-              setSource={setSource}
+              setSource={value=>camera.rig.update(0,{kind:typeof value==="function"?value(source):value})}
               address={address}
-              setAddress={setAddress}
+              setAddress={value=>camera.rig.update(0,{address:typeof value==="function"?value(address):value})}
               processing={processing}
               setProcessing={setProcessing}
               setMode={setMode}
               camera={camera}
+              rig={camera.rig}
               latest={latest}
               joints={joints}
               profile={profile}
@@ -381,7 +381,7 @@ function CameraWorkspace({ robot, state, joints, neutral, onPreview, onSave }: P
       )}
       <p className="helper-text">
         Videos stay in this browser until deleted. Exported archives contain demonstrations, not videos. Left and right refer to your body.
-        Continuous gestures use bounded motion and recover automatically after tracking settles. Single-camera tracking cannot guarantee person identity. Mapping drives compatible G1 joints; unsupported or unobserved joints keep the neutral pose.
+        Continuous gestures use bounded motion and recover automatically after tracking settles. Keep one person in every view; tracking cannot guarantee person identity. Mapping drives compatible G1 joints; unsupported or unobserved joints keep the neutral pose.
       </p>
     </div>
   );

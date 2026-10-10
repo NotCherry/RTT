@@ -1,4 +1,5 @@
 import type { CameraCapture, LandmarkFrame } from "@/types";
+import type { CameraViewRecording } from "./multiCameraContract";
 
 export type CameraRecording = {
   id: string;
@@ -13,8 +14,10 @@ export type CameraRecording = {
   rejected_frames?: number;
   processed?: boolean;
   video?: Blob;
+  views?: CameraViewRecording[];
+  recording_start_ms?: number;
 };
-export type CameraRecordingSummary = Omit<CameraRecording, "video" | "frames"> & {
+export type CameraRecordingSummary = Omit<CameraRecording, "video" | "frames" | "views"> & {
   frame_count: number;
   has_video: boolean;
 };
@@ -56,11 +59,12 @@ async function transaction<T>(
 }
 
 export async function saveCameraRecording(robotId: string, recording: CameraRecording) {
-  const { video, ...metadata } = recording;
+  const { video, views, ...metadata } = recording;
+  const viewMetadata = views?.map(({video: _video, ...view}) => view);
   return transaction<void>(["recordings", "videos"], "readwrite", (tx) => {
     const key = `${robotId}:${recording.id}`;
-    tx.objectStore("recordings").put(metadata, key);
-    if (video) tx.objectStore("videos").put(video, key);
+    tx.objectStore("recordings").put({...metadata, ...(viewMetadata ? {views:viewMetadata} : {})}, key);
+    if (video) tx.objectStore("videos").put(views ? {video,views:views.map(v=>({id:v.id,video:v.video}))} : video, key);
   });
 }
 
@@ -69,7 +73,7 @@ async function readRecordings(robotId: string) {
   return transaction<Map<string, CameraRecording>>(stores, "readonly", (tx, result) => {
     const rows = new Map<string, CameraRecording>();
     const captures = new Map<string, CameraCapture>();
-    const videos = new Map<string, Blob>();
+    const videos = new Map<string, Blob | {video:Blob;views:{id:string;video?:Blob}[]}>();
     let pending = stores.length;
     for (const name of stores) {
       const request = tx.objectStore(name).openCursor();
@@ -109,7 +113,13 @@ async function readRecordings(robotId: string) {
                 processed: Boolean(capture?.frames.length),
               });
           }
-          for (const [id, video] of videos) rows.get(id)!.video = video;
+          for (const [id, value] of videos) {
+            const row=rows.get(id)!;
+            if ("views" in value) {
+              row.video=value.video;
+              row.views=row.views?.map(v=>({...v,video:value.views.find(saved=>saved.id===v.id)?.video}));
+            } else row.video=value;
+          }
           result(rows);
         }
       };
@@ -121,7 +131,7 @@ export async function listCameraRecordings(robotId: string): Promise<CameraRecor
   const rows = await readRecordings(robotId);
   return [...rows.values()]
     .sort((a, b) => b.created_at.localeCompare(a.created_at))
-    .map(({ video, frames, ...row }) => ({ ...row, frame_count: frames.length, has_video: Boolean(video) }));
+    .map(({ video, frames, views: _views, ...row }) => ({ ...row, frame_count: frames.length, has_video: Boolean(video) }));
 }
 export async function loadCameraRecording(robotId: string, id: string) {
   return (await readRecordings(robotId)).get(id) ?? null;

@@ -1,6 +1,7 @@
 node_modules/
 dist/
 .venv/
+.venv-camera/
 __pycache__/
 *.py[cod]
 apps/api/data/

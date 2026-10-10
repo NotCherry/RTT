@@ -40,6 +40,18 @@ _Avoid_: Archived video, uploaded video
 A timestamped stick-figure observation from a camera capture. It becomes a robot Frame only after retargeting.
 _Avoid_: Robot state, authored Keyframe
 
+**Multi-camera capture**:
+A device-local camera capture with two or three views of the same person. A pose estimator combines sufficiently close observations into one Landmark frame; source videos remain Local recordings.
+_Avoid_: Multiple people, uploaded camera feed
+
+**Camera calibration**:
+Measured camera intrinsics, lens distortion, and relative camera transforms for a fixed arrangement and capture resolution. Calibration enables triangulated landmarks and must be repeated when the arrangement changes.
+_Avoid_: Neutral robot pose, behavior-model training
+
+**Pose estimator**:
+A perception model and optional multi-view geometry that produce human landmarks from camera observations. It supplies a Demonstration source; the behavior-model MLP still learns from robot demonstrations.
+_Avoid_: Trained robot behavior, guaranteed person identity
+
 **Retargeting profile**:
 A versioned mapping from observable human landmarks to a robot's controllable joints, including neutral-pose preservation and joint-limit clamping.
 _Avoid_: Model prediction, training configuration

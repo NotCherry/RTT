@@ -34,6 +34,8 @@ export function detectCameraFrame(
     source_aspect_ratio: source instanceof HTMLVideoElement
       ? source.videoWidth / (source.videoHeight || 1)
       : source.naturalWidth / (source.naturalHeight || 1),
+    source_width: source instanceof HTMLVideoElement ? source.videoWidth : source.naturalWidth,
+    source_height: source instanceof HTMLVideoElement ? source.videoHeight : source.naturalHeight,
     left_hand: points(result.leftHandLandmarks?.[0] ?? []),
     right_hand: points(result.rightHandLandmarks?.[0] ?? []),
     confidence: pose.reduce((sum, point) => sum + (point.visibility ?? 1), 0) / pose.length,
@@ -74,6 +76,7 @@ export async function extractCameraRecording(
   durationMs: number,
   signal: AbortSignal,
   progress: (percent: number) => void,
+  acceptFrame = hasUsablePose,
 ) {
   signal.throwIfAborted();
   if (!Number.isFinite(sampleRate) || sampleRate <= 0 || sampleRate > 60)
@@ -109,7 +112,7 @@ export async function extractCameraRecording(
           video.currentTime = seconds;
         });
       const frame = detectCameraFrame(detector, video, timestamp);
-      if (frame && hasUsablePose(frame)) frames.push(frame);
+      if (frame && acceptFrame(frame)) frames.push(frame);
       else rejected++;
       progress(Math.min(100, Math.round(((timestamp + 1000 / sampleRate) / duration) * 100)));
       await new Promise((resolve) => setTimeout(resolve, 0));

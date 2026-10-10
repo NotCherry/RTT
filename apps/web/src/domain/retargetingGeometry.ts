@@ -15,6 +15,10 @@ export const visiblePosePoint = (p?: LandmarkPoint, confidence = .5) => Boolean(
   finite(p) && (p!.visibility ?? 1) >= confidence && p!.x >= 0 && p!.x <= 1 && p!.y >= 0 && p!.y <= 1,
 );
 export function posePoint(frame: LandmarkFrame, index: number): Vector | null {
+  if (frame.multi_view && frame.pose_world?.length) {
+    const world = frame.pose_world[index];
+    return finite(world) && (world.visibility ?? 0) >= .5 ? world : null;
+  }
   const p = frame.pose[index];
   if (!visiblePosePoint(p)) return null;
   if (frame.pose_world?.length) {

@@ -6,6 +6,7 @@ import type { RetargetingProfile } from "@/domain/retargeting";
 import { MappingInspector } from "./MappingInspector";
 import { StickFigure } from "./StickFigure";
 import type { useCameraCapture } from "./useCameraCapture";
+import { CameraDeviceSelect, CameraRigControls, type CameraRig } from "./CameraRigControls";
 
 type Props = {
   source: "local" | "ip";
@@ -22,6 +23,7 @@ type Props = {
   locked: boolean;
   disabled: boolean;
   onToggle: () => void;
+  rig?: CameraRig;
 };
 export function CameraSourcePanel({
   source,
@@ -38,6 +40,7 @@ export function CameraSourcePanel({
   locked,
   disabled,
   onToggle,
+  rig,
 }: Props) {
   const [expanded, setExpanded] = useState(false);
   const width = (source === "local" ? camera.videoRef.current?.videoWidth : camera.imageRef.current?.naturalWidth) || 640;
@@ -78,6 +81,7 @@ export function CameraSourcePanel({
             />
           </label>
         )}
+        {rig && source==="local" && <CameraDeviceSelect rig={rig} index={0} disabled={locked || camera.connected}/>}
         <label>
           Processing
           <select
@@ -98,13 +102,14 @@ export function CameraSourcePanel({
         <video ref={camera.videoRef} muted playsInline className={source === "local" ? "camera-live-media" : "hidden"} />
         <img ref={camera.imageRef} alt="IP camera stream" className={source === "ip" ? "camera-live-media" : "hidden"} />
         {processing === "live" && camera.connected && <StickFigure
-          frame={latest}
+          frame={rig?.latest[0] ?? latest}
           overlay
           showSides
           width={width}
           height={height}
         />}
       </div>
+      {rig && <CameraRigControls rig={rig} disabled={locked || camera.connected}/>}
       <p className="camera-framing-status">
         {camera.connected ? `${width} × ${height} · entire camera frame` : "Entire camera frame · no crop or zoom"}.
         Unmirrored: L and R mark your own left and right.
@@ -112,7 +117,7 @@ export function CameraSourcePanel({
       {processing === "live" && <MappingInspector frame={latest} joints={joints} profile={profile} />}
       <div className="route-actions">
         <Button disabled={disabled || locked} onClick={onToggle}>
-          {camera.connected ? "Close camera" : "Open camera"}
+          {camera.connected ? "Close camera" : "Open camera"}{rig && rig.inputs.length>1 ? "s" : ""}
         </Button>
       </div>
       {processing === "offline" && <p className="helper-text">Capture video first. Extract its landmarks from Recordings when you are ready.</p>}

@@ -3,6 +3,7 @@ import { Button, Panel, PanelHeader, PanelLabel } from "@/components/ui";
 import { H3 } from "@/components/ui/typography";
 import type { CameraRecording, CameraRecordingSummary } from "@/domain/cameraArchive";
 import { RecordingPlayer } from "./RecordingPlayer";
+import { downloadCameraVideos } from "@/domain/multiCameraRecording";
 type Props = Omit<ComponentProps<typeof RecordingPlayer>, "recording"> & {
   recordings: CameraRecordingSummary[];
   selected: CameraRecording | null;
@@ -60,7 +61,7 @@ export function RecordingLibrary({
                 onClick={() => onSelect(row.id)}
               >
                 <span className="camera-recording-title">{row.name}</span>
-                <span className="camera-recording-meta">{(row.duration_ms / 1000).toFixed(1)} s · {row.source.kind === "ip-image-stream" ? "IP" : "Local"} camera</span>
+                <span className="camera-recording-meta">{(row.duration_ms / 1000).toFixed(1)} s · {row.source.kind === "multi-camera" ? `${row.source.stream_count} cameras` : `${row.source.kind === "ip-image-stream" ? "IP" : "Local"} camera`}</span>
                 <span className="camera-recording-meta">{row.created_at ? new Date(row.created_at).toLocaleString() : "Recovered"}</span>
                 <span className="camera-recording-quality">{row.processed ? row.frame_count ? `${row.frame_count} extracted frames` : "No confident pose" : "Ready to extract"}</span>
               </Button>
@@ -109,6 +110,7 @@ export function RecordingLibrary({
           <Button variant="secondary" disabled={!selected || locked} onClick={() => onDelete()}>
             Delete local recording
           </Button>
+          {selected?.views && <Button variant="secondary" disabled={locked} onClick={()=>downloadCameraVideos(selected)}>Export camera videos</Button>}
         </div>
         {extracting && <div className="camera-processing-progress"><label>Extracting stick figure · {Math.round(progress)}%<progress aria-label="Extraction progress" value={progress} max={100} /></label></div>}
         {!selected?.video && (
