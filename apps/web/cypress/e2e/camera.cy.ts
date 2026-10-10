@@ -74,6 +74,27 @@ function openCameraPage(fakeCamera = false, dimensions = { width: 320, height: 2
   cy.contains("a", "Camera").click();
 }
 describe("Camera recordings", () => {
+  it("keeps ROS bridge connection controls aligned on desktop and mobile", () => {
+    openCameraPage();
+    cy.get('[aria-label="Robot connection"]').select("unitree-rosbridge");
+    cy.get('[aria-label="Robot network interface"]').should("not.exist");
+    cy.get('[aria-label="Robot ROS bridge URL"]').should("have.value", "ws://192.168.123.164:9090");
+    for (const width of [1280, 390]) {
+      cy.viewport(width, 844);
+      cy.get('[aria-label="Robot connection controls"]').scrollIntoView().within(() => {
+        cy.get("input, select, button").each($control => {
+          const bounds = $control[0].getBoundingClientRect();
+          expect(bounds.left).to.be.at.least(0);
+          expect(bounds.right).to.be.at.most(width);
+        });
+      });
+      cy.screenshot(`robot-rosbridge-controls-${width}`);
+    }
+    cy.get('[aria-label="Robot ROS bridge URL"]').clear();
+    cy.contains("button", "Connect physical robot").should("be.disabled");
+    cy.get('[aria-label="Robot ROS bridge URL"]').type("ws://192.168.67.95:9090");
+    cy.contains("button", "Connect physical robot").should("be.enabled");
+  });
   it("shows disarmed camera targets and produces commands only after explicit arming", () => {
     openCameraPage(true, { width: 320, height: 240 }, true);
     cy.get('[aria-label="Processing mode"]').select("live");

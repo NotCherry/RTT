@@ -3,8 +3,10 @@
 This separate diagnostic gateway runs ROS Humble and rosbridge in an ARM64 Docker
 container on `unitree@192.168.123.164`. CycloneDDS uses `enP8p1s0`, domain 0 and
 host networking to reach the G1. Clients use `ws://192.168.123.164:9090` instead
-of participating in DDS discovery. RTT's live camera controller uses its existing
-SDK adapter; it does not switch transport when this gateway starts.
+of participating in DDS discovery. RTT now offers **Unitree ROS bridge** in Camera.
+Select it and enter the reachable Jetson WebSocket URL to use this gateway for
+live arm control. Starting the gateway alone does not switch RTT's selected
+transport or arm the robot. See [the acceptance guide](unitree-dds-lab.md).
 
 The image builds Unitree's `unitree_hg` interfaces from revision
 `668d1ec5a05d1c38d3306bdca7d59f2ba3581a88`. The launch allows reading `/lowstate`
@@ -41,7 +43,9 @@ python tools/rosbridge_smoke_probe.py --url ws://192.168.123.164:9090
 ```
 
 This probe sends no motor commands. `/arm_sdk` uses `unitree_hg/msg/LowCmd` and
-`/lowstate` uses `unitree_hg/msg/LowState`. Robot commands still require a valid
+`/lowstate` uses `unitree_hg/msg/LowState`. RTT's bridge adapter supplies the same
+CRC, named motor encoding, ownership, bounded trajectory and watchdog as direct
+DDS. Robot commands still require a valid
 CRC, the correct G1 motor mapping, engagement weight, bounded movement initialized
 from fresh measured state, and an appropriate robot control mode. Rosbridge is a
 transport gateway; it does not provide RTT's controller ownership, trajectory

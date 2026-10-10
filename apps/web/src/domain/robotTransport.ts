@@ -1,16 +1,17 @@
 import { robotTransportRequest, robotTransportSocketUrl } from "@/api";
 export type RobotConnectionConfig = {
-  transport: "mock" | "unitree-sdk2";
+  transport: "mock" | "unitree-sdk2" | "unitree-rosbridge";
   robot_model: "g1-29" | "g1-23";
   network_interface: string;
   domain_id: number;
   max_joint_speed: number;
   max_joint_acceleration: number;
+  rosbridge_url?: string;
 };
 export type RobotTransportStatus = {
   connected: boolean;
   armed: boolean;
-  transport: "mock" | "unitree-sdk2" | null;
+  transport: "mock" | "unitree-sdk2" | "unitree-rosbridge" | null;
   state_fresh: boolean;
   reason: string;
   measured: Record<string, number>;

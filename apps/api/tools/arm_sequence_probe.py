@@ -128,6 +128,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--interface", required=True)
     parser.add_argument("--domain", type=int, default=0)
+    parser.add_argument("--peer", action="append", default=[], help="Numeric IPv4 DDS discovery peer")
+    parser.add_argument("--no-multicast", action="store_true")
     parser.add_argument("--mock", action="store_true")
     parser.add_argument("--execute", action="store_true", help="Publish the small motion sequence")
     parser.add_argument("--confirm-g1-29", action="store_true", help="Operator confirms one G1 EDU 29 DOF on this DDS network")
@@ -148,6 +150,7 @@ def main(argv=None):
         require_backend_stopped(args.backend_url)
     config = ConnectionConfig(transport="mock" if args.mock else "unitree-sdk2",
         robot_model="g1-29", network_interface=args.interface, domain_id=args.domain,
+        discovery_peers=args.peer, allow_multicast=not args.no_multicast,
         max_joint_speed=.05, max_joint_acceleration=.1, kp=20, kd=1.5)
     runtime = RobotController()
     report = {"config": config.model_dump(), "executed": args.execute, "command_topic": "rt/arm_sdk"}

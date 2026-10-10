@@ -21,6 +21,18 @@ it("requires a network interface for physical DDS and never arms automatically",
   expect(c.connect).toHaveBeenCalledWith(expect.objectContaining({ transport: "unitree-sdk2", robot_model: "g1-29" }));
   expect(c.action).not.toHaveBeenCalled();
 });
+it("connects through the ROS bridge URL while leaving motor control disarmed", () => {
+  const c = connection();
+  render(<RobotConnectionPanel connection={c} live={true} />);
+  fireEvent.change(screen.getByLabelText("Robot connection"), { target: { value: "unitree-rosbridge" } });
+  expect(screen.queryByLabelText("Robot network interface")).not.toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("Robot ROS bridge URL"), { target: { value: "ws://192.168.67.95:9090" } });
+  fireEvent.click(screen.getByRole("button", { name: "Connect physical robot" }));
+  expect(c.connect).toHaveBeenCalledWith(expect.objectContaining({ transport: "unitree-rosbridge", rosbridge_url: "ws://192.168.67.95:9090" }));
+  expect(c.action).not.toHaveBeenCalled();
+  fireEvent.change(screen.getByLabelText("Robot ROS bridge URL"), { target: { value: "" } });
+  expect(screen.getByRole("button", { name: "Connect physical robot" })).toBeDisabled();
+});
 it("exposes stop/disarm while the controller is armed", () => {
   const c = { ...connection(), owned: true, status: { ...connected, armed: true, reason: "Following live camera", packets_sent: 1, engagement: 1 } };
   render(<RobotConnectionPanel connection={c} live={true} />);

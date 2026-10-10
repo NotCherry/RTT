@@ -93,3 +93,13 @@ def test_duplicate_ticks_and_invalid_crc_do_not_refresh_feedback(sdk):
     adapter.subscriber.callback(message)
     assert adapter.state() is original
     adapter.close()
+
+
+def test_sdk_factory_requires_restart_when_discovery_peers_change(sdk):
+    first = robot_dds.UnitreeArmAdapter(ConnectionConfig(transport="unitree-sdk2", network_interface="lo"))
+    first.start()
+    first.close()
+    second = robot_dds.UnitreeArmAdapter(ConnectionConfig(transport="unitree-sdk2", network_interface="lo",
+                                                         discovery_peers=["127.0.0.1"]))
+    with pytest.raises(RuntimeError, match="discovery settings"):
+        second.start()

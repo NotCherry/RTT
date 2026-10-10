@@ -1,5 +1,11 @@
 # Unitree DDS measurements in WSL
 
+These older measurements are supplemented by the
+[2026-10-10 DDS lab and gateway guide](unitree-dds-lab.md). Raw local UDP tests
+now reproduce payload-size-dependent loss below DDS, and RTT supports live arm
+control through the Linux ROS bridge. Firewall filtering is no longer the sole
+leading hypothesis; physical confirmation remains pending.
+
 Use mirrored WSL networking and the SDK backend's host network. The interface
 entered in RTT belongs to the Linux backend: `eth1` in the inspected setup.
 The Jetson at `192.168.123.164` uses `enP8p1s0`; its robot controller is `.161`.

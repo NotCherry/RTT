@@ -1,5 +1,5 @@
 from typing import Literal
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from .robot_motion import ARM_INDICES
 
 
@@ -15,9 +15,29 @@ class DDSConnectionPlan(BaseModel):
 
 
 class ConnectionConfig(DDSConnectionPlan):
-    transport: Literal["unitree-sdk2", "mock"] = "mock"
+    transport: Literal["unitree-sdk2", "unitree-rosbridge", "mock"] = "mock"
     kp: float = Field(default=20, ge=5, le=80, allow_inf_nan=False)
     kd: float = Field(default=1.5, ge=0.1, le=5, allow_inf_nan=False)
+    discovery_peers: list[str] = Field(default_factory=list, max_length=16)
+    allow_multicast: bool = True
+    rosbridge_url: str | None = Field(default=None, max_length=512)
+
+    @field_validator("discovery_peers")
+    @classmethod
+    def validate_discovery_peers(cls, peers):
+        from ipaddress import IPv4Address
+        return list(dict.fromkeys(str(IPv4Address(peer)) for peer in peers))
+
+    @model_validator(mode="after")
+    def validate_bridge(self):
+        if self.transport == "unitree-rosbridge":
+            from urllib.parse import urlsplit
+            address = urlsplit(self.rosbridge_url or "")
+            if address.scheme not in ("ws", "wss") or not address.hostname or address.username or address.password:
+                raise ValueError("Unitree ROS bridge requires a ws:// or wss:// URL without embedded credentials")
+        elif self.rosbridge_url is not None:
+            raise ValueError("rosbridge_url is only used with unitree-rosbridge")
+        return self
 
 
 class TargetPacket(BaseModel):

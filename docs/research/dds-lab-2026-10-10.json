@@ -1,0 +1,423 @@
+{
+  "date": "2026-10-10",
+  "scope": "Local protocol/network experiments; no physical robot available",
+  "windows_udp": {
+    "platform": "Windows-11-10.0.26200-SP0",
+    "address": "127.0.0.1",
+    "samples": [
+      {
+        "payload_bytes": 64,
+        "sent": 3,
+        "received": 3
+      },
+      {
+        "payload_bytes": 1200,
+        "sent": 3,
+        "received": 3
+      },
+      {
+        "payload_bytes": 1400,
+        "sent": 3,
+        "received": 3
+      },
+      {
+        "payload_bytes": 1472,
+        "sent": 3,
+        "received": 3
+      },
+      {
+        "payload_bytes": 1500,
+        "sent": 3,
+        "received": 3
+      },
+      {
+        "payload_bytes": 2092,
+        "sent": 3,
+        "received": 3
+      },
+      {
+        "payload_bytes": 4096,
+        "sent": 3,
+        "received": 3
+      }
+    ],
+    "result": "passed"
+  },
+  "dds_controller": {
+    "interface": "lo",
+    "domain": 62,
+    "fault": null,
+    "external_simulator": false,
+    "read_only_passed": true,
+    "motion_verified": true,
+    "return_verified": true,
+    "state_loss_disarmed": true,
+    "result": "passed",
+    "packets_sent": 439,
+    "simulator": {
+      "accepted": 437,
+      "rejected": 0,
+      "releases": 1,
+      "max_weight": 1.0,
+      "positions": {
+        "left_shoulder_pitch_joint": 0.0,
+        "left_shoulder_roll_joint": 0.0,
+        "left_shoulder_yaw_joint": 0.0,
+        "left_elbow_joint": 0.5,
+        "left_wrist_roll_joint": 0.0,
+        "left_wrist_pitch_joint": 0.0,
+        "left_wrist_yaw_joint": 0.0,
+        "right_shoulder_pitch_joint": 0.0,
+        "right_shoulder_roll_joint": 0.0,
+        "right_shoulder_yaw_joint": 0.0,
+        "right_elbow_joint": 0.5,
+        "right_wrist_roll_joint": 0.0,
+        "right_wrist_pitch_joint": 0.0,
+        "right_wrist_yaw_joint": 0.0
+      },
+      "tick": 434,
+      "fault": null
+    }
+  },
+  "dds_faults": [
+    {
+      "interface": "lo",
+      "domain": 56,
+      "fault": "invalid-crc",
+      "external_simulator": false,
+      "feedback_rejected": true,
+      "arming_blocked": true,
+      "result": "passed",
+      "packets_sent": 0,
+      "simulator": {
+        "accepted": 0,
+        "rejected": 0,
+        "releases": 0,
+        "max_weight": 0.0,
+        "positions": {
+          "left_shoulder_pitch_joint": 0.0,
+          "left_shoulder_roll_joint": 0.0,
+          "left_shoulder_yaw_joint": 0.0,
+          "left_elbow_joint": 0.5,
+          "left_wrist_roll_joint": 0.0,
+          "left_wrist_pitch_joint": 0.0,
+          "left_wrist_yaw_joint": 0.0,
+          "right_shoulder_pitch_joint": 0.0,
+          "right_shoulder_roll_joint": 0.0,
+          "right_shoulder_yaw_joint": 0.0,
+          "right_elbow_joint": 0.5,
+          "right_wrist_roll_joint": 0.0,
+          "right_wrist_pitch_joint": 0.0,
+          "right_wrist_yaw_joint": 0.0
+        },
+        "tick": 183,
+        "fault": "invalid-crc"
+      }
+    },
+    {
+      "interface": "lo",
+      "domain": 57,
+      "fault": "frozen-tick",
+      "external_simulator": false,
+      "feedback_rejected": true,
+      "arming_blocked": true,
+      "result": "passed",
+      "packets_sent": 0,
+      "simulator": {
+        "accepted": 0,
+        "rejected": 0,
+        "releases": 0,
+        "max_weight": 0.0,
+        "positions": {
+          "left_shoulder_pitch_joint": 0.0,
+          "left_shoulder_roll_joint": 0.0,
+          "left_shoulder_yaw_joint": 0.0,
+          "left_elbow_joint": 0.5,
+          "left_wrist_roll_joint": 0.0,
+          "left_wrist_pitch_joint": 0.0,
+          "left_wrist_yaw_joint": 0.0,
+          "right_shoulder_pitch_joint": 0.0,
+          "right_shoulder_roll_joint": 0.0,
+          "right_shoulder_yaw_joint": 0.0,
+          "right_elbow_joint": 0.5,
+          "right_wrist_roll_joint": 0.0,
+          "right_wrist_pitch_joint": 0.0,
+          "right_wrist_yaw_joint": 0.0
+        },
+        "tick": 0,
+        "fault": "frozen-tick"
+      }
+    },
+    {
+      "interface": "lo",
+      "domain": 59,
+      "fault": "no-state",
+      "external_simulator": false,
+      "feedback_rejected": true,
+      "arming_blocked": true,
+      "result": "passed",
+      "packets_sent": 0,
+      "simulator": {
+        "accepted": 0,
+        "rejected": 0,
+        "releases": 0,
+        "max_weight": 0.0,
+        "positions": {
+          "left_shoulder_pitch_joint": 0.0,
+          "left_shoulder_roll_joint": 0.0,
+          "left_shoulder_yaw_joint": 0.0,
+          "left_elbow_joint": 0.5,
+          "left_wrist_roll_joint": 0.0,
+          "left_wrist_pitch_joint": 0.0,
+          "left_wrist_yaw_joint": 0.0,
+          "right_shoulder_pitch_joint": 0.0,
+          "right_shoulder_roll_joint": 0.0,
+          "right_shoulder_yaw_joint": 0.0,
+          "right_elbow_joint": 0.5,
+          "right_wrist_roll_joint": 0.0,
+          "right_wrist_pitch_joint": 0.0,
+          "right_wrist_yaw_joint": 0.0
+        },
+        "tick": 0,
+        "fault": "no-state"
+      }
+    },
+    {
+      "interface": "lo",
+      "domain": 60,
+      "fault": "ignore-commands",
+      "external_simulator": false,
+      "read_only_passed": true,
+      "command_acceptance_failure_detected": "Commands published but measured joint did not follow; check arm SDK acceptance/mode",
+      "result": "passed",
+      "packets_sent": 276,
+      "simulator": {
+        "accepted": 276,
+        "rejected": 0,
+        "releases": 2,
+        "max_weight": 1.0,
+        "positions": {
+          "left_shoulder_pitch_joint": 0.0,
+          "left_shoulder_roll_joint": 0.0,
+          "left_shoulder_yaw_joint": 0.0,
+          "left_elbow_joint": 0.5,
+          "left_wrist_roll_joint": 0.0,
+          "left_wrist_pitch_joint": 0.0,
+          "left_wrist_yaw_joint": 0.0,
+          "right_shoulder_pitch_joint": 0.0,
+          "right_shoulder_roll_joint": 0.0,
+          "right_shoulder_yaw_joint": 0.0,
+          "right_elbow_joint": 0.5,
+          "right_wrist_roll_joint": 0.0,
+          "right_wrist_pitch_joint": 0.0,
+          "right_wrist_yaw_joint": 0.0
+        },
+        "tick": 281,
+        "fault": "ignore-commands"
+      }
+    }
+  ],
+  "windows_rosbridge_controller": {
+    "interface": "lo",
+    "domain": 42,
+    "fault": null,
+    "external_simulator": true,
+    "read_only_passed": true,
+    "motion_verified": true,
+    "return_verified": true,
+    "result": "passed",
+    "packets_sent": 439,
+    "rosbridge_url": "ws://127.0.0.1:19094"
+  },
+  "windows_rosbridge_simulator": {
+    "accepted": 439,
+    "rejected": 0,
+    "releases": 2,
+    "max_weight": 1.0,
+    "positions": {
+      "left_shoulder_pitch_joint": 0.0,
+      "left_shoulder_roll_joint": 0.0,
+      "left_shoulder_yaw_joint": 0.0,
+      "left_elbow_joint": 0.5,
+      "left_wrist_roll_joint": 0.0,
+      "left_wrist_pitch_joint": 0.0,
+      "left_wrist_yaw_joint": 0.0,
+      "right_shoulder_pitch_joint": 0.0,
+      "right_shoulder_roll_joint": 0.0,
+      "right_shoulder_yaw_joint": 0.0,
+      "right_elbow_joint": 0.5,
+      "right_wrist_roll_joint": 0.0,
+      "right_wrist_pitch_joint": 0.0,
+      "right_wrist_yaw_joint": 0.0
+    },
+    "tick": 434,
+    "fault": null
+  },
+  "verification": {
+    "backend_tests": 148,
+    "frontend_tests": 164,
+    "camera_journeys": 7,
+    "production_build": "passed"
+  },
+  "wsl_udp_earlier": {
+    "platform": "Linux-6.18.33.2-microsoft-standard-WSL2-x86_64-with-glibc2.41",
+    "address": "127.0.0.1",
+    "samples": [
+      {
+        "payload_bytes": 64,
+        "sent": 3,
+        "received": 3
+      },
+      {
+        "payload_bytes": 1200,
+        "sent": 3,
+        "received": 3
+      },
+      {
+        "payload_bytes": 1400,
+        "sent": 3,
+        "received": 3
+      },
+      {
+        "payload_bytes": 1472,
+        "sent": 3,
+        "received": 3
+      },
+      {
+        "payload_bytes": 1500,
+        "sent": 3,
+        "received": 0
+      },
+      {
+        "payload_bytes": 2092,
+        "sent": 3,
+        "received": 3
+      },
+      {
+        "payload_bytes": 4096,
+        "sent": 3,
+        "received": 0
+      }
+    ],
+    "result": "packet_loss"
+  },
+  "wsl_udp_direct": {
+    "platform": "Linux-6.18.33.2-microsoft-standard-WSL2-x86_64-with-glibc2.43",
+    "address": "127.0.0.1",
+    "samples": [
+      {
+        "payload_bytes": 64,
+        "sent": 3,
+        "received": 3
+      },
+      {
+        "payload_bytes": 1200,
+        "sent": 3,
+        "received": 3
+      },
+      {
+        "payload_bytes": 1400,
+        "sent": 3,
+        "received": 3
+      },
+      {
+        "payload_bytes": 1472,
+        "sent": 3,
+        "received": 3
+      },
+      {
+        "payload_bytes": 1500,
+        "sent": 3,
+        "received": 0
+      },
+      {
+        "payload_bytes": 2092,
+        "sent": 3,
+        "received": 0
+      },
+      {
+        "payload_bytes": 2180,
+        "sent": 3,
+        "received": 0
+      },
+      {
+        "payload_bytes": 4096,
+        "sent": 3,
+        "received": 0
+      }
+    ],
+    "result": "packet_loss"
+  },
+  "wsl_udp_container": {
+    "platform": "Linux-6.18.33.2-microsoft-standard-WSL2-x86_64-with-glibc2.41",
+    "address": "127.0.0.1",
+    "samples": [
+      {
+        "payload_bytes": 64,
+        "sent": 3,
+        "received": 3
+      },
+      {
+        "payload_bytes": 1200,
+        "sent": 3,
+        "received": 3
+      },
+      {
+        "payload_bytes": 1400,
+        "sent": 3,
+        "received": 3
+      },
+      {
+        "payload_bytes": 1472,
+        "sent": 3,
+        "received": 3
+      },
+      {
+        "payload_bytes": 1500,
+        "sent": 3,
+        "received": 0
+      },
+      {
+        "payload_bytes": 2092,
+        "sent": 3,
+        "received": 0
+      },
+      {
+        "payload_bytes": 2180,
+        "sent": 3,
+        "received": 0
+      },
+      {
+        "payload_bytes": 4096,
+        "sent": 3,
+        "received": 0
+      }
+    ],
+    "result": "packet_loss"
+  },
+  "udp_note": "Latest direct and container tests lost every tested payload above 1472 bytes. An earlier container run delivered 2092-byte payloads; loss is not proven to be a universal size threshold.",
+  "http_read_only_simulator": {
+    "accepted": 0,
+    "rejected": 0,
+    "releases": 0,
+    "max_weight": 0.0,
+    "positions": {
+      "left_shoulder_pitch_joint": 0.0,
+      "left_shoulder_roll_joint": 0.0,
+      "left_shoulder_yaw_joint": 0.0,
+      "left_elbow_joint": 0.5,
+      "left_wrist_roll_joint": 0.0,
+      "left_wrist_pitch_joint": 0.0,
+      "left_wrist_yaw_joint": 0.0,
+      "right_shoulder_pitch_joint": 0.0,
+      "right_shoulder_roll_joint": 0.0,
+      "right_shoulder_yaw_joint": 0.0,
+      "right_elbow_joint": 0.5,
+      "right_wrist_roll_joint": 0.0,
+      "right_wrist_pitch_joint": 0.0,
+      "right_wrist_yaw_joint": 0.0
+    },
+    "tick": 13,
+    "fault": null
+  }
+}
