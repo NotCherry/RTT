@@ -4,7 +4,7 @@ import { cleanup, fireEvent, render, screen, within } from "@testing-library/rea
 import { afterEach, expect, it, vi } from "vitest";
 import { RobotConnectionPanel } from "./RobotConnectionPanel";
 afterEach(cleanup);
-const connection = () => ({ status: null, owned: false, streamReady: false, busy: false, error: "", connect: vi.fn(), action: vi.fn(), submit: vi.fn() });
+const connection = () => ({ status: null, owned: false, streamReady: false, controlJoints: null, busy: false, error: "", connect: vi.fn(), action: vi.fn(), submit: vi.fn() });
 const connected = { connected: true, armed: false, transport: "mock" as const, state_fresh: true, reason: "Connected", measured: { left_elbow_joint: .2 }, commanded: {}, packets_sent: 0, engagement: 0, stream_connected: true, targets_received: 12, camera_target: { left_elbow_joint: .5 } };
 it("offers a mock connection and distinct hardware speed", () => {
   const c = connection();

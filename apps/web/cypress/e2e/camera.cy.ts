@@ -22,7 +22,7 @@ const robot = {
     },
   ],
 };
-function openCameraPage(fakeCamera = false, dimensions = { width: 320, height: 240 }, fakeArmTargets: boolean | Record<string, number> = false) {
+function openCameraPage(fakeCamera = false, dimensions = { width: 320, height: 240 }, fakeArmTargets: boolean | Record<string, number> = false, transientCongestion = false) {
   cy.intercept("GET", "/api/robots/demo", { body: robot });
   cy.intercept("GET", "/api/robots/default", { body: robot }).as("defaultRobot");
   cy.intercept("POST", "/api/sessions", {
@@ -32,6 +32,13 @@ function openCameraPage(fakeCamera = false, dimensions = { width: 320, height: 2
   cy.intercept("PUT", "/api/sessions/camera-session/datasets", { body: { status: "saved" } });
   cy.visit("/teach/pose", {
     onBeforeLoad(win) {
+      if (transientCongestion) {
+        const buffered = Object.getOwnPropertyDescriptor(win.WebSocket.prototype, "bufferedAmount")!.get!;
+        let reads = 0;
+        Object.defineProperty(win.WebSocket.prototype, "bufferedAmount", { configurable: true, get() {
+          return this.url.includes("/api/robot-transport/stream") && ++reads % 3 === 0 ? 32 : buffered.call(this);
+        } });
+      }
       if (fakeArmTargets) {
         // Supply deterministic arm targets at the transport seam.
         // Exercise the real authenticated stream and mock controller without hardware.
@@ -150,7 +157,7 @@ describe("Camera recordings", () => {
     cy.contains("button", "Connect physical robot").should("be.enabled");
   });
   it("shows disarmed camera targets and produces commands only after explicit arming", () => {
-    openCameraPage(true, { width: 320, height: 240 }, true);
+    openCameraPage(true, { width: 320, height: 240 }, true, true);
     cy.get('[aria-label="Processing mode"]').select("live");
     cy.contains("button", "Open camera").click();
     cy.contains("Live processing ready", { timeout: 120000 }).should("exist");

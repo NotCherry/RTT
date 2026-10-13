@@ -96,5 +96,6 @@ export function RobotConnectionPanel({ connection, live, profile = "g1-upper-bod
     </details>}
     <p className="helper-text">Torso mapping needs visible shoulders and hips; yaw and pitch also need depth landmarks. Preview speed is separate from robot speed. Arming engages the arms and available waist axes; use the robot’s local stop for an emergency.</p>
     {connection.error && <p role="alert" className="helper-text">{connection.error}</p>}
+    {status?.last_stream_error && !connection.error && <p role="alert" className="helper-text">{status.last_stream_error}</p>}
   </Panel>;
 }

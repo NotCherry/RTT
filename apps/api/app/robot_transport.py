@@ -1,14 +1,17 @@
 """Robot control routes. Physical publication requires an explicit arm action."""
 import asyncio
 import json
+import logging
 import time
 import anyio
 from fastapi import APIRouter, Header, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
 from .robot_controller import RobotController
 from .robot_transport_contract import ConnectionConfig, DDSConnectionPlan, TargetPacket
+from .robot_motion import camera_joint_contract
 
 controller = RobotController()
+logger = logging.getLogger(__name__)
 
 
 def create_transport_router(runtime):
@@ -40,7 +43,7 @@ def create_transport_router(runtime):
     @routes.post("/connect")
     def connect(config: ConnectionConfig):
         token = call(runtime.connect, config)
-        return {**runtime.status(), "token": token}
+        return {**runtime.status(), "token": token, "joint_contract": camera_joint_contract(config)}
 
     @routes.post("/arm")
     def arm(x_robot_token: str | None = Header(default=None)):
@@ -81,6 +84,9 @@ def create_transport_router(runtime):
         except WebSocketDisconnect:
             pass
         except (PermissionError, ValueError, ValidationError, asyncio.TimeoutError, json.JSONDecodeError) as exc:
+            logger.warning("Robot target stream rejected: %s", exc)
+            if owner:
+                await asyncio.to_thread(runtime.record_stream_error, str(exc))
             try:
                 await socket.send_json({"error": str(exc)})
                 await socket.close(code=1008)

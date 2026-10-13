@@ -65,6 +65,28 @@ def test_physical_connect_does_not_require_an_operator_key(monkeypatch):
     assert response.json()["token"] == "owner"
 
 
+def test_rejected_stream_retains_diagnostics_after_owned_disconnect():
+    from app.robot_controller import RobotController
+    from app.robot_transport import create_transport_router
+    runtime = RobotController()
+    local_app = FastAPI()
+    local_app.include_router(create_transport_router(runtime))
+    with TestClient(local_app) as local:
+        connected = local.post("/api/robot-transport/connect", json={"transport": "mock", "network_interface": "lo"}).json()
+        with local.websocket_connect("/api/robot-transport/stream") as stream:
+            stream.send_json({"token": connected["token"]})
+            stream.receive_json()
+            stream.send_json({"sequence": 0, "sent_at_ms": 1, "tracking": False, "positions": {}})
+            assert "stale" in stream.receive_json()["error"]
+        deadline = time.monotonic() + 1
+        while runtime.status()["connected"] and time.monotonic() < deadline:
+            time.sleep(.01)
+        status = local.get("/api/robot-transport/status").json()
+        assert status["connected"] is False
+        assert "stale" in status["last_stream_error"]
+    runtime.disconnect()
+
+
 def test_live_target_lock_cannot_block_the_api_event_loop():
     import threading
     from concurrent.futures import ThreadPoolExecutor

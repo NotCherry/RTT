@@ -83,10 +83,14 @@ function CameraWorkspace({ robot, state, joints, neutral, onPreview, onSave }: P
     onFrame: (frame) => {
       setLatest(frame);
       const target = motion.observe(frame);
-      const visible = frame ? new Set(mappingCoverage(frame, joints, profile).mapped) : new Set<string>();
-      const positions = target ? Object.fromEntries(joints.flatMap((joint, i) =>
+      const physicalJoints = connection.controlJoints ?? joints;
+      const physicalNeutral = physicalJoints.map(joint => baseline.current[joints.findIndex(preview => preview.name === joint.name)] ?? 0);
+      const physicalTarget = target && frame && connection.controlJoints
+        ? retargetLandmarkFrame(frame, physicalJoints, physicalNeutral, profile) : target;
+      const visible = frame ? new Set(mappingCoverage(frame, physicalJoints, profile).mapped) : new Set<string>();
+      const positions = physicalTarget ? Object.fromEntries(physicalJoints.flatMap((joint, i) =>
         visible.has(joint.name) && (/^(left|right)_(shoulder_(pitch|roll|yaw)|elbow|wrist_(roll|pitch|yaw))_joint$/.test(joint.name) || /^waist_(yaw|roll|pitch)_joint$/.test(joint.name))
-          ? [[joint.name, target[i]]] : [])) : null;
+          ? [[joint.name, physicalTarget[i]]] : [])) : null;
       connection.submit(positions && Object.keys(positions).length ? positions : null);
     },
     onRecording: async (recording) => {

@@ -70,3 +70,28 @@ including finite CRC-validated waist yaw, roll and pitch; neither probe publishe
 motor commands. The operator had confirmed physical arm control before this
 change, while torso holding/mapping and overhead strength remain to be checked
 on the physical robot after reconnecting with the new configuration.
+
+## Live disconnect follow-up
+
+The operator reported brief connections followed by automatic disconnect.
+The browser previously closed its owned stream on any nonzero bufferedAmount,
+so a transient pending write could tear down the physical connection. Skip that
+camera frame without queueing; disconnect only after 250 ms of uninterrupted
+congestion. Retain server stream rejection diagnostics after cleanup so a stale
+packet, bad contract or ownership error stays visible and appears in backend logs.
+This preserves the backend freshness/watchdog checks.
+
+The live camera targets also contained waist yaw but omitted roll/pitch. The
+default Basic preview has no roll/pitch joints, even when the physical connection
+selects EDU 29 DOF. Return the physical joint contract (including URDF shoulder
+origins) at connect and retarget hardware against that contract. Preserve the
+preview/Archive robot selection and entry neutral for shared joint names. The
+preview tracking guard still gates observation acceptance and the physical
+controller still applies its independent speed/acceleration bounds.
+
+Tests protect transient buffer recovery, persistent-congestion release, retained
+stream diagnostics and three-axis hardware mapping from a Basic preview.
+The follow-up passed 182 backend tests, 196 frontend tests, the production build
+and all 11 camera browser journeys, including injected intermittent pending
+WebSocket writes during live control. The complete follow-up diff was manually
+reviewed because the code-review skill remained unavailable.

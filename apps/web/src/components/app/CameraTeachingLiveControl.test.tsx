@@ -5,9 +5,9 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { Joint, LandmarkFrame } from "@/types";
 import { CameraTeachingPage } from "./CameraTeachingPage";
 
-const live = vi.hoisted(() => ({ submit: vi.fn(), frame: null as null | ((frame: LandmarkFrame) => void) }));
+const live = vi.hoisted(() => ({ submit: vi.fn(), joints: null as Joint[] | null, frame: null as null | ((frame: LandmarkFrame) => void) }));
 vi.mock("@/domain/cameraArchive", () => ({ listCameraRecordings: async () => [] }));
-vi.mock("@/components/camera/useRobotTransport", () => ({ useRobotTransport: () => ({ submit: live.submit, status: null, busy: false }) }));
+vi.mock("@/components/camera/useRobotTransport", () => ({ useRobotTransport: () => ({ submit: live.submit, controlJoints: live.joints, status: null, busy: false }) }));
 vi.mock("@/components/camera/RobotConnectionPanel", () => ({ RobotConnectionPanel: () => null }));
 vi.mock("@/components/camera/CameraCapturePanel", () => ({ CameraCapturePanel: () => null }));
 vi.mock("@/components/camera/CameraSourcePanel", () => ({ CameraSourcePanel: () => null }));
@@ -16,7 +16,7 @@ vi.mock("@/components/camera/useMultiCameraCapture", () => ({ useMultiCameraCapt
   live.frame = options.onFrame;
   return { rig: { inputs: [{ kind: "local", address: "" }] }, connected: true, status: "Ready" };
 } }));
-afterEach(() => { cleanup(); live.submit.mockClear(); });
+afterEach(() => { cleanup(); live.submit.mockClear(); live.joints = null; });
 
 const joints = ["waist_yaw_joint", "waist_roll_joint", "waist_pitch_joint", "left_elbow_joint", "right_elbow_joint", "left_knee_joint"]
   .map(name => ({ name, controllable: true, lower: -3, upper: 3 } as Joint));
@@ -47,4 +47,13 @@ it("single-arm camera mapping passes only the selected side even when both arms 
   fireEvent.change(screen.getByLabelText("Arm selection"), { target: { value: "g1-left-arm" } });
   await act(async () => live.frame!(frame()));
   expect(live.submit).toHaveBeenLastCalledWith({ left_elbow_joint: .3 });
+});
+it("maps the connected hardware waist even when the preview model lacks roll and pitch", async () => {
+  live.joints = joints.filter(joint => !joint.name.includes("knee"));
+  const preview = joints.filter(joint => !["waist_roll_joint", "waist_pitch_joint"].includes(joint.name));
+  render(<CameraTeachingPage robot={{ id: "basic-preview" } as never} state={null} joints={preview} neutral={preview.map(() => 0)} onPreview={vi.fn()} onSave={vi.fn()} />);
+  await act(async () => live.frame!(frame()));
+  expect(live.submit).toHaveBeenLastCalledWith(expect.objectContaining({ waist_yaw_joint: expect.any(Number),
+    waist_roll_joint: expect.any(Number), waist_pitch_joint: expect.any(Number) }));
+  expect(live.submit.mock.lastCall![0]).not.toHaveProperty("left_knee_joint");
 });

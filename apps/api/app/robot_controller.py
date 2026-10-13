@@ -27,6 +27,7 @@ class RobotController:
         self.weight = 0.0
         self.reason = "Disconnected"
         self.sent = 0
+        self.last_stream_error = None
 
     def connect(self, config, run_worker=True):
         with self.lifecycle:
@@ -47,6 +48,7 @@ class RobotController:
                 self.camera_target, self.camera_at, self.received = None, -float("inf"), 0
                 self.target, self.target_at, self.sequence = None, -float("inf"), -1
                 self.reason = "Connected · waiting for measured state"
+                self.last_stream_error = None
                 self.stop_event.clear()
                 if run_worker:
                     self.worker = threading.Thread(target=self._run, name="robot-arm-control", daemon=True)
@@ -172,10 +174,15 @@ class RobotController:
                 "active_arm": self.config.active_arm if self.config else None,
                 "waist_dof": self.config.waist_dof if self.config else None,
                 "arm_kp": self.config.kp if self.config else None,
+                "last_stream_error": self.last_stream_error,
                 "measured": dict(state.positions) if state else {}, "commanded": dict(self.positions),
                 "packets_sent": self.sent, "engagement": self.weight,
                 "stream_connected": self.stream is not None, "targets_received": self.received,
                 "camera_target": dict(self.camera_target) if camera_fresh and self.camera_target else {}}
+
+    def record_stream_error(self, reason):
+        with self.lock:
+            self.last_stream_error = reason
 
     def _run(self):
         previous = self.clock()

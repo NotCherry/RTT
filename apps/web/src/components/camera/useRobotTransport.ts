@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { connectRobotTransport, createRobotTargetSocket, getRobotTransportStatus, robotTransportAction, type RobotConnectionConfig, type RobotTransportStatus } from "@/domain/robotTransport";
 import { selectRobotTargets } from "@/domain/robotControlMapping";
+import type { Joint } from "@/types";
 
 export function useRobotTransport() {
   const [status, setStatus] = useState<RobotTransportStatus | null>(null);
@@ -8,12 +9,14 @@ export function useRobotTransport() {
   const [busy, setBusy] = useState(false);
   const [owned, setOwned] = useState(false);
   const [streamReady, setStreamReady] = useState(false);
+  const [controlJoints, setControlJoints] = useState<Joint[] | null>(null);
   const token = useRef("");
   const config = useRef<RobotConnectionConfig | null>(null);
   const socket = useRef<WebSocket | null>(null);
   const ready = useRef(false);
   const sequence = useRef(0);
   const clockOffset = useRef(0);
+  const congestedAt = useRef<number | null>(null);
   const mounted = useRef(true);
   useEffect(() => {
     mounted.current = true;
@@ -54,7 +57,7 @@ export function useRobotTransport() {
     finally { if (mounted.current) setBusy(false); }
   }
   return {
-    status, error, busy, owned, streamReady,
+    status, error, busy, owned, streamReady, controlJoints,
     connect: (settings: RobotConnectionConfig) => operate(async () => {
       ready.current = false;
       setStreamReady(false);
@@ -62,7 +65,9 @@ export function useRobotTransport() {
       if (!mounted.current) { await robotTransportAction("disconnect", next.token); return; }
       token.current = next.token;
       config.current = settings;
+      setControlJoints(next.joint_contract ?? null);
       sequence.current = 0;
+      congestedAt.current = null;
       setOwned(true);
       setStatus(next);
       let stream: WebSocket;
@@ -92,6 +97,7 @@ export function useRobotTransport() {
         token.current = "";
         if (mounted.current) {
           setOwned(false);
+          setControlJoints(null);
           setStreamReady(false);
           setStatus(previous => previous ? { ...previous, connected: false, armed: false, reason: "Camera stream disconnected · disarmed" } : null);
         }
@@ -107,14 +113,24 @@ export function useRobotTransport() {
         socket.current = null;
         stream?.close();
         if (mounted.current) setOwned(false);
+        if (mounted.current) setControlJoints(null);
         if (mounted.current) setStreamReady(false);
       }
     }),
     submit(positions: Record<string, number> | null) {
       const stream = socket.current;
       if (!ready.current || stream?.readyState !== WebSocket.OPEN) return;
-      // Drop rather than queue targets when the network is congested.
-      if (stream.bufferedAmount > 0) { stream.close(); return; }
+      // A single pending browser write is normal; drop this frame, never queue it.
+      if (stream.bufferedAmount > 0) {
+        const now = performance.now();
+        congestedAt.current ??= now;
+        if (now - congestedAt.current >= 250) {
+          setError("Robot target stream remained congested for 250 ms; disconnected and disarmed.");
+          stream.close();
+        }
+        return;
+      }
+      congestedAt.current = null;
       const target = selectRobotTargets(positions, config.current);
       stream.send(JSON.stringify({ sequence: sequence.current++, sent_at_ms: Date.now() + clockOffset.current, tracking: Boolean(target), positions: target ?? {} }));
     },

@@ -36,6 +36,25 @@ def target_names(config):
     return names
 
 
+def camera_joint_contract(config):
+    """Use the physical model's geometry even when a different preview is open."""
+    names = controlled_names(config)
+    result = []
+    for joint in _ROOT.findall("joint"):
+        name = joint.attrib["name"]
+        if name not in names:
+            continue
+        origin = joint.find("origin")
+        result.append({"name": name, "type": joint.attrib["type"],
+                       "parent": joint.find("parent").attrib["link"], "child": joint.find("child").attrib["link"],
+                       "axis": [float(value) for value in joint.find("axis").attrib["xyz"].split()],
+                       "origin": {field: [float(value) for value in origin.attrib.get(field, "0 0 0").split()]
+                                  for field in ("xyz", "rpy")},
+                       "lower": UPPER_BODY_LIMITS[name][0], "upper": UPPER_BODY_LIMITS[name][1],
+                       "controllable": True})
+    return result
+
+
 def advance_upper_body(positions, velocities, target, dt, speed, acceleration):
     arms = {name: q for name, q in positions.items() if name in ARM_INDICES}
     waist = {name: q for name, q in positions.items() if name in WAIST_INDICES}

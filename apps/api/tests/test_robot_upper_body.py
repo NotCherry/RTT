@@ -1,7 +1,7 @@
 import pytest
 from app.robot_controller import RobotController
 from app.robot_dds import ArmState, MockArmAdapter
-from app.robot_motion import WAIST_INDICES, controlled_names
+from app.robot_motion import WAIST_INDICES, controlled_names, camera_joint_contract
 from app.robot_transport_contract import ConnectionConfig, TargetPacket
 
 
@@ -94,3 +94,12 @@ def test_yaw_only_never_reads_or_commands_locked_waist_axes():
 def test_23_dof_contract_rejects_a_three_axis_waist():
     with pytest.raises(ValueError, match="waist yaw only"):
         ConnectionConfig(network_interface="lo", robot_model="g1-23", waist_dof=3)
+
+
+def test_camera_contract_contains_all_hardware_axes_and_real_shoulder_geometry():
+    config = ConnectionConfig(network_interface="lo", control_mode="upper-body", waist_dof=3)
+    contract = {joint["name"]: joint for joint in camera_joint_contract(config)}
+    assert set(contract) == set(controlled_names(config))
+    assert contract["left_shoulder_pitch_joint"]["origin"]["rpy"][0] == pytest.approx(.27931)
+    assert contract["waist_roll_joint"]["lower"] < 0 < contract["waist_roll_joint"]["upper"]
+    assert all("hip" not in name for name in contract)
