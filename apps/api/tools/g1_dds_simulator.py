@@ -9,7 +9,7 @@ import threading
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from app.robot_motion import ARM_INDICES, ARM_LIMITS
+from app.robot_motion import ARM_INDICES, ARM_LIMITS, WAIST_INDICES, UPPER_BODY_INDICES, UPPER_BODY_LIMITS
 from app.robot_dds_network import initialize_sdk_channels
 
 
@@ -38,7 +38,11 @@ class SimulatedG1:
                      and all(ARM_LIMITS[name][0] <= command.motor_cmd[index].q <= ARM_LIMITS[name][1]
                              for name, index in ARM_INDICES.items())
                      and all(m.mode == 0 and m.kp == 0 and m.kd == 0 and m.tau == 0
-                             for i, m in enumerate(command.motor_cmd) if i not in ARM_INDICES.values() and i != 29))
+                             for i, m in enumerate(command.motor_cmd) if i not in UPPER_BODY_INDICES.values() and i != 29)
+                     and all((m.mode == 0 and m.q == m.dq == m.tau == m.kp == m.kd == 0)
+                             or (m.mode == 1 and UPPER_BODY_LIMITS[name][0] <= m.q <= UPPER_BODY_LIMITS[name][1]
+                                 and math.isfinite(m.dq) and abs(m.dq) <= .5 and m.tau == 0 and m.kp > 0 and m.kd > 0)
+                             for name, index in WAIST_INDICES.items() for m in [command.motor_cmd[index]]))
             if not valid:
                 self.rejected += 1
                 return
@@ -47,8 +51,8 @@ class SimulatedG1:
             if weight == 0:
                 self.releases += 1
             elif self.fault != "ignore-commands":
-                self.positions = {name: float(command.motor_cmd[index].q)
-                                  for name, index in ARM_INDICES.items()}
+                self.positions.update({name: float(command.motor_cmd[index].q)
+                                       for name, index in UPPER_BODY_INDICES.items() if command.motor_cmd[index].mode == 1})
 
     def state(self):
         with self.lock:
@@ -57,7 +61,7 @@ class SimulatedG1:
                 self.tick = (self.tick + 1) % 2**32
             message.tick, message.mode_machine = self.tick, 11
             for name, q in self.positions.items():
-                message.motor_state[ARM_INDICES[name]].q = q
+                message.motor_state[UPPER_BODY_INDICES[name]].q = q
             message.crc = self.crc.Crc(message)
             if self.fault == "invalid-crc":
                 message.crc ^= 1

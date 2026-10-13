@@ -3,12 +3,12 @@ import math
 import struct
 import time
 from .robot_dds_network import channel_config
-from .robot_motion import ARM_INDICES, ARM_LIMITS
+from .robot_motion import ARM_INDICES, ARM_LIMITS, WAIST_INDICES, UPPER_BODY_INDICES, UPPER_BODY_LIMITS
 
 
 class DDSRelay:
     def __init__(self, robot_interface, client_interface, robot_domain=0,
-                 client_domain=7, client_peers=(), forward_commands=False, clock=time.monotonic):
+                 client_domain=7, client_peers=(), forward_commands=False, clock=time.monotonic, waist_dof=1):
         if not 0 <= robot_domain <= 232 or not 1 <= client_domain <= 232 or robot_domain == client_domain:
             raise ValueError("Use distinct domains and a nonzero client domain")
         from cyclonedds.domain import Domain, DomainParticipant
@@ -20,6 +20,9 @@ class DDSRelay:
         from unitree_sdk2py.utils.crc import CRC
         self.clock, self.crc = clock, CRC()
         self.forward_commands = forward_commands
+        if waist_dof not in (1, 3):
+            raise ValueError("Waist must have one or three movable axes")
+        self.waist_names = list(WAIST_INDICES)[:waist_dof]
         self.state = None
         self.state_at = -math.inf
         self.states_forwarded = self.commands_forwarded = self.rejected_commands = 0
@@ -40,7 +43,8 @@ class DDSRelay:
         try:
             if self.crc.Crc(message) != message.crc:
                 return False
-            if not all(math.isfinite(message.motor_state[i].q) for i in ARM_INDICES.values()):
+            indices = list(ARM_INDICES.values()) + [WAIST_INDICES[name] for name in self.waist_names]
+            if not all(math.isfinite(message.motor_state[i].q) for i in indices):
                 return False
             if self.state is not None and not 0 < (message.tick - self.state.tick) % 2**32 < 2**31:
                 return False
@@ -68,8 +72,17 @@ class DDSRelay:
                         or not math.isfinite(motor.dq) or abs(motor.dq) > 3 or motor.tau != 0
                         or not 5 <= motor.kp <= 80 or not .1 <= motor.kd <= 5):
                     return False
+            for name, index in WAIST_INDICES.items():
+                motor = message.motor_cmd[index]
+                if all(getattr(motor, field) == 0 for field in ("mode", "q", "dq", "tau", "kp", "kd")):
+                    continue
+                if (name not in self.waist_names or motor.mode != 1
+                        or not UPPER_BODY_LIMITS[name][0] <= motor.q <= UPPER_BODY_LIMITS[name][1]
+                        or not math.isfinite(motor.dq) or abs(motor.dq) > .5 or motor.tau != 0
+                        or not 5 <= motor.kp <= 80 or not .1 <= motor.kd <= 5):
+                    return False
             for index, motor in enumerate(message.motor_cmd):
-                if index not in ARM_INDICES.values() and index != 29:
+                if index not in UPPER_BODY_INDICES.values() and index != 29:
                     if any(getattr(motor, field) != 0 for field in ("mode", "q", "dq", "tau", "kp", "kd")):
                         return False
             weight_motor = message.motor_cmd[29]
@@ -101,6 +114,7 @@ class DDSRelay:
                 "commands_forwarded": self.commands_forwarded,
                 "rejected_commands": self.rejected_commands,
                 "state_fresh": self.state is not None and self.clock() - self.state_at <= .25,
+                "waist_dof": len(self.waist_names),
                 "forward_commands": self.forward_commands}
 
     def close(self):

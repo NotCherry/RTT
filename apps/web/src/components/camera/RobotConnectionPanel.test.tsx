@@ -11,7 +11,24 @@ it("offers a mock connection and distinct hardware speed", () => {
   render(<RobotConnectionPanel connection={c} live={false} />);
   fireEvent.change(screen.getByLabelText("Robot speed"), { target: { value: "1.5" } });
   fireEvent.click(screen.getByRole("button", { name: "Connect mock robot" }));
-  expect(c.connect).toHaveBeenCalledWith(expect.objectContaining({ transport: "mock", max_joint_speed: 1.5 }));
+  expect(c.connect).toHaveBeenCalledWith(expect.objectContaining({ transport: "mock", max_joint_speed: 1.5, kp: 60, kd: 1.5 }));
+});
+it("changes arm strength independently of motion speed and never arms on selection", () => {
+  const c = connection();
+  render(<RobotConnectionPanel connection={c} live={true} />);
+  fireEvent.change(screen.getByLabelText("Arm strength"), { target: { value: "40" } });
+  fireEvent.click(screen.getByRole("button", { name: "Connect mock robot" }));
+  expect(c.connect).toHaveBeenCalledWith(expect.objectContaining({ kp: 40, kd: 1.5, max_joint_speed: 1, max_joint_acceleration: 3 }));
+  expect(c.action).not.toHaveBeenCalled();
+});
+it("connects the selected arm with a held torso and the confirmed waist contract", () => {
+  const c = connection();
+  render(<RobotConnectionPanel connection={c} live={false} profile="g1-left-arm" />);
+  expect(screen.getByText(/left arm follows the camera/)).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("Movable waist axes"), { target: { value: "1" } });
+  fireEvent.click(screen.getByRole("button", { name: "Connect mock robot" }));
+  expect(c.connect).toHaveBeenCalledWith(expect.objectContaining({ control_mode: "single-arm", active_arm: "left", waist_dof: 1 }));
+  expect(c.action).not.toHaveBeenCalled();
 });
 it("requires a network interface for physical DDS and never arms automatically", () => {
   const c = connection();

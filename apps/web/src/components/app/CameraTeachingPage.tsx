@@ -85,7 +85,7 @@ function CameraWorkspace({ robot, state, joints, neutral, onPreview, onSave }: P
       const target = motion.observe(frame);
       const visible = frame ? new Set(mappingCoverage(frame, joints, profile).mapped) : new Set<string>();
       const positions = target ? Object.fromEntries(joints.flatMap((joint, i) =>
-        visible.has(joint.name) && /^(left|right)_(shoulder_(pitch|roll|yaw)|elbow|wrist_(roll|pitch|yaw))_joint$/.test(joint.name)
+        visible.has(joint.name) && (/^(left|right)_(shoulder_(pitch|roll|yaw)|elbow|wrist_(roll|pitch|yaw))_joint$/.test(joint.name) || /^waist_(yaw|roll|pitch)_joint$/.test(joint.name))
           ? [[joint.name, target[i]]] : [])) : null;
       connection.submit(positions && Object.keys(positions).length ? positions : null);
     },
@@ -301,8 +301,8 @@ function CameraWorkspace({ robot, state, joints, neutral, onPreview, onSave }: P
       <div role="status" className="helper-text">
         {status || (tab === "live" ? camera.status : "Select a recording to process or replay.")}
       </div>
-      <RobotConnectionPanel connection={connection} live={tab === "live" && camera.connected && processing === "live"} />
-      <MappingControls profile={profile} disabled={locked} onChange={setProfile} />
+      <MappingControls profile={profile} disabled={locked || connection.busy || Boolean(connection.status?.connected)} onChange={setProfile} />
+      <RobotConnectionPanel connection={connection} profile={profile} live={tab === "live" && camera.connected && processing === "live"} />
       <div className="route-form-grid camera-inspection-settings">
         <label>Preview speed
           <select aria-label="Preview speed" value={previewSpeed} onChange={(event) => setPreviewSpeed(Number(event.target.value))}>

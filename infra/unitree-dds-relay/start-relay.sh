@@ -8,4 +8,5 @@ fi
 exec "${DDS_PYTHON:?Set DDS_PYTHON to the pinned SDK environment}" tools/unitree_dds_relay.py \
     --robot-interface "${ROBOT_INTERFACE:?}" --client-interface "${CLIENT_INTERFACE:?}" \
     --client-domain "${CLIENT_DOMAIN:-7}" --client-peer "${CLIENT_PEER:?}" \
+    --waist-dof "${WAIST_DOF:-1}" \
     --report /run/rtt-unitree-dds-relay/status.json "${command_options[@]}"

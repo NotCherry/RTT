@@ -59,6 +59,24 @@ Edit `relay.env` for that host's interfaces, SDK environment and client address.
 The template defaults `FORWARD_COMMANDS=false`, which supplies telemetry only.
 Set it to `true` only to enable RTT's explicitly armed return command path.
 The deployed service uses `true`; connect/startup still sends no motor commands.
+Set `WAIST_DOF=3` only for a robot with movable yaw, roll and pitch. The current
+operator confirmed that hardware, so its deployed relay permits all three axes.
+The template defaults to yaw only; mechanically locked axes are never commanded.
+
+In Camera, choose **Mapping scope** before connecting:
+
+- **Single arm · torso held** maps the selected left/right arm and actively holds
+  the other arm and waist at the measured pose captured by **Arm live control**.
+- **Upper body · arms and torso** maps both arms plus movable waist axes.
+  Shoulders and hips must be visible; yaw/pitch also require depth landmarks.
+
+Choose **Movable waist axes → Yaw, roll and pitch** for this G1. Disconnect before
+changing the scope, waist axes or arm strength. **Arm strength → Strong** defaults
+to kp=60 and kd=1.5, matching the pinned SDK example; this increases arm stiffness
+for raised poses while retaining the selected speed/acceleration bounds. Waist camera motion is bounded to ±0.6 rad yaw,
+±0.2 roll and ±0.25 pitch, with at most 0.5 rad/s and 1 rad/s². Preview/Archive
+full-body mappings continue to work; hardware commands always exclude legs.
+See [ADR 0009](adr/0009-single-arm-and-upper-body-control.md) for the contract.
 
 ```bash
 cd /home/unitree/rtt-dds-relay

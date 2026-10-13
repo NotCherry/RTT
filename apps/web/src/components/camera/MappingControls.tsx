@@ -7,7 +7,7 @@ export function MappingControls({ profile, disabled, onChange }: {
   return <div className="route-form-grid camera-mapping-controls">
     <label>Mapping scope
       <select aria-label="Mapping scope" disabled={disabled} value={single ? "single" : profile} onChange={(event) => onChange(event.target.value === "single" ? "g1-single-arm" : event.target.value as RetargetingProfile)}>
-        <option value="g1-upper-body">Upper body</option><option value="g1-full-body">Full body</option><option value="single">Single arm</option>
+        <option value="g1-upper-body">Upper body · arms and torso</option><option value="g1-full-body">Full body · preview and Archive</option><option value="single">Single arm · torso held</option>
       </select>
     </label>
     {single && <label>Arm selection
@@ -15,6 +15,6 @@ export function MappingControls({ profile, disabled, onChange }: {
         <option value="g1-single-arm">Right arm</option><option value="g1-left-arm">Left arm</option>
       </select>
     </label>}
-    <p className="helper-text">Left and right refer to the person’s own body. Only visible, compatible G1 joints move.</p>
+    <p className="helper-text">Left and right refer to the person’s own body. Hardware control uses the selected arm or upper body; legs remain under the robot’s local controller.</p>
   </div>;
 }

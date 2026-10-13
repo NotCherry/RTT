@@ -144,7 +144,9 @@ def test_rejects_old_packets_bad_models_and_unauthorized_actions(rig):
     with pytest.raises(ValueError, match="Out-of-order"):
         runtime.receive(stream, packet(runtime, sequence=1, tracking=True, positions={"left_elbow_joint": 2}))
     with pytest.raises(PermissionError): runtime.disarm("wrong")
-    with pytest.raises(ValueError): packet(runtime, sequence=3, tracking=True, positions={"waist_yaw_joint": 1})
+    with pytest.raises(ValueError):
+        runtime.receive(stream, packet(runtime, sequence=3, tracking=True, positions={"waist_yaw_joint": 1}))
+    with pytest.raises(ValueError): packet(runtime, sequence=3, tracking=True, positions={"left_hip_pitch_joint": 1})
     with pytest.raises(ValueError): packet(runtime, sequence=3, tracking=True, positions={"left_elbow_joint": math.nan})
 
 

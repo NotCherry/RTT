@@ -1,6 +1,6 @@
 from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
-from .robot_motion import ARM_INDICES
+from .robot_motion import UPPER_BODY_INDICES
 
 
 class DDSConnectionPlan(BaseModel):
@@ -18,6 +18,11 @@ class ConnectionConfig(DDSConnectionPlan):
     transport: Literal["unitree-sdk2", "unitree-rosbridge", "mock"] = "mock"
     kp: float = Field(default=20, ge=5, le=80, allow_inf_nan=False)
     kd: float = Field(default=1.5, ge=0.1, le=5, allow_inf_nan=False)
+    control_mode: Literal["arms", "single-arm", "upper-body"] = "arms"
+    active_arm: Literal["left", "right"] = "right"
+    waist_dof: Literal[1, 3] = 1
+    waist_kp: float = Field(default=40, ge=5, le=80, allow_inf_nan=False)
+    waist_kd: float = Field(default=2, ge=0.1, le=5, allow_inf_nan=False)
     discovery_peers: list[str] = Field(default_factory=list, max_length=16)
     allow_multicast: bool = True
     rosbridge_url: str | None = Field(default=None, max_length=512)
@@ -30,6 +35,8 @@ class ConnectionConfig(DDSConnectionPlan):
 
     @model_validator(mode="after")
     def validate_bridge(self):
+        if self.robot_model == "g1-23" and self.waist_dof != 1:
+            raise ValueError("G1 23 DOF supports waist yaw only")
         if self.transport == "unitree-rosbridge":
             from urllib.parse import urlsplit
             address = urlsplit(self.rosbridge_url or "")
@@ -45,11 +52,11 @@ class TargetPacket(BaseModel):
     sequence: int = Field(ge=0)
     sent_at_ms: float = Field(ge=0, allow_inf_nan=False)
     tracking: bool
-    positions: dict[str, float] = Field(default_factory=dict, max_length=14)
+    positions: dict[str, float] = Field(default_factory=dict, max_length=17)
 
     @model_validator(mode="after")
     def validate_positions(self):
         import math
-        if any(name not in ARM_INDICES or not math.isfinite(q) for name, q in self.positions.items()):
-            raise ValueError("Only finite, named G1 arm positions are accepted")
+        if any(name not in UPPER_BODY_INDICES or not math.isfinite(q) for name, q in self.positions.items()):
+            raise ValueError("Only finite, named G1 upper-body positions are accepted")
         return self

@@ -57,8 +57,16 @@ A versioned mapping from observable human landmarks to a robot's controllable jo
 _Avoid_: Model prediction, training configuration
 
 **Camera target**:
-The latest visible arm joint positions retargeted from a live landmark frame and accepted by the robot backend. It can be inspected while disarmed; publishing a motor command requires explicit arming and applies independent motion limits.
+The latest visible upper-body joint positions retargeted from a live landmark frame and accepted by the robot backend. It can be inspected while disarmed; publishing a motor command requires explicit arming and applies independent motion limits.
 _Avoid_: Measured robot state, published motor command
+
+**Single-arm control**:
+Live camera mapping of the selected left or right arm. The other arm and available waist joints hold their measured positions from the most recent explicit arming.
+_Avoid_: Released torso, full-body control
+
+**Upper-body control**:
+Live camera mapping of both arms and the physically movable waist axes. Unobserved channels hold the last commanded position; legs remain under the robot's local controller.
+_Avoid_: Locomotion, balance controller
 
 **Archive**:
 The durable collection of robot context, demonstrations, annotations, and related experiment records.

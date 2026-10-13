@@ -6,9 +6,14 @@ export type RobotConnectionConfig = {
   domain_id: number;
   max_joint_speed: number;
   max_joint_acceleration: number;
+  kp?: number;
+  kd?: number;
   rosbridge_url?: string;
   discovery_peers?: string[];
   allow_multicast?: boolean;
+  control_mode?: "arms" | "single-arm" | "upper-body";
+  active_arm?: "left" | "right";
+  waist_dof?: 1 | 3;
 };
 export type RobotTransportStatus = {
   connected: boolean;
@@ -23,6 +28,10 @@ export type RobotTransportStatus = {
   stream_connected: boolean;
   targets_received: number;
   camera_target: Record<string, number>;
+  control_mode?: RobotConnectionConfig["control_mode"] | null;
+  active_arm?: "left" | "right" | null;
+  waist_dof?: 1 | 3 | null;
+  arm_kp?: number | null;
 };
 export const getRobotTransportStatus = () => robotTransportRequest<RobotTransportStatus>("status");
 export const connectRobotTransport = (config: RobotConnectionConfig) =>

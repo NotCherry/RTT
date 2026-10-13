@@ -103,3 +103,42 @@ def test_sdk_factory_requires_restart_when_discovery_peers_change(sdk):
                                                          discovery_peers=["127.0.0.1"]))
     with pytest.raises(RuntimeError, match="discovery settings"):
         second.start()
+
+
+@pytest.mark.parametrize("dof", [1, 3])
+def test_upper_body_feedback_and_waist_pd_gains_never_touch_legs_or_locked_axes(sdk, dof):
+    adapter = robot_dds.UnitreeArmAdapter(ConnectionConfig(transport="unitree-sdk2", network_interface="lo",
+                                         control_mode="single-arm", waist_dof=dof))
+    adapter.start()
+    try:
+        message = SimpleNamespace(motor_state=[SimpleNamespace(q=.1) for _ in range(35)], mode_machine=9, crc=123, tick=1)
+        adapter.subscriber.callback(message)
+        positions = adapter.state().positions
+        assert len(positions) == 14 + dof
+        adapter.publish(positions, {}, .3, 9)
+        packet = adapter.publisher.packets[-1]
+        assert packet.motor_cmd[12].kp == 40 and packet.motor_cmd[12].kd == 2
+        assert all(m.kp == m.kd == m.mode == 0 for m in packet.motor_cmd[:12])
+        if dof == 1:
+            assert packet.motor_cmd[13].kp == packet.motor_cmd[14].kp == 0
+        else:
+            assert packet.motor_cmd[13].kp == packet.motor_cmd[14].kp == 40
+    finally:
+        adapter.close()
+
+
+@pytest.mark.parametrize("kp", [20, 40, 60])
+def test_arm_strength_encodes_selected_gain_without_changing_waist_gains(sdk, kp):
+    adapter = robot_dds.UnitreeArmAdapter(ConnectionConfig(network_interface="lo", control_mode="upper-body",
+                                         waist_dof=3, kp=kp, kd=1.5))
+    adapter.start()
+    try:
+        packet = adapter.build_command({"right_shoulder_pitch_joint": -.9, "left_shoulder_pitch_joint": -.9,
+                                        "waist_yaw_joint": .1}, {}, .5, 9)
+        assert packet.motor_cmd[15].kp == packet.motor_cmd[22].kp == kp
+        assert packet.motor_cmd[15].kd == packet.motor_cmd[22].kd == 1.5
+        assert packet.motor_cmd[12].kp == 40
+        assert packet.motor_cmd[12].kd == 2
+        assert all(m.kp == m.mode == 0 for m in packet.motor_cmd[:12])
+    finally:
+        adapter.close()

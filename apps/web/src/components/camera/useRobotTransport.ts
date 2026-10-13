@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { connectRobotTransport, createRobotTargetSocket, getRobotTransportStatus, robotTransportAction, type RobotConnectionConfig, type RobotTransportStatus } from "@/domain/robotTransport";
+import { selectRobotTargets } from "@/domain/robotControlMapping";
 
 export function useRobotTransport() {
   const [status, setStatus] = useState<RobotTransportStatus | null>(null);
@@ -8,6 +9,7 @@ export function useRobotTransport() {
   const [owned, setOwned] = useState(false);
   const [streamReady, setStreamReady] = useState(false);
   const token = useRef("");
+  const config = useRef<RobotConnectionConfig | null>(null);
   const socket = useRef<WebSocket | null>(null);
   const ready = useRef(false);
   const sequence = useRef(0);
@@ -53,12 +55,13 @@ export function useRobotTransport() {
   }
   return {
     status, error, busy, owned, streamReady,
-    connect: (config: RobotConnectionConfig) => operate(async () => {
+    connect: (settings: RobotConnectionConfig) => operate(async () => {
       ready.current = false;
       setStreamReady(false);
-      const next = await connectRobotTransport(config);
+      const next = await connectRobotTransport(settings);
       if (!mounted.current) { await robotTransportAction("disconnect", next.token); return; }
       token.current = next.token;
+      config.current = settings;
       sequence.current = 0;
       setOwned(true);
       setStatus(next);
@@ -112,7 +115,8 @@ export function useRobotTransport() {
       if (!ready.current || stream?.readyState !== WebSocket.OPEN) return;
       // Drop rather than queue targets when the network is congested.
       if (stream.bufferedAmount > 0) { stream.close(); return; }
-      stream.send(JSON.stringify({ sequence: sequence.current++, sent_at_ms: Date.now() + clockOffset.current, tracking: Boolean(positions), positions: positions ?? {} }));
+      const target = selectRobotTargets(positions, config.current);
+      stream.send(JSON.stringify({ sequence: sequence.current++, sent_at_ms: Date.now() + clockOffset.current, tracking: Boolean(target), positions: target ?? {} }));
     },
   };
 }

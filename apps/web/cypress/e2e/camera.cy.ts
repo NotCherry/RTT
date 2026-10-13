@@ -22,7 +22,7 @@ const robot = {
     },
   ],
 };
-function openCameraPage(fakeCamera = false, dimensions = { width: 320, height: 240 }, fakeArmTargets = false) {
+function openCameraPage(fakeCamera = false, dimensions = { width: 320, height: 240 }, fakeArmTargets: boolean | Record<string, number> = false) {
   cy.intercept("GET", "/api/robots/demo", { body: robot });
   cy.intercept("GET", "/api/robots/default", { body: robot }).as("defaultRobot");
   cy.intercept("POST", "/api/sessions", {
@@ -39,7 +39,8 @@ function openCameraPage(fakeCamera = false, dimensions = { width: 320, height: 2
         win.WebSocket.prototype.send = function (data) {
           if (this.url.includes("/api/robot-transport/stream") && typeof data === "string") {
             const packet = JSON.parse(data);
-            if ("tracking" in packet) data = JSON.stringify({ ...packet, tracking: true, positions: { right_shoulder_roll_joint: .4 } });
+            if ("tracking" in packet) data = JSON.stringify({ ...packet, tracking: true,
+              positions: typeof fakeArmTargets === "object" ? fakeArmTargets : { right_shoulder_roll_joint: .4 } });
           }
           send.call(this, data);
         };
@@ -154,9 +155,9 @@ describe("Camera recordings", () => {
     cy.contains("button", "Open camera").click();
     cy.contains("Live processing ready", { timeout: 120000 }).should("exist");
     cy.contains("button", "Connect mock robot").click();
-    cy.contains("Live arm targets are reaching the backend.", { timeout: 15000 }).should("exist");
+    cy.contains("Live upper-body targets are reaching the backend.", { timeout: 15000 }).should("exist");
     cy.contains("Disarmed · motor commands are not being published.").should("exist");
-    cy.contains("summary", "Measured and commanded arm positions").click();
+    cy.contains("summary", "Measured and commanded upper-body positions").click();
     cy.contains("tr", "right_shoulder_roll_joint").within(() => {
       cy.get("td").eq(2).should("have.text", "0.400");
       cy.get("td").eq(3).should("have.text", "—");
@@ -172,6 +173,49 @@ describe("Camera recordings", () => {
     cy.contains("button", "Disconnect robot").click();
     cy.contains("button", "Connect mock robot").should("exist");
   });
+
+  for (const scope of ["single", "g1-upper-body"]) {
+    it(`uses ${scope} mapping with a held torso or mapped waist and retains explicit release`, () => {
+      const positions = scope === "single" ? { right_elbow_joint: .4 }
+        : { right_elbow_joint: .4, left_elbow_joint: .3, waist_yaw_joint: .1, waist_roll_joint: .1, waist_pitch_joint: -.1 };
+      openCameraPage(true, { width: 320, height: 240 }, positions);
+      cy.get('[aria-label="Mapping scope"]').select(scope);
+      cy.get('[aria-label="Movable waist axes"]').should("have.value", "3");
+      for (const width of [1280, 390]) {
+        cy.viewport(width, 844);
+        cy.get('.camera-mapping-controls, [aria-label="Robot connection controls"]').each($panel => {
+          $panel.find("input, select, button").each((_, control) => {
+            const bounds = control.getBoundingClientRect();
+            expect(bounds.left).to.be.at.least(0); expect(bounds.right).to.be.at.most(width);
+          });
+        });
+        cy.screenshot(`robot-${scope}-controls-${width}`);
+      }
+      cy.viewport(1280, 900);
+      cy.get('[aria-label="Processing mode"]').select("live");
+      cy.contains("button", "Open camera").click();
+      cy.contains("Live processing ready", { timeout: 120000 }).should("exist");
+      cy.contains("button", "Connect mock robot").click();
+      cy.get('[aria-label="Mapping scope"]').should("be.disabled");
+      cy.contains("Live upper-body targets are reaching the backend.", { timeout: 15000 }).should("exist");
+      cy.contains("summary", "Measured and commanded upper-body positions").click();
+      cy.contains("button", "Arm live control").should("be.enabled").click();
+      cy.contains("tr", "right_elbow_joint", { timeout: 15000 }).find("td").eq(3)
+        .should($cell => expect(Number($cell.text())).to.be.greaterThan(.05));
+      cy.contains("tr", "waist_yaw_joint").find("td").eq(3)
+        .should($cell => scope === "single" ? expect(Number($cell.text())).to.equal(0) : expect(Number($cell.text())).to.be.greaterThan(.01));
+      if (scope === "single") {
+        cy.contains("tr", "left_elbow_joint").find("td").eq(3).should("have.text", "0.000");
+      } else {
+        cy.contains("tr", "waist_roll_joint").find("td").eq(3).should($cell => expect(Number($cell.text())).to.be.greaterThan(.01));
+        cy.contains("tr", "waist_pitch_joint").find("td").eq(3).should($cell => expect(Number($cell.text())).to.be.lessThan(-.01));
+      }
+      cy.contains("button", "Stop / disarm").click();
+      cy.contains("Disarmed · motor commands are not being published.").should("exist");
+      cy.contains("button", "Disconnect robot").click();
+      cy.get('[aria-label="Mapping scope"]').should("be.enabled");
+    });
+  }
 
   for (const dimensions of [{ width: 1280, height: 720 }, { width: 720, height: 1280 }]) {
     it(`fits the entire ${dimensions.width}×${dimensions.height} live frame and expands without clipping`, () => {

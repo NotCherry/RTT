@@ -5,7 +5,7 @@ import socket
 import threading
 import time
 from typing import Protocol
-from .robot_motion import ARM_INDICES, arm_names
+from .robot_motion import UPPER_BODY_INDICES, WAIST_INDICES, controlled_names
 from .robot_transport_contract import ConnectionConfig
 from .robot_dds_network import initialize_sdk_channels
 
@@ -26,7 +26,7 @@ class ArmAdapter(Protocol):
 
 class MockArmAdapter:
     def __init__(self, config):
-        self.positions = {name: 0.0 for name in arm_names(config.robot_model)}
+        self.positions = {name: 0.0 for name in controlled_names(config)}
         self.packets = 0
 
     def start(self): pass
@@ -82,7 +82,7 @@ class UnitreeArmAdapter:
             if self.crc.Crc(message) != message.crc:
                 return
             tick = int(message.tick)
-            positions = {name: float(message.motor_state[ARM_INDICES[name]].q) for name in arm_names(self.config.robot_model)}
+            positions = {name: float(message.motor_state[UPPER_BODY_INDICES[name]].q) for name in controlled_names(self.config)}
             if not all(math.isfinite(q) for q in positions.values()):
                 return
             state = ArmState(positions, time.monotonic(), int(message.mode_machine))
@@ -103,13 +103,15 @@ class UnitreeArmAdapter:
         command.mode_pr = 0
         command.mode_machine = mode_machine
         for name, q in positions.items():
-            motor = command.motor_cmd[ARM_INDICES[name]]
+            if name not in controlled_names(self.config):
+                raise ValueError("Motor is unavailable in the selected control contract")
+            motor = command.motor_cmd[UPPER_BODY_INDICES[name]]
             motor.mode = 1  # Match the explicit servo mode used by the onboard G1 scripts.
             motor.q = q
             motor.dq = velocities.get(name, 0.0)
             motor.tau = 0.0
-            motor.kp = self.config.kp
-            motor.kd = self.config.kd
+            motor.kp = self.config.waist_kp if name in WAIST_INDICES else self.config.kp
+            motor.kd = self.config.waist_kd if name in WAIST_INDICES else self.config.kd
         command.motor_cmd[29].q = weight
         command.crc = self.crc.Crc(command)
         return command

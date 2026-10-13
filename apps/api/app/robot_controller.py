@@ -3,7 +3,7 @@ import secrets
 import threading
 import time
 from .robot_dds import create_adapter
-from .robot_motion import ARM_LIMITS, advance_motion, arm_names
+from .robot_motion import UPPER_BODY_LIMITS, advance_upper_body, controlled_names, target_names
 from .robot_transport_contract import TargetPacket
 
 
@@ -69,9 +69,9 @@ class RobotController:
             state = self.fresh_state()
             if state is None:
                 raise ValueError("Fresh measured robot state is required before arming")
-            names = arm_names(self.config.robot_model)
-            if set(state.positions) != set(names) or any(not ARM_LIMITS[name][0] <= state.positions[name] <= ARM_LIMITS[name][1] for name in names):
-                raise ValueError("Measured arm positions do not match the selected G1 contract or joint limits")
+            names = controlled_names(self.config)
+            if set(state.positions) != set(names) or any(not UPPER_BODY_LIMITS[name][0] <= state.positions[name] <= UPPER_BODY_LIMITS[name][1] for name in names):
+                raise ValueError("Measured upper-body positions do not match the selected G1 contract or joint limits")
             self.positions = dict(state.positions)
             self.velocities = dict.fromkeys(names, 0.0)
             self.target, self.target_at, self.sequence = None, -float("inf"), -1
@@ -109,8 +109,8 @@ class RobotController:
                 raise ValueError("Target packet is stale or has an invalid timestamp")
             if packet.sequence <= self.sequence:
                 raise ValueError("Out-of-order target packet")
-            if any(name not in arm_names(self.config.robot_model) for name in packet.positions):
-                raise ValueError("Joint is unavailable on the selected robot model")
+            if any(name not in target_names(self.config) for name in packet.positions):
+                raise ValueError("Joint is unavailable in the selected robot model or control mode")
             self.sequence = packet.sequence
             # Diagnostics remain visible while disarmed; they never initialize motion.
             self.camera_target = dict(packet.positions) if packet.tracking and packet.positions else None
@@ -148,7 +148,7 @@ class RobotController:
             active = self.target is not None and self.clock() - self.target_at <= self.config.stale_after_ms / 1000
             if active:
                 # Missing/occluded channels retain their last command, not browser neutral.
-                self.positions, self.velocities = advance_motion(self.positions, self.velocities, self.target, dt,
+                self.positions, self.velocities = advance_upper_body(self.positions, self.velocities, self.target, dt,
                     self.config.max_joint_speed, self.config.max_joint_acceleration)
                 self.reason = "Following live camera"
             else:
@@ -168,6 +168,10 @@ class RobotController:
             camera_fresh = self.adapter is not None and self.stream is not None and self.clock() - self.camera_at <= self.config.stale_after_ms / 1000
             return {"connected": self.adapter is not None, "armed": self.armed, "reason": reason,
                 "transport": self.config.transport if self.config else None, "state_fresh": state is not None,
+                "control_mode": self.config.control_mode if self.config else None,
+                "active_arm": self.config.active_arm if self.config else None,
+                "waist_dof": self.config.waist_dof if self.config else None,
+                "arm_kp": self.config.kp if self.config else None,
                 "measured": dict(state.positions) if state else {}, "commanded": dict(self.positions),
                 "packets_sent": self.sent, "engagement": self.weight,
                 "stream_connected": self.stream is not None, "targets_received": self.received,

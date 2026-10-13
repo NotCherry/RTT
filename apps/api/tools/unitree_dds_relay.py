@@ -22,13 +22,15 @@ def main(argv=None):
     parser.add_argument("--client-peer", action="append", default=[])
     parser.add_argument("--forward-commands", action="store_true",
                         help="Allow validated arm packets from RTT; startup sends no commands")
+    parser.add_argument("--waist-dof", type=int, choices=(1, 3), default=1,
+                        help="Number of physically movable waist axes permitted in commands")
     parser.add_argument("--report", type=Path)
     args = parser.parse_args(argv)
     for interface in (args.robot_interface, args.client_interface):
         socket.if_nametoindex(interface)
     peers = [str(IPv4Address(peer)) for peer in args.client_peer]
     relay = DDSRelay(args.robot_interface, args.client_interface, args.robot_domain,
-                     args.client_domain, peers, args.forward_commands)
+                     args.client_domain, peers, args.forward_commands, waist_dof=args.waist_dof)
     stopping = threading.Event()
     signal.signal(signal.SIGTERM, lambda *_: stopping.set())
     signal.signal(signal.SIGINT, lambda *_: stopping.set())

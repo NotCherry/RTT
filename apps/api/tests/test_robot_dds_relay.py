@@ -86,3 +86,26 @@ def test_relay_rejects_frozen_corrupt_state_and_stale_motion_but_accepts_release
 def test_relay_rejects_looping_domains(domains):
     with pytest.raises(ValueError):
         DDSRelay("lo", "lo", *domains)
+
+
+def test_relay_forwards_three_axis_torso_contract_and_rejects_unsupported_axes_and_legs():
+    relay = DDSRelay("lo", "lo", 65, 66, forward_commands=True, waist_dof=3)
+    robot = SimulatedG1()
+    adapter = UnitreeArmAdapter(ConnectionConfig(network_interface="lo", control_mode="upper-body", waist_dof=3))
+    from unitree_sdk2py.idl.default import unitree_hg_msg_dds__LowCmd_
+    adapter.message_factory, adapter.crc = unitree_hg_msg_dds__LowCmd_, robot.crc
+    try:
+        assert relay.accept_state(robot.state())
+        positions = {**robot.positions, "waist_yaw_joint": .1, "waist_roll_joint": .05, "waist_pitch_joint": -.1}
+        packet = adapter.build_command(positions, {}, .5, 11)
+        assert relay.accept_command(packet)
+        robot.receive(packet)
+        assert robot.accepted == 1 and robot.positions["waist_pitch_joint"] == pytest.approx(-.1)
+        relay.waist_names = ["waist_yaw_joint"]
+        assert not relay.accept_command(packet)
+        relay.waist_names = list(positions)
+        packet.motor_cmd[0].kp = 40
+        packet.crc = robot.crc.Crc(packet)
+        assert not relay.accept_command(packet)
+    finally:
+        relay.close()
