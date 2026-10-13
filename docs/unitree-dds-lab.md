@@ -1,5 +1,10 @@
 # G1 DDS and Windows/WSL transport lab
 
+For the current physical setup, see [Ethernet and Wi-Fi DDS](unitree-dds-ethernet-wifi.md).
+On 2026-10-13, separate scoped firewall rules restored direct Ethernet state,
+and a native Jetson DDS relay supplied Wi-Fi state. The findings below retain
+the earlier lab context.
+
 Windows can remain the desktop OS. Prefer **Unitree ROS bridge** in RTT for the
 next hardware test: DDS runs on the existing native Linux Jetson, with measured
 state and bounded arm commands carried to RTT over WebSockets. Direct DDS remains

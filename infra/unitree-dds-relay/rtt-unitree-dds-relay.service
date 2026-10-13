@@ -1,0 +1,21 @@
+[Unit]
+Description=RTT Unitree DDS Wi-Fi relay
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=unitree
+WorkingDirectory=/home/unitree/rtt-dds-relay
+EnvironmentFile=/etc/rtt-unitree-dds-relay.env
+ExecStart=/bin/bash /home/unitree/rtt-dds-relay/start-relay.sh
+RuntimeDirectory=rtt-unitree-dds-relay
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+
+[Install]
+WantedBy=multi-user.target

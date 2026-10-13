@@ -8,6 +8,15 @@ export function RobotConnectionPanel({ connection, live }: { connection: ReturnT
   const [transport, setTransport] = useState<RobotConnectionConfig["transport"]>("mock");
   const [model, setModel] = useState<"g1-29" | "g1-23">("g1-29");
   const [network, setNetwork] = useState("eth0");
+  const [domain, setDomain] = useState("0");
+  const [peers, setPeers] = useState("");
+  const [multicast, setMulticast] = useState(true);
+  const peerList = peers.split(/[\s,]+/).filter(Boolean);
+  const ddsValid = !!network.trim() && !!domain.trim() && Number.isInteger(Number(domain)) && Number(domain) >= 0 && Number(domain) <= 232
+    && (multicast || peerList.length > 0) && peerList.length <= 16 && peerList.every(peer => {
+      const parts = peer.split(".");
+      return parts.length === 4 && parts.every(part => /^(0|[1-9]\d{0,2})$/.test(part) && Number(part) <= 255);
+    });
   const [speed, setSpeed] = useState(1);
   const [bridgeUrl, setBridgeUrl] = useState("ws://192.168.123.164:9090");
   const bridgeValid = /^wss?:\/\/[^\s/]+/.test(bridgeUrl.trim());
@@ -32,16 +41,23 @@ export function RobotConnectionPanel({ connection, live }: { connection: ReturnT
       </select></label>
       {transport === "unitree-sdk2" && <>
         <label>Network interface<input aria-label="Robot network interface" value={network} onChange={e => setNetwork(e.target.value)} disabled={connection.busy} /></label>
+        <label>DDS domain<input aria-label="Robot DDS domain" type="number" min="0" max="232" value={domain} onChange={e => setDomain(e.target.value)} disabled={connection.busy} /></label>
+        <label>Discovery peers<input aria-label="Robot DDS discovery peers" placeholder="IPv4 addresses, separated by commas" value={peers} onChange={e => setPeers(e.target.value)} disabled={connection.busy} /></label>
+        <label>Multicast<select aria-label="Robot DDS multicast" value={String(multicast)} onChange={e => setMulticast(e.target.value === "true")} disabled={connection.busy}>
+          <option value="true">Enabled</option><option value="false">Disabled · peers only</option>
+        </select></label>
       </>}
       {transport === "unitree-rosbridge" && <label>ROS bridge URL<input aria-label="Robot ROS bridge URL" value={bridgeUrl} onChange={e => setBridgeUrl(e.target.value)} disabled={connection.busy} /></label>}
     </div>}
     {transport === "unitree-rosbridge" && !status?.connected && <p className="helper-text">Connect through the robot’s Linux ROS bridge. Measured state and arm commands use the bridge; connecting leaves control disarmed.</p>}
+    {transport === "unitree-sdk2" && !status?.connected && <p className="helper-text">Use the backend’s interface name. Direct robot Ethernet uses domain 0 with multicast enabled; a DDS relay uses its client domain and peer address. Restart the backend before changing DDS network settings.</p>}
     <p className="helper-text" aria-live="polite">{status?.reason ?? "Connect a mock robot or select a Unitree connection for your G1."}
       {status?.connected && ` · ${status.transport === "mock" ? "Mock" : "Physical"} · ${status.packets_sent} packets · state ${status.state_fresh ? "fresh" : "waiting"} · ${status.targets_received ?? 0} camera frames received`}
     </p>
     <div className="route-actions">
-      {!status?.connected ? <Button disabled={connection.busy || (transport === "unitree-sdk2" && !network) || (transport === "unitree-rosbridge" && !bridgeValid)}
-        onClick={() => void connection.connect({ transport, robot_model: model, network_interface: transport === "unitree-rosbridge" ? "lo" : network, domain_id: 0, max_joint_speed: speed, max_joint_acceleration: 3,
+      {!status?.connected ? <Button disabled={connection.busy || (transport === "unitree-sdk2" && !ddsValid) || (transport === "unitree-rosbridge" && !bridgeValid)}
+        onClick={() => void connection.connect({ transport, robot_model: model, network_interface: transport === "unitree-rosbridge" ? "lo" : network.trim(), domain_id: transport === "unitree-sdk2" ? Number(domain) : 0, max_joint_speed: speed, max_joint_acceleration: 3,
+          ...(transport === "unitree-sdk2" ? { discovery_peers: peerList, allow_multicast: multicast } : {}),
           ...(transport === "unitree-rosbridge" ? { rosbridge_url: bridgeUrl.trim() } : {}) })}>
         {transport === "mock" ? "Connect mock robot" : "Connect physical robot"}
       </Button> : <>

@@ -1,10 +1,12 @@
 # Run in an elevated Windows PowerShell session for WSL mirrored networking.
-# Restrict inbound DDS to the robot's wired subnet addresses; preserve defaults.
+# Restrict inbound DDS to one robot-facing interface; preserve defaults.
 [CmdletBinding(SupportsShouldProcess)]
 param(
     [string]$LocalAddress = '192.168.123.200',
     [string[]]$RobotAddresses = @('192.168.123.161', '192.168.123.164'),
     [string]$InterfaceAlias = 'Ethernet',
+    [ValidatePattern('^RTT-Unitree-DDS-[A-Za-z0-9-]+$')]
+    [string]$RuleName = 'RTT-Unitree-DDS-Inbound',
     [switch]$Remove
 )
 
@@ -17,7 +19,6 @@ if (-not $WhatIfPreference -and
     throw 'Run this script in Windows PowerShell as Administrator.'
 }
 
-$ruleName = 'RTT-Unitree-DDS-Inbound'
 $wslCreator = '{40E0AC32-46A5-438A-A0B2-2B479E8F2E90}'
 $destinations = @($LocalAddress, '239.255.0.1')
 # CycloneDDS uses 7400/7401 for domain-zero discovery/multicast and may

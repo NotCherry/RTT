@@ -7,6 +7,8 @@ export type RobotConnectionConfig = {
   max_joint_speed: number;
   max_joint_acceleration: number;
   rosbridge_url?: string;
+  discovery_peers?: string[];
+  allow_multicast?: boolean;
 };
 export type RobotTransportStatus = {
   connected: boolean;

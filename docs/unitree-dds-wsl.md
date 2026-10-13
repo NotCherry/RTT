@@ -7,7 +7,9 @@ control through the Linux ROS bridge. Firewall filtering is no longer the sole
 leading hypothesis; physical confirmation remains pending.
 
 Use mirrored WSL networking and the SDK backend's host network. The interface
-entered in RTT belongs to the Linux backend: `eth1` in the inspected setup.
+entered in RTT belongs to the Linux backend. In the 2026-10-13 setup,
+`eth0` is wired Ethernet and `eth1` is Wi-Fi; see
+[the current two-interface DDS guide](unitree-dds-ethernet-wifi.md).
 The Jetson at `192.168.123.164` uses `enP8p1s0`; its robot controller is `.161`.
 
 An SSH diagnostic received 8,313 `rt/lowstate` samples in eight seconds on the

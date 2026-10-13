@@ -33,6 +33,28 @@ it("connects through the ROS bridge URL while leaving motor control disarmed", (
   fireEvent.change(screen.getByLabelText("Robot ROS bridge URL"), { target: { value: "" } });
   expect(screen.getByRole("button", { name: "Connect physical robot" })).toBeDisabled();
 });
+it("supports Wi-Fi DDS relay discovery and validates the domain and peers", () => {
+  const c = connection();
+  render(<RobotConnectionPanel connection={c} live={true} />);
+  fireEvent.change(screen.getByLabelText("Robot connection"), { target: { value: "unitree-sdk2" } });
+  fireEvent.change(screen.getByLabelText("Robot network interface"), { target: { value: "eth1" } });
+  fireEvent.change(screen.getByLabelText("Robot DDS domain"), { target: { value: "7" } });
+  fireEvent.change(screen.getByLabelText("Robot DDS discovery peers"), { target: { value: "192.168.67.95" } });
+  fireEvent.change(screen.getByLabelText("Robot DDS multicast"), { target: { value: "false" } });
+  const button = screen.getByRole("button", { name: "Connect physical robot" });
+  fireEvent.click(button);
+  expect(c.connect).toHaveBeenCalledWith(expect.objectContaining({ network_interface: "eth1", domain_id: 7, discovery_peers: ["192.168.67.95"], allow_multicast: false }));
+  expect(c.action).not.toHaveBeenCalled();
+  fireEvent.change(screen.getByLabelText("Robot DDS discovery peers"), { target: { value: "192.168.67.999" } });
+  expect(button).toBeDisabled();
+  fireEvent.change(screen.getByLabelText("Robot DDS discovery peers"), { target: { value: "" } });
+  expect(button).toBeDisabled();
+  fireEvent.change(screen.getByLabelText("Robot DDS multicast"), { target: { value: "true" } });
+  fireEvent.change(screen.getByLabelText("Robot DDS domain"), { target: { value: "233" } });
+  expect(button).toBeDisabled();
+  fireEvent.change(screen.getByLabelText("Robot DDS domain"), { target: { value: "" } });
+  expect(button).toBeDisabled();
+});
 it("exposes stop/disarm while the controller is armed", () => {
   const c = { ...connection(), owned: true, status: { ...connected, armed: true, reason: "Following live camera", packets_sent: 1, engagement: 1 } };
   render(<RobotConnectionPanel connection={c} live={true} />);
