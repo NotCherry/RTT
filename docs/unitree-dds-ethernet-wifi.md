@@ -14,8 +14,9 @@ In Camera select **Unitree DDS**, G1 EDU 29 DOF, then use:
 
 Interface names and addresses describe the inspected host, not a universal
 mapping. Inspect `ip -br address` in the backend host after networking changes.
-Disconnect and restart the backend (`podman restart rtt_backend_1`) before
-changing DDS interface/domain/discovery settings. Connect stays disarmed and
+Disconnect before changing DDS interface/domain/discovery settings. Each
+connection starts a fresh DDS process, so a backend restart is unnecessary.
+Connect stays disarmed and
 **Measured and commanded arm positions** shows fresh measured arms without
 opening a camera. Keep motor control disarmed for transport diagnosis.
 
@@ -123,3 +124,28 @@ physical Ethernet successfully receives the robot's reassembled 2,180-byte
 multicast datagrams, so loopback loss should not be treated as proof that
 physical DDS is broken. The old findings are retained in
 [the previous lab guide](unitree-dds-lab.md).
+
+## Disconnect freeze repair
+
+Later on 2026-10-13, a native DDS writer destructor stalled during disconnect,
+holding the controller lock while a live target handler blocked the API event
+loop. Physical DDS now runs in a disposable process with startup/publication
+deadlines and bounded termination. Startup and teardown do not hold the
+controller state lock; WebSocket operations run outside the API event loop,
+and cancellation cannot interrupt ownership cleanup.
+
+Six physical read-only connect/disconnect cycles alternated Ethernet and Wi-Fi
+without a backend restart. All received 14 fresh measured joints, sent no
+motor commands and disconnected within 0.2 seconds. Browser requests now time
+out instead of accumulating, and stale measured values clear during an outage.
+
+166 backend tests, 188 frontend tests, nine camera browser journeys, the
+production build and the real DDS controller simulator lab passed. Native
+hang/crash tests verify termination, state invalidation and reconnect; API
+tests verify health/status responsiveness and cancelled stream cleanup.
+The code-review skill remained unavailable; the diff was reviewed manually.
+See [ADR 0008](adr/0008-dds-process-isolation.md).
+
+Physical FSM checks reported 0 (ZeroTorque), then 1 (Damp), then 802 after
+operator changes. A non-passive FSM and delivered commands still require
+on-site confirmation that the measured arms actually follow the live target.

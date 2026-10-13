@@ -213,3 +213,40 @@ def test_reconnect_waits_for_previous_disconnect_to_finish():
         runtime.disconnect(token)
     assert runtime.token == new_token
     runtime.disconnect(new_token)
+
+
+def test_status_stays_available_while_native_teardown_waits():
+    closing, release = threading.Event(), threading.Event()
+    class BlockingCloseAdapter(FakeAdapter):
+        def close(self):
+            closing.set()
+            assert release.wait(2)
+    runtime = RobotController(BlockingCloseAdapter)
+    token = runtime.connect(ConnectionConfig(network_interface="lo"), run_worker=False)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        disconnect = pool.submit(runtime.disconnect, token)
+        assert closing.wait(1)
+        try:
+            status = pool.submit(runtime.status).result(timeout=.3)
+            assert not status["connected"] and not status["armed"]
+        finally:
+            release.set()
+        disconnect.result(timeout=1)
+
+
+def test_status_stays_available_while_native_startup_waits():
+    starting, release = threading.Event(), threading.Event()
+    class BlockingStartAdapter(FakeAdapter):
+        def start(self):
+            starting.set()
+            assert release.wait(2)
+    runtime = RobotController(BlockingStartAdapter)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        connect = pool.submit(runtime.connect, ConnectionConfig(network_interface="lo"), False)
+        assert starting.wait(1)
+        try:
+            assert not pool.submit(runtime.status).result(timeout=.3)["connected"]
+        finally:
+            release.set()
+        token = connect.result(timeout=1)
+    runtime.disconnect(token)

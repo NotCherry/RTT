@@ -49,6 +49,10 @@ def test_mock_http_and_websocket_lifecycle():
             assert stream.receive_json()["ready"] is True
             assert local.post("/api/robot-transport/arm", headers=headers).json()["armed"]
             stream.send_json({"sequence": 0, "sent_at_ms": time.time() * 1000, "tracking": True, "positions": {"left_elbow_joint": .5}})
+        # A client close precedes server-side disconnect detection and cleanup.
+        deadline = time.monotonic() + 1
+        while local.get("/api/robot-transport/status").json()["connected"] and time.monotonic() < deadline:
+            time.sleep(.01)
         assert not runtime.armed
         assert local.get("/api/robot-transport/status").json()["connected"] is False
     runtime.disconnect()
@@ -59,3 +63,61 @@ def test_physical_connect_does_not_require_an_operator_key(monkeypatch):
     response = client.post("/api/robot-transport/connect", json={"transport": "unitree-sdk2", "network_interface": "lo"})
     assert response.status_code == 200
     assert response.json()["token"] == "owner"
+
+
+def test_live_target_lock_cannot_block_the_api_event_loop():
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+    from app.robot_controller import RobotController
+    from app.robot_transport import create_transport_router
+    runtime = RobotController()
+    local_app = FastAPI()
+    local_app.include_router(create_transport_router(runtime))
+    @local_app.get("/api/health")
+    async def health():
+        return {"status": "ok"}
+    locked, release = threading.Event(), threading.Event()
+    def hold_controller_lock():
+        with runtime.lock:
+            locked.set()
+            assert release.wait(3)
+    with TestClient(local_app) as local, ThreadPoolExecutor(max_workers=2) as pool:
+        token = local.post("/api/robot-transport/connect", json={"transport": "mock", "network_interface": "lo"}).json()["token"]
+        with local.websocket_connect("/api/robot-transport/stream") as stream:
+            stream.send_json({"token": token})
+            assert stream.receive_json()["ready"]
+            holder = pool.submit(hold_controller_lock)
+            assert locked.wait(1)
+            try:
+                stream.send_json({"sequence": 0, "sent_at_ms": time.time() * 1000, "tracking": False})
+                response = pool.submit(local.get, "/api/health").result(timeout=.5)
+                assert response.json() == {"status": "ok"}
+            finally:
+                release.set()
+                holder.result(timeout=1)
+    runtime.disconnect()
+
+
+def test_closing_during_stream_attachment_does_not_strand_controller_ownership():
+    import threading
+    from app.robot_controller import RobotController
+    from app.robot_transport import create_transport_router
+    attaching = threading.Event()
+    class SlowAttachController(RobotController):
+        def attach_stream(self, token):
+            attaching.set()
+            time.sleep(.1)
+            return super().attach_stream(token)
+    runtime = SlowAttachController()
+    local_app = FastAPI()
+    local_app.include_router(create_transport_router(runtime))
+    with TestClient(local_app) as local:
+        token = local.post("/api/robot-transport/connect", json={"transport": "mock", "network_interface": "lo"}).json()["token"]
+        with local.websocket_connect("/api/robot-transport/stream") as stream:
+            stream.send_json({"token": token})
+            assert attaching.wait(1)
+        deadline = time.monotonic() + 1
+        while local.get("/api/robot-transport/status").json()["connected"] and time.monotonic() < deadline:
+            time.sleep(.01)
+        assert not runtime.status()["connected"]
+        assert runtime.token is None

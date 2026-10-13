@@ -50,7 +50,7 @@ export function RobotConnectionPanel({ connection, live }: { connection: ReturnT
       {transport === "unitree-rosbridge" && <label>ROS bridge URL<input aria-label="Robot ROS bridge URL" value={bridgeUrl} onChange={e => setBridgeUrl(e.target.value)} disabled={connection.busy} /></label>}
     </div>}
     {transport === "unitree-rosbridge" && !status?.connected && <p className="helper-text">Connect through the robot’s Linux ROS bridge. Measured state and arm commands use the bridge; connecting leaves control disarmed.</p>}
-    {transport === "unitree-sdk2" && !status?.connected && <p className="helper-text">Use the backend’s interface name. Direct robot Ethernet uses domain 0 with multicast enabled; a DDS relay uses its client domain and peer address. Restart the backend before changing DDS network settings.</p>}
+    {transport === "unitree-sdk2" && !status?.connected && <p className="helper-text">Use the backend’s interface name. Direct robot Ethernet uses domain 0 with multicast enabled; a DDS relay uses its client domain and peer address. Disconnect before changing network settings; each connection starts a fresh DDS process.</p>}
     <p className="helper-text" aria-live="polite">{status?.reason ?? "Connect a mock robot or select a Unitree connection for your G1."}
       {status?.connected && ` · ${status.transport === "mock" ? "Mock" : "Physical"} · ${status.packets_sent} packets · state ${status.state_fresh ? "fresh" : "waiting"} · ${status.targets_received ?? 0} camera frames received`}
     </p>

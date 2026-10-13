@@ -130,4 +130,7 @@ def create_adapter(config):
     if config.transport == "unitree-rosbridge":
         from .robot_rosbridge import RosbridgeArmAdapter
         return RosbridgeArmAdapter(config)
-    return MockArmAdapter(config) if config.transport == "mock" else UnitreeArmAdapter(config)
+    if config.transport == "mock":
+        return MockArmAdapter(config)
+    from .robot_dds_process import ProcessDDSAdapter
+    return ProcessDDSAdapter(config)

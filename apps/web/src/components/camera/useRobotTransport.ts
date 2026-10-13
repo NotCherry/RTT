@@ -15,13 +15,31 @@ export function useRobotTransport() {
   const mounted = useRef(true);
   useEffect(() => {
     mounted.current = true;
-    const poll = () => void getRobotTransportStatus().then(next => { if (mounted.current) setStatus(next); }).catch(() => {});
+    let polling = false;
+    const unavailable = "Robot backend is not responding. Measured state is unavailable.";
+    const poll = () => {
+      if (polling) return;
+      polling = true;
+      void getRobotTransportStatus().then(next => {
+        if (mounted.current) {
+          setStatus(next);
+          setError(previous => previous === unavailable ? "" : previous);
+        }
+      }).catch(() => {
+        if (mounted.current) {
+          setError(unavailable);
+          setStatus(previous => previous ? { ...previous, state_fresh: false, measured: {}, camera_target: {}, reason: unavailable } : null);
+        }
+      }).finally(() => { polling = false; });
+    };
     poll();
     const timer = setInterval(poll, 500);
     return () => {
       mounted.current = false;
       clearInterval(timer);
-      socket.current?.close();
+      const stream = socket.current;
+      socket.current = null;
+      stream?.close();
       const owner = token.current;
       if (owner) void robotTransportAction("disconnect", owner).catch(() => {});
     };
@@ -82,8 +100,9 @@ export function useRobotTransport() {
       if (action === "disconnect") {
         token.current = "";
         ready.current = false;
-        socket.current?.close();
+        const stream = socket.current;
         socket.current = null;
+        stream?.close();
         if (mounted.current) setOwned(false);
         if (mounted.current) setStreamReady(false);
       }

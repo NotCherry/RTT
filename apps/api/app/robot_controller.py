@@ -29,27 +29,29 @@ class RobotController:
         self.sent = 0
 
     def connect(self, config, run_worker=True):
-        with self.lifecycle, self.lock:
-            if self.adapter is not None:
-                raise ValueError("A controller is already connected; disconnect it first")
+        with self.lifecycle:
+            with self.lock:
+                if self.adapter is not None:
+                    raise ValueError("A controller is already connected; disconnect it first")
             adapter = self.factory(config)
             try:
                 adapter.start()
             except Exception as exc:
                 adapter.close()
                 raise RuntimeError(f"Robot connection failed: {exc}") from exc
-            self.adapter, self.config = adapter, config
-            self.token = secrets.token_urlsafe(32)
-            self.armed, self.weight, self.sent = False, 0.0, 0
-            self.positions, self.velocities = {}, {}
-            self.camera_target, self.camera_at, self.received = None, -float("inf"), 0
-            self.target, self.target_at, self.sequence = None, -float("inf"), -1
-            self.reason = "Connected · waiting for measured state"
-            self.stop_event.clear()
-            if run_worker:
-                self.worker = threading.Thread(target=self._run, name="robot-arm-control", daemon=True)
-                self.worker.start()
-            return self.token
+            with self.lock:
+                self.adapter, self.config = adapter, config
+                self.token = secrets.token_urlsafe(32)
+                self.armed, self.weight, self.sent = False, 0.0, 0
+                self.positions, self.velocities = {}, {}
+                self.camera_target, self.camera_at, self.received = None, -float("inf"), 0
+                self.target, self.target_at, self.sequence = None, -float("inf"), -1
+                self.reason = "Connected · waiting for measured state"
+                self.stop_event.clear()
+                if run_worker:
+                    self.worker = threading.Thread(target=self._run, name="robot-arm-control", daemon=True)
+                    self.worker.start()
+                return self.token
 
     def authorize(self, token):
         if not self.token or not token or not secrets.compare_digest(self.token, token):
@@ -198,6 +200,8 @@ class RobotController:
         if worker and worker is not threading.current_thread():
             worker.join(timeout=2)
         with self.lock:
-            if self.adapter:
-                self.adapter.close()
+            adapter = self.adapter
             self.adapter = self.config = self.token = self.stream = self.worker = None
+        # Teardown must not block status, target receipt or the API event loop.
+        if adapter:
+            adapter.close()

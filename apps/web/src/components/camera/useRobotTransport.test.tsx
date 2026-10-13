@@ -4,7 +4,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { useRobotTransport } from "./useRobotTransport";
 const api = vi.hoisted(() => ({ connect: vi.fn(), action: vi.fn(), status: vi.fn(), socket: vi.fn() }));
 vi.mock("@/domain/robotTransport", () => ({ connectRobotTransport: api.connect, robotTransportAction: api.action, getRobotTransportStatus: api.status, createRobotTargetSocket: api.socket }));
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 it("authenticates its stream, sends latest tracking targets, and drops congestion", async () => {
   const status = { connected: true, armed: false, state_fresh: true, transport: "mock", reason: "Connected", packets_sent: 0 };
   const stream = { readyState: 1, bufferedAmount: 0, send: vi.fn(), close: vi.fn(), onopen: null, onmessage: null, onclose: null };
@@ -45,4 +45,25 @@ it("releases controller ownership when the socket cannot be created", async () =
   expect(result.current.owned).toBe(false);
   expect(result.current.status?.connected).toBe(false);
   expect(result.current.error).toBe("Socket unavailable");
+});
+
+it("keeps one status poll in flight and invalidates stale measurements after an outage", async () => {
+  vi.useFakeTimers();
+  const fresh = { connected: true, state_fresh: true, measured: { left_elbow_joint: .2 }, camera_target: {}, reason: "Connected" };
+  api.status.mockResolvedValueOnce(fresh);
+  const { result } = renderHook(() => useRobotTransport());
+  await act(async () => {});
+  api.status.mockClear();
+  let fail: (error: Error) => void = () => {};
+  api.status.mockImplementationOnce(() => new Promise((_, reject) => { fail = reject; }));
+  await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+  expect(api.status).toHaveBeenCalledTimes(1);
+  await act(async () => { fail(new Error("timeout")); });
+  expect(result.current.status?.state_fresh).toBe(false);
+  expect(result.current.status?.measured).toEqual({});
+  expect(result.current.error).toMatch(/not responding/);
+  api.status.mockResolvedValue(fresh);
+  await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+  expect(result.current.error).toBe("");
+  expect(result.current.status?.state_fresh).toBe(true);
 });

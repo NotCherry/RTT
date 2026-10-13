@@ -216,10 +216,19 @@ export function websocketUrl(sessionId: string) {
   return `${protocol}//${window.location.host}/ws/sessions/${sessionId}`;
 }
 
-export function robotTransportRequest<T>(action: string, body?: unknown, headers?: Record<string, string>) {
-  return request<T>(`/api/robot-transport/${action}`, body === undefined ? undefined : {
-    method: "POST", headers: { "Content-Type": "application/json", ...headers }, body: JSON.stringify(body),
-  });
+export async function robotTransportRequest<T>(action: string, body?: unknown, headers?: Record<string, string>) {
+  const cancellation = new AbortController();
+  const timer = window.setTimeout(() => cancellation.abort(), action === "connect" ? 12000 : action === "status" ? 2000 : 5000);
+  try {
+    return await request<T>(`/api/robot-transport/${action}`, { signal: cancellation.signal,
+      ...(body === undefined ? {} : { method: "POST", headers: { "Content-Type": "application/json", ...headers }, body: JSON.stringify(body) }),
+    });
+  } catch (failure) {
+    if (cancellation.signal.aborted) throw new Error("Robot backend did not respond before the request deadline.");
+    throw failure;
+  } finally {
+    window.clearTimeout(timer);
+  }
 }
 
 export function robotTransportSocketUrl() {

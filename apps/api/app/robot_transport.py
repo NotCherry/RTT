@@ -2,6 +2,7 @@
 import asyncio
 import json
 import time
+import anyio
 from fastapi import APIRouter, Header, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
 from .robot_controller import RobotController
@@ -67,14 +68,16 @@ def create_transport_router(runtime):
             token = credentials.get("token") if isinstance(credentials, dict) else None
             if not isinstance(token, str) or len(token) > 128:
                 raise PermissionError("Invalid controller token")
-            owner = runtime.attach_stream(token)
+            # Preserve the owner id if cancellation arrives during attachment.
+            with anyio.CancelScope(shield=True):
+                owner = await anyio.to_thread.run_sync(runtime.attach_stream, token)
             await socket.send_json({"ready": True, "server_time_ms": time.time() * 1000})
             while True:
                 raw = await socket.receive_text()
                 if len(raw) > 4096:
                     raise ValueError("Target packet is too large")
                 packet = TargetPacket.model_validate_json(raw)
-                runtime.receive(owner, packet)
+                await asyncio.to_thread(runtime.receive, owner, packet)
         except WebSocketDisconnect:
             pass
         except (PermissionError, ValueError, ValidationError, asyncio.TimeoutError, json.JSONDecodeError) as exc:
@@ -84,11 +87,13 @@ def create_transport_router(runtime):
             except RuntimeError:
                 pass
         finally:
-            if owner and runtime.detach_stream(owner):
-                try:
-                    await asyncio.to_thread(runtime.disconnect, token)
-                except PermissionError:
-                    pass
+            # Browser/task cancellation must not interrupt disarming and cleanup.
+            with anyio.CancelScope(shield=True):
+                if owner and await anyio.to_thread.run_sync(runtime.detach_stream, owner):
+                    try:
+                        await anyio.to_thread.run_sync(runtime.disconnect, token)
+                    except PermissionError:
+                        pass
 
     return routes
 
