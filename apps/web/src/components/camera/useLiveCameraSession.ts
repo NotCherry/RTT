@@ -55,12 +55,17 @@ export function useLiveCameraSession(options: Options) {
         }
         signal.throwIfAborted();
         setStage("Waiting for fresh tracking, robot state and target stream…");
-        await waitForLiveReadiness(() => {
+        const blockers = () => {
           const latest = current.current;
-          return latest.cameraConnected && latest.trackingFresh() && latest.connection.owned
-            && latest.connection.streamReady && Boolean(latest.connection.status?.state_fresh)
-            && Object.keys(latest.connection.status?.camera_target ?? {}).length > 0;
-        }, signal, "Live control is not ready. Check visible landmarks, measured robot state and the target stream.");
+          return [!latest.cameraConnected && "open cameras", !latest.trackingFresh() && "fresh visible tracking", !latest.connection.owned && "connection ownership",
+            !latest.connection.streamReady && "target stream", !latest.connection.status?.state_fresh && "fresh measured state",
+            !Object.keys(latest.connection.status?.camera_target ?? {}).length && "accepted camera targets"].filter(Boolean);
+        };
+        try { await waitForLiveReadiness(() => blockers().length === 0, signal, "Live control is not ready."); }
+        catch (failure) {
+          if (signal.aborted) throw failure;
+          throw new Error(`Live control is not ready. Missing: ${blockers().join(", ")}. Check the camera and robot diagnostics.`);
+        }
         signal.throwIfAborted();
         setStage("Engaging live control…");
         armRequested = true;

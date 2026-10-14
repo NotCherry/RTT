@@ -13,7 +13,7 @@ from .camera_gateway_worker import capture_source
 
 def configured_sources(value=None):
     try:
-        sources = json.loads(value if value is not None else os.environ.get("RTT_CAMERA_SOURCES", "{}"))
+        sources = json.loads(value if value is not None else (os.environ.get("RTT_CAMERA_SOURCES") or "{}"))
         if not isinstance(sources, dict) or len(sources) > 16:
             raise ValueError()
         for identity, source in sources.items():

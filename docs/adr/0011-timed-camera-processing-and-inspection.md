@@ -31,3 +31,20 @@ the reconstructed skeleton and URDF. Calibration has an explicit JSON export.
 These changes bound observation matching and processing, not actual exposure
 skew or unknown IP-camera buffering. Calibrated rig accuracy and physical motion
 tracking still require their separate acceptance measurements.
+
+## Timing and ownership acceptance follow-up
+
+Calibrated multi-camera Run requires recorded operator evidence from at least
+five shared visible events per view. A report binds to the exact arrangement,
+contains offsets and measurement uncertainty, and rejects variability plus
+uncertainty exceeding 33.3 ms. Mean offsets correct live and recorded alignment.
+Source/count/calibration changes clear timing evidence. This is a measured
+operator report, not an automatic exposure-synchronization certificate.
+
+Calibrated source feeds can open without a solution for guided board capture;
+they do not supply reconstructed targets until valid geometry exists. Source
+changes are locked while the robot connection is owned. Saved recording playback
+cannot replace the live URDF reference during armed control. Abandoned connection
+requests release their adapter; canceled calibration requests reap the solver.
+Repeated IP pixels no longer refresh tracking indefinitely. Per-frame provenance
+retains browser media time or gateway sequence/decode age where available.

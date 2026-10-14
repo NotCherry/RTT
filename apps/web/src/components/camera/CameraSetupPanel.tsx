@@ -4,6 +4,7 @@ import { H3 } from "@/components/ui/typography";
 import { parseCameraCalibration } from "@/domain/multiCameraContract";
 import type { CameraRig } from "./CameraRigControls";
 import { cameraDetectorModels } from "@/domain/cameraDetectorModels";
+import { validateCameraTiming } from "@/domain/cameraTimingValidation";
 
 export function CameraSetupPanel({ rig, disabled, calibrationOnly = false, onTest, connected = false, testDisabled = false }: {
   rig: CameraRig; disabled: boolean; calibrationOnly?: boolean; onTest?: () => void; connected?: boolean; testDisabled?: boolean;
@@ -24,19 +25,22 @@ export function CameraSetupPanel({ rig, disabled, calibrationOnly = false, onTes
     </div><div className="route-actions"><Button variant="secondary" disabled={disabled} onClick={() => void rig.refreshDevices()}>Detect cameras</Button><Button variant="secondary" disabled={disabled} onClick={rig.saveSetup}>Save setup</Button>
       {onTest && !connected && <Button variant="secondary" disabled={testDisabled} onClick={onTest}>Test all cameras</Button>}
     </div></>}
-    {calibrationOnly && <><p className="helper-text">Keep cameras fixed with overlapping views. Record a checkerboard in every camera, export the videos from Recordings, and solve the calibration with the local OpenCV tool.</p>
+    {calibrationOnly && <><p className="helper-text">Use the guided ChArUco workflow above. For an existing checkerboard workflow, export all camera videos from Recordings, solve with the local OpenCV tool and import its JSON below. Importing an unbound legacy calibration requires you to confirm its camera identities before timing validation.</p>
       <a className="helper-text" href="/camera-checkerboard-9x6-25mm.svg" target="_blank" rel="noreferrer">Print the 9 × 6 inner-corner checkerboard · 25 mm squares</a>
       <div className="route-form-grid"><label>Camera calibration<input aria-label="Camera calibration JSON" type="file" accept="application/json,.json" disabled={disabled || rig.inputs.length === 1} onChange={async e => {
         const file = e.target.files?.[0]; if (!file) return;
         try { if (file.size > 65536) throw new Error("Calibration file is too large.");
           const calibration = parseCameraCalibration(JSON.parse(await file.text()));
           if (calibration.cameras.length !== rig.inputs.length) throw new Error("Calibration camera count does not match this setup.");
+          if (calibration.source_bindings && JSON.stringify(calibration.source_bindings) !== JSON.stringify(rig.inputs)) throw new Error("Calibration source bindings differ from this setup. Remap explicitly or recalibrate.");
+          const timing = calibration.timing_validation ? validateCameraTiming(calibration.timing_validation, rig.inputs) : undefined;
           rig.setCalibration(calibration); setError("");
+          if (timing) rig.setTiming(timing);
         } catch (failure) { setError(failure instanceof Error ? failure.message : "Invalid calibration"); }
       }} /></label></div>
       <div className="route-actions"><Button variant="secondary" disabled={!rig.calibration} onClick={() => {
         if (!rig.calibration) return;
-        const url = URL.createObjectURL(new Blob([JSON.stringify(rig.calibration, null, 2)], { type: "application/json" }));
+        const url = URL.createObjectURL(new Blob([JSON.stringify({ ...rig.calibration, source_bindings: rig.inputs, timing_validation: rig.timing }, null, 2)], { type: "application/json" }));
         const link = document.createElement("a"); link.href = url; link.download = "rtt-camera-calibration.json"; link.click();
         setTimeout(() => URL.revokeObjectURL(url), 1000);
       }}>Export calibration</Button><Button variant="secondary" disabled={disabled || !rig.calibration} onClick={() => rig.setCalibration(undefined)}>Camera moved / recalibrate</Button></div></>}

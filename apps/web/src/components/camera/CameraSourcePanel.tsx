@@ -28,6 +28,7 @@ type Props = {
   rig?: CameraRig;
   showSettings?: boolean;
   showAction?: boolean;
+  showMapping?: boolean;
 };
 export function CameraSourcePanel({
   source,
@@ -47,6 +48,7 @@ export function CameraSourcePanel({
   rig,
   showSettings = true,
   showAction = true,
+  showMapping = true,
 }: Props) {
   const [expanded, setExpanded] = useState(false);
   const width = (source === "local" ? camera.videoRef.current?.videoWidth : camera.imageRef.current?.naturalWidth) || 640;
@@ -56,13 +58,14 @@ export function CameraSourcePanel({
       <PanelHeader>
         <div>
           <PanelLabel>CAMERA</PanelLabel>
-          <H3>Live preview</H3>
+          <H3>{rig?.inputs[0].label || "Live preview"}</H3>
         </div>
         <Button variant="secondary" aria-pressed={expanded} onClick={() => setExpanded(!expanded)}>
           {expanded ? "Reduce camera" : "Expand camera"}
         </Button>
       </PanelHeader>
       <div className={showSettings ? "route-form-grid" : "hidden"}>
+        {rig && <label>Camera label<input aria-label="Camera 1 label" value={rig.inputs[0].label ?? ""} placeholder="Camera 1" disabled={locked || camera.connected} onChange={e => rig.update(0, { label: e.target.value })} /></label>}
         <label>
           Video source
           <select
@@ -72,26 +75,11 @@ export function CameraSourcePanel({
             onChange={(event) => setSource(event.target.value as typeof source)}
           >
             <option value="local">Laptop / USB camera</option>
-            <option value="ip">Android IP camera</option>
+            <option value="ip">IP camera · HTTP/MJPEG or configured RTSP</option>
           </select>
         </label>
         {source === "ip" && <IPCameraSourceSelect address={address} onChange={setAddress} disabled={locked || camera.connected} />}
         {rig && source==="local" && <CameraDeviceSelect rig={rig} index={0} disabled={locked || camera.connected}/>}
-        <label>
-          Processing
-          <select
-            aria-label="Processing mode"
-            value={processing}
-            disabled={locked || camera.connected}
-            onChange={(event) => {
-              setProcessing(event.target.value as typeof processing);
-              if (event.target.value === "offline") setMode("continuous");
-            }}
-          >
-            <option value="live">Live preview</option>
-            <option value="offline">Record then process</option>
-          </select>
-        </label>
       </div>
       <div className="camera-live-preview">
         <video ref={camera.videoRef} muted playsInline className={source === "local" ? "camera-live-media" : "hidden"} />
@@ -109,7 +97,7 @@ export function CameraSourcePanel({
         Unmirrored: L and R mark your own left and right.
       </p>
       <CameraMetrics metrics={camera.metrics} />
-      {processing === "live" && <MappingInspector frame={latest} joints={joints} profile={profile} />}
+      {processing === "live" && showMapping && <MappingInspector frame={latest} joints={joints} profile={profile} />}
       <div className={showAction ? "route-actions" : "hidden"}>
         <Button disabled={disabled || locked} onClick={onToggle}>
           {camera.connected ? "Close camera" : "Open camera"}{rig && rig.inputs.length>1 ? "s" : ""}

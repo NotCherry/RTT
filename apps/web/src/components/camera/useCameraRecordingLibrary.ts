@@ -58,12 +58,13 @@ export function useCameraRecordingLibrary({ robot, joints, neutral, profile, sam
     setProgress(0);
     setStatus("Extracting stick figure locally…");
     try {
-      const result = await extractMultiCameraRecording(
+      const extracted = await extractMultiCameraRecording(
         selected,
         sampleRate,
         controller.signal,
         setProgress,
       );
+      const { inference_times_ms: _inferenceTimes, ...result } = extracted as typeof extracted & { inference_times_ms?: number[] };
       controller.signal.throwIfAborted();
       const next = { ...selected, ...result, sample_rate: sampleRate };
       setSelected(next);

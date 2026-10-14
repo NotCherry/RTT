@@ -1,7 +1,8 @@
 """Camera-only calibration API; no remote URL fetching or robot commands."""
 import asyncio
+import threading
 from typing import Literal
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from .camera_calibration_worker import isolated_calibration
 
@@ -67,35 +68,47 @@ class SolveRequest(BaseModel):
         return self
 
 
-async def run_worker(operation, payload):
+async def run_worker(operation, payload, request):
     if worker_slots.locked():
         raise HTTPException(409, "Calibration worker is busy; retry after the current operation")
     async with worker_slots:
         # Cancellation does not release the slot until the child is reaped.
-        work = asyncio.create_task(asyncio.to_thread(isolated_calibration, operation, payload))
+        cancelled = threading.Event()
+        work = asyncio.create_task(asyncio.to_thread(isolated_calibration, operation, payload, 30, cancelled))
+        async def watch_disconnect():
+            while not work.done():
+                if await request.is_disconnected():
+                    cancelled.set()
+                    return
+                await asyncio.sleep(.1)
+        monitor = asyncio.create_task(watch_disconnect())
         try:
             return await asyncio.shield(work)
         except asyncio.CancelledError:
-            await work
+            cancelled.set()
+            await asyncio.gather(work, return_exceptions=True)
             raise
         except TimeoutError as error:
             raise HTTPException(504, str(error)) from error
         except (ValueError, EOFError) as error:
             raise HTTPException(422, str(error)) from error
+        finally:
+            monitor.cancel()
+            await asyncio.gather(monitor, return_exceptions=True)
 
 
 @router.post("/board")
-async def board_image(board: Board):
-    return await run_worker("board", {"board": board.model_dump()})
+async def board_image(board: Board, request: Request):
+    return await run_worker("board", {"board": board.model_dump()}, request)
 
 
 @router.post("/detect")
-async def detect_board(request: DetectionRequest):
-    if [v.id for v in request.views] not in (["view-1", "view-2"], ["view-1", "view-2", "view-3"]):
+async def detect_board(payload: DetectionRequest, request: Request):
+    if [v.id for v in payload.views] not in (["view-1", "view-2"], ["view-1", "view-2", "view-3"]):
         raise HTTPException(422, "Select two or three ordered camera views")
-    return await run_worker("detect", request.model_dump())
+    return await run_worker("detect", payload.model_dump(), request)
 
 
 @router.post("/solve")
-async def solve_board(request: SolveRequest):
-    return await run_worker("solve", request.model_dump())
+async def solve_board(payload: SolveRequest, request: Request):
+    return await run_worker("solve", payload.model_dump(), request)

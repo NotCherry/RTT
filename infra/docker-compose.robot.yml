@@ -1,6 +1,8 @@
 # Linux host networking is required for DDS discovery. This is the default stack.
 services:
   backend:
+    environment:
+      RTT_CAMERA_SOURCES: ${RTT_CAMERA_SOURCES:-}
     build:
       context: apps/api
       target: robot

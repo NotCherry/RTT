@@ -51,6 +51,20 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 afterEach(cleanup);
+it("opens all supported USB/IP mixtures with independent camera resources", async () => {
+  const { result } = setup();
+  for (const kinds of [["local"], ["ip"], ["local","local"], ["local","ip"], ["ip","ip"], ["local","local","local"], ["local","local","ip"], ["local","ip","ip"], ["ip","ip","ip"]] as const) {
+    state.opens.mockClear();
+    act(() => {
+      result.current.rig.setCount(kinds.length);
+      for (const [i, kind] of kinds.entries()) result.current.rig.update(i, { kind, deviceId: `usb-${i}`, address: `http://source-${i}/video` });
+    });
+    await act(() => result.current.open(kinds[0], "http://source-0/video"));
+    expect(state.opens.mock.calls.map(call => call[1])).toEqual(kinds);
+    expect(result.current.allConnected).toBe(true);
+    act(() => result.current.close());
+  }
+});
 function setup() {
   const onFrame = vi.fn(),
     onRecording = vi.fn().mockResolvedValue(undefined);
@@ -169,8 +183,8 @@ it("assembles one recording only after all views finalize, preserving independen
   ]);
   expect(group.views.map((v: { video: Blob }) => v.video.size)).toEqual([5, 6]);
 });
-it("limits the rig to three views and refuses triangulation without calibration", async () => {
-  const { result } = setup();
+it("opens raw views for calibration while refusing reconstructed targets without geometry", async () => {
+  const { result, onFrame } = setup();
   act(() => result.current.rig.add());
   act(() => result.current.rig.add());
   act(() => result.current.rig.add());
@@ -184,6 +198,8 @@ it("limits the rig to three views and refuses triangulation without calibration"
     result.current.rig.setModel("triangulated");
   });
   await act(() => result.current.open("ip", "http://camera-0/video"));
-  expect(state.opens).not.toHaveBeenCalled();
+  expect(state.opens).toHaveBeenCalledTimes(3);
   expect(result.current.status).toMatch(/Import calibration/);
+  act(() => state.options[0].onFrame({ timestamp: 1000, pose: [], left_hand: [], right_hand: [], confidence: 1 }));
+  expect(onFrame).toHaveBeenLastCalledWith(null);
 });

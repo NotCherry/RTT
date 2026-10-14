@@ -55,7 +55,7 @@ export function RobotConnectionPanel({ connection, live, profile = "g1-upper-bod
       <div className="route-actions">
         {session.busy ? <Button variant="secondary" onClick={session.cancel}>Cancel startup</Button> : <>
           {!status?.armed && <Button variant="secondary" disabled={!canStart || connection.busy} onClick={preview}>{previewConnected ? "Close cameras" : "Start live preview"}</Button>}
-          {status?.armed ? <Button variant="recording" disabled={!connection.owned || connection.busy} onClick={() => void connection.action("disarm")}>Stop robot</Button>
+          {status?.armed ? <Button className="camera-session-stop" variant="recording" disabled={!connection.owned || connection.busy} onClick={() => void connection.action("disarm")}>Stop robot</Button>
             : <Button disabled={runBlocked || !canStart || connection.busy || (status?.connected && !connection.owned) || (transport === "unitree-sdk2" && !ddsValid) || (transport === "unitree-rosbridge" && !bridgeValid)} onClick={() => void session.start(settings())}>{transport === "mock" ? "Run on mock robot" : "Run on physical robot"}</Button>}
           {status?.connected && <Button variant="secondary" disabled={!connection.owned || connection.busy} onClick={() => void connection.action("disconnect")}>Disconnect robot</Button>}
         </>}

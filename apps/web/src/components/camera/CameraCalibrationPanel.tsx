@@ -57,7 +57,7 @@ export function CameraCalibrationPanel({ rig, connected, blocked, onBusyChange }
         const result = await cameraCalibrationRequest<unknown>("solve", { board, observations: samples }, signal);
         if (!valid()) return;
         const calibration = parseCameraCalibration(result);
-        rig.setCalibration(calibration);
+        rig.setCalibration({ ...calibration, source_bindings: structuredClone(rig.inputs) });
         setStatus(`Calibration solved · ${calibration.rms_px?.toFixed(2)} px RMS. Inspect its validation report, then select Calibrated triangulation in Camera setup and Save setup.`);
       })}>Solve calibration ({samples.length}/14 poses)</Button>
       {busy && <Button variant="secondary" onClick={() => abort.current?.abort()}>Cancel calibration</Button>}

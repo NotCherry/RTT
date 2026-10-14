@@ -37,6 +37,7 @@ const sampleRobot = {
 };
 
 function stubSession() {
+  cy.intercept("GET", "/api/robots/default", { body: sampleRobot });
   cy.intercept("GET", "/api/robots/demo", { body: sampleRobot }).as(
     "loadDemoRobot",
   );
@@ -59,6 +60,7 @@ describe("routed teaching workspace", () => {
   beforeEach(() => {
     stubSession();
     cy.visit("/teach/pose");
+    cy.wait("@createSession");
   });
 
   it("navigates between full workspace pages", () => {
@@ -71,7 +73,7 @@ describe("routed teaching workspace", () => {
     cy.contains("Organize expected behavior.").should("be.visible");
     cy.contains("Train").click();
     cy.location("pathname").should("eq", "/train");
-    cy.contains("Train from keyframe motion.").should("be.visible");
+    cy.contains("Build, compare, then train.").should("be.visible");
     cy.contains("Evaluate").click();
     cy.location("pathname").should("eq", "/evaluate");
     cy.contains("Inspect the learned motion.").should("be.visible");

@@ -51,3 +51,19 @@ def test_trace_separates_known_command_delay_from_tracking_delay():
     for sample in samples:
         sample["joints"][name]["reference"] = .2
     assert analyze_motion(samples)["joints"][name]["reference_to_command_delay_ms"] is None
+
+
+def test_abandoned_connect_request_releases_its_adapter_without_arming():
+    import asyncio
+    from fastapi import HTTPException
+    from app.robot_transport import create_transport_router
+    runtime = RobotController(FakeAdapter, lambda: 0., lambda: 0.)
+    endpoint = next(route.endpoint for route in create_transport_router(runtime).routes if route.path.endswith("/connect"))
+    class DisconnectedRequest:
+        async def is_disconnected(self):
+            return True
+    with pytest.raises(HTTPException) as failure:
+        asyncio.run(endpoint(ConnectionConfig(network_interface="lo"), DisconnectedRequest()))
+    assert failure.value.status_code == 499
+    assert runtime.status()["connected"] is False
+    assert runtime.status()["armed"] is False

@@ -66,3 +66,14 @@ def test_calibration_timeout_reaps_the_child_process():
     with pytest.raises(TimeoutError):
         isolated_calibration("board", {"board": BOARD}, timeout=0)
     assert {p.pid for p in mp.active_children()} == before
+
+
+def test_cancelled_calibration_reaps_the_child_process():
+    import multiprocessing as mp
+    import threading
+    before = {p.pid for p in mp.active_children()}
+    cancelled = threading.Event()
+    cancelled.set()
+    with pytest.raises(ValueError, match="cancelled"):
+        isolated_calibration("board", {"board": BOARD}, cancelled=cancelled)
+    assert {p.pid for p in mp.active_children()} == before

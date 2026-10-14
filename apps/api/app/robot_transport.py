@@ -4,7 +4,7 @@ import json
 import logging
 import time
 import anyio
-from fastapi import APIRouter, Header, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Header, HTTPException, Request, WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
 from .robot_controller import RobotController
 from .robot_transport_contract import ConnectionConfig, DDSConnectionPlan, TargetPacket
@@ -45,9 +45,19 @@ def create_transport_router(runtime):
         return runtime.diagnostics()
 
     @routes.post("/connect")
-    def connect(config: ConnectionConfig):
-        token = call(runtime.connect, config)
-        return {**runtime.status(), "token": token, "joint_contract": camera_joint_contract(config)}
+    async def connect(config: ConnectionConfig, request: Request):
+        work = asyncio.create_task(asyncio.to_thread(call, runtime.connect, config))
+        try:
+            token = await asyncio.shield(work)
+            if await request.is_disconnected():
+                await asyncio.to_thread(runtime.disconnect, token)
+                raise HTTPException(499, "Robot startup cancelled; connection released")
+            return {**runtime.status(), "token": token, "joint_contract": camera_joint_contract(config)}
+        except asyncio.CancelledError:
+            results = await asyncio.gather(work, return_exceptions=True)
+            if isinstance(results[0], str):
+                await asyncio.to_thread(runtime.disconnect, results[0])
+            raise
 
     @routes.post("/arm")
     def arm(x_robot_token: str | None = Header(default=None)):

@@ -4,8 +4,12 @@ import { retargetLandmarkFrame, type RetargetingProfile } from "@/domain/retarge
 import { CAMERA_SPEED_LIMIT, CAMERA_STALE_MS, createMotionGuard, observeMotion, stepMotion } from "@/domain/cameraMotionSafety";
 
 export function useSafeCameraMotion(joints: Joint[], neutral: number[], profile: RetargetingProfile, onPreview: (q: number[]) => void, positions = neutral, maxSpeed = CAMERA_SPEED_LIMIT) {
-  const guard = useRef(createMotionGuard(positions));
-  const last = useRef([...positions]);
+  const initial = joints.map((joint, i) => {
+    const value = positions.length === joints.length && Number.isFinite(positions[i]) ? positions[i] : neutral[i];
+    return Math.max(joint.lower, Math.min(joint.upper, Number.isFinite(value) ? value : 0));
+  });
+  const guard = useRef(createMotionGuard(initial));
+  const last = useRef([...initial]);
   const current = useRef({ joints, neutral, profile, onPreview, positions, maxSpeed });
   current.current = { joints, neutral, profile, onPreview, positions, maxSpeed };
   const [status, setStatus] = useState("Motion held · last position");

@@ -15,6 +15,8 @@ import { CameraCalibrationPanel } from "@/components/camera/CameraCalibrationPan
 import { CameraRigControls } from "@/components/camera/CameraRigControls";
 import { PoseScene3D } from "@/components/camera/PoseScene3D";
 import { DetectorBenchmarkPanel } from "@/components/camera/DetectorBenchmarkPanel";
+import { CameraTimingPanel } from "@/components/camera/CameraTimingPanel";
+import { loadCameraSetup } from "@/domain/cameraSetup";
 import { mappingCoverage, retargetLandmarkFrame, type RetargetingProfile } from "@/domain/retargeting";
 import { directIpCameraStreamUrl } from "@/domain/ipCamera";
 import { useCameraRecordingLibrary } from "@/components/camera/useCameraRecordingLibrary";
@@ -40,7 +42,7 @@ function CameraWorkspace({ robot, state, joints, neutral, onPreview, onSave }: P
   const [processing, setProcessing] = useState<"live" | "offline">("live");
   const [sampleRate, setSampleRate] = useState<10 | 15 | 30>(30);
   const [mode, setMode] = useState<"simple" | "continuous">("continuous");
-  const [profile, setProfile] = useState<RetargetingProfile>("g1-upper-body");
+  const [profile, setProfile] = useState<RetargetingProfile>(() => loadCameraSetup(robot?.id)?.profile ?? "g1-upper-body");
   const [countdown, setCountdown] = useState(3);
   const [remaining, setRemaining] = useState<number | null>(null);
   const [latest, setLatest] = useState<LandmarkFrame | null>(null);
@@ -53,10 +55,11 @@ function CameraWorkspace({ robot, state, joints, neutral, onPreview, onSave }: P
   const { rows, selected, status, setStatus, busy, extracting, progress, storageFailed, select, extract, saveDemonstration, retrySave, remove } = library;
   const connection = useRobotTransport();
   const trackingAt = useRef(-Infinity);
-  const motion = useSafeCameraMotion(joints, baseline.current, profile, positions => { if (tab !== "recordings") onPreview(positions); }, state?.positions ?? neutral, previewSpeed);
+  const motion = useSafeCameraMotion(joints, baseline.current, profile, positions => { if (tab !== "recordings" || connection.status?.armed) onPreview(positions); }, state?.positions ?? neutral, previewSpeed);
   useEffect(() => () => { if (countdownTimer.current) clearInterval(countdownTimer.current); }, []);
   const camera = useMultiCameraCapture({
     processing,
+    profile,
     sampleRate,
     onFrame: (frame) => {
       setLatest(frame);
@@ -132,13 +135,15 @@ function CameraWorkspace({ robot, state, joints, neutral, onPreview, onSave }: P
       </div>
       <RobotConnectionPanel connection={connection} profile={profile} live={camera.connected && processing === "live"} previewConnected={camera.connected} session={session} canStart={Boolean(robot) && !locked}
         previewSpeed={previewSpeed}
-        runBlocked={tab === "calibration"}
+        runBlocked={tab === "calibration" || (camera.rig.inputs.length > 1 && camera.rig.model === "triangulated" && (!camera.rig.calibration || !camera.rig.timing))}
         preview={() => { if (camera.connected) camera.close(); else void session.start(); }} />
       <div className="route-actions" role="tablist" aria-label="Camera workspace">
         {([["live", "Live camera"], ["setup", "Camera setup"], ["calibration", "Calibration"], ["recordings", "Recordings"]] as const).map(([value, label]) =>
           <Button key={value} role="tab" aria-selected={tab === value} variant={tab === value ? "primary" : "secondary"} onClick={() => setTab(value)}>{label}</Button>)}
       </div>
       <p className="helper-text">{camera.rig.inputs.length} camera{camera.rig.inputs.length > 1 ? "s" : ""} · {camera.rig.setupName} · {camera.rig.inputs.length === 1 ? "Single-view estimate" : camera.rig.model === "triangulated" ? "Calibrated triangulation" : "Body-aligned fusion"}. Configure all views in Camera setup.</p>
+      {tab === "live" && camera.rig.inputs.length > 1 && <div className="route-actions">{camera.rig.inputs.map((input,i) => <Button key={input.id} variant="secondary" onClick={() => setTab("setup")}>{input.label || `Camera ${i+1}`} · {camera.rig.cameras[i].connected ? "open" : "off"}</Button>)}</div>}
+      {camera.rig.inputs.length > 1 && camera.rig.model === "triangulated" && !camera.rig.timing && <p className="helper-text">Calibrated robot control needs shared-event timing validation in Calibration. Preview and recording remain available.</p>}
       {!robot && <p className="helper-text">Open a robot to capture and inspect its recordings.</p>}
       <div role="status" className="helper-text">
         {status || camera.status}
@@ -147,6 +152,9 @@ function CameraWorkspace({ robot, state, joints, neutral, onPreview, onSave }: P
       <div className={tab === "setup" ? "" : "hidden"}><CameraSetupPanel rig={camera.rig} disabled={locked || session.busy || camera.connected || Boolean(connection.status?.connected)}
         connected={camera.connected} testDisabled={locked || session.busy || Boolean(connection.status?.armed)} onTest={() => { if (camera.connected) camera.close(); else void camera.open(source, address); }} />
       <div className="route-form-grid camera-inspection-settings">
+        <label>Processing<select aria-label="Processing mode" value={processing} disabled={locked || camera.connected || session.busy || Boolean(connection.status?.connected)} onChange={event => { setProcessing(event.target.value as typeof processing); if (event.target.value === "offline") setMode("continuous"); }}>
+          <option value="live">Live preview</option><option value="offline">Record then process</option>
+        </select></label>
         <label>Preview speed
           <select aria-label="Preview speed" value={previewSpeed} onChange={(event) => setPreviewSpeed(Number(event.target.value))}>
             {[1, 2, 3, 5].map(speed => <option key={speed} value={speed}>{speed} rad/s</option>)}
@@ -171,8 +179,9 @@ function CameraWorkspace({ robot, state, joints, neutral, onPreview, onSave }: P
       <div className={tab === "calibration" ? "" : "hidden"}>
         <CameraCalibrationPanel rig={camera.rig} connected={camera.connected} blocked={camera.recording || camera.finalizing || session.busy || Boolean(connection.status?.connected)} onBusyChange={setCalibrationBusy} />
         <CameraSetupPanel rig={camera.rig} disabled={locked || session.busy || camera.connected || Boolean(connection.status?.connected)} calibrationOnly />
+        <CameraTimingPanel rig={camera.rig} disabled={locked || session.busy || Boolean(connection.status?.connected)} />
       </div>
-        <div className={tab === "recordings" ? "hidden" : `camera-workspace-grid${tab === "live" && robotOnly ? " camera-robot-only" : ""}`}>
+        <div className={tab === "recordings" ? "hidden" : `camera-workspace-grid${tab !== "live" ? " camera-setup-overview" : ""}${tab === "live" && robotOnly ? " camera-robot-only" : ""}`}>
           <div className={`camera-source-container${tab === "live" && robotOnly ? " hidden" : ""}`}>
             <CameraSourcePanel
               source={source}
@@ -186,10 +195,11 @@ function CameraWorkspace({ robot, state, joints, neutral, onPreview, onSave }: P
               rig={camera.rig}
               showSettings={tab === "setup"}
               showAction={false}
+              showMapping={tab === "live"}
               latest={latest}
               joints={joints}
               profile={profile}
-              locked={locked}
+              locked={locked || session.busy || Boolean(connection.status?.connected)}
               disabled={!robot}
               onToggle={() => {
                 setStatus("");
@@ -200,7 +210,7 @@ function CameraWorkspace({ robot, state, joints, neutral, onPreview, onSave }: P
               }}
             />
           </div>
-          <div className={tab === "live" ? "hidden" : "camera-rig-tiles"}><CameraRigControls rig={camera.rig} disabled={locked || session.busy || camera.connected} showSettings={tab === "setup"} /></div>
+          <div className={tab === "live" ? "hidden" : "camera-rig-tiles"}><CameraRigControls rig={camera.rig} disabled={locked || session.busy || camera.connected || Boolean(connection.status?.connected)} showSettings={tab === "setup"} /></div>
           {tab !== "live" && tab !== "recordings" && <PoseScene3D frame={latest} calibration={camera.rig.calibration} />}
           <div className={tab === "live" ? "camera-capture-container" : "hidden"}>
           <CameraCapturePanel robotOnly={robotOnly} onToggleView={() => setRobotOnly(!robotOnly)} motionStatus={motion.status} mode={mode} setMode={setMode} countdown={countdown} setCountdown={setCountdown}
@@ -212,7 +222,7 @@ function CameraWorkspace({ robot, state, joints, neutral, onPreview, onSave }: P
         <RecordingLibrary
           recordings={rows}
           selected={selected}
-          locked={locked}
+          locked={locked || Boolean(connection.status?.armed)}
           extracting={extracting}
           progress={progress}
           storageFailed={storageFailed}
@@ -222,7 +232,7 @@ function CameraWorkspace({ robot, state, joints, neutral, onPreview, onSave }: P
           joints={joints}
           neutral={baseline.current}
           profile={profile}
-          onPreview={onPreview}
+          onPreview={positions => { if (!connection.status?.armed) onPreview(positions); }}
           onSelect={(id) => void select(id)}
           onExtract={() => void extract()}
           onCancel={library.cancelExtraction}
@@ -231,6 +241,7 @@ function CameraWorkspace({ robot, state, joints, neutral, onPreview, onSave }: P
           onDelete={() => void remove()}
         />
       )}
+      {tab === "recordings" && connection.status?.armed && <p className="helper-text">Stop robot to replay saved recordings. The live URDF reference and camera feeds remain active.</p>}
       {tab === "recordings" && selected && <DetectorBenchmarkPanel recording={selected} blocked={locked || camera.connected || Boolean(connection.status?.connected)} onBusyChange={setBenchmarkBusy} />}
       <p className="helper-text">
         Videos stay in this browser until deleted. Exported archives contain demonstrations, not videos. Left and right refer to your body.

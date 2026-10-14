@@ -1,6 +1,7 @@
 """Bounded, process-isolated board detection and calibration operations."""
 import base64
 import multiprocessing as mp
+import time
 
 
 def execute(operation, payload):
@@ -82,15 +83,22 @@ def _entry(sender, operation, payload):
         sender.close()
 
 
-def isolated_calibration(operation, payload, timeout=30):
+def isolated_calibration(operation, payload, timeout=30, cancelled=None):
     context = mp.get_context("spawn")
     receiver, sender = context.Pipe(duplex=False)
     process = context.Process(target=_entry, args=(sender, operation, payload), daemon=True)
     try:
         process.start()
         sender.close()
-        if not receiver.poll(timeout):
-            raise TimeoutError("Calibration worker timed out; its process was stopped")
+        deadline = time.monotonic()+timeout
+        while True:
+            if cancelled is not None and cancelled.is_set():
+                raise ValueError("Calibration cancelled; its process was stopped")
+            remaining = deadline-time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("Calibration worker timed out; its process was stopped")
+            if receiver.poll(min(.1, remaining)):
+                break
         response = receiver.recv()
         if "error" in response:
             raise ValueError(response["error"])

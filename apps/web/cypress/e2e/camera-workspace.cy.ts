@@ -1,102 +1,4 @@
-/// <reference types="cypress" />
-const robot = {
-  id: "camera-test",
-  name: "Camera test robot",
-  filename: "camera.urdf",
-  root: "base",
-  links: [
-    { name: "base", visuals: [] },
-    { name: "arm", visuals: [] },
-  ],
-  joints: [
-    {
-      name: "right_shoulder_roll_joint",
-      type: "revolute",
-      parent: "base",
-      child: "arm",
-      origin: { xyz: [0, 0, 0], rpy: [0, 0, 0] },
-      axis: [0, 1, 0],
-      lower: -3,
-      upper: 3,
-      controllable: true,
-    },
-  ],
-};
-function openCameraPage(fakeCamera = false, dimensions = { width: 320, height: 240 }, fakeArmTargets: boolean | Record<string, number> = false, transientCongestion = false) {
-  cy.intercept("GET", "/api/robots/demo", { body: robot });
-  cy.intercept("GET", "/api/robots/default", { body: robot }).as("defaultRobot");
-  cy.intercept("POST", "/api/sessions", {
-    body: { session_id: "camera-session", robot, state: { type: "state", positions: [0], training: false } },
-  }).as("createCameraSession");
-  cy.intercept("PUT", "/api/sessions/camera-session/demonstrations", { body: { status: "saved" } }).as("saveDemo");
-  cy.intercept("PUT", "/api/sessions/camera-session/datasets", { body: { status: "saved" } });
-  cy.visit("/teach/pose", {
-    onBeforeLoad(win) {
-      if (transientCongestion) {
-        const buffered = Object.getOwnPropertyDescriptor(win.WebSocket.prototype, "bufferedAmount")!.get!;
-        let reads = 0;
-        Object.defineProperty(win.WebSocket.prototype, "bufferedAmount", { configurable: true, get() {
-          return this.url.includes("/api/robot-transport/stream") && ++reads % 3 === 0 ? 32 : buffered.call(this);
-        } });
-      }
-      if (fakeArmTargets) {
-        // Supply deterministic arm targets at the transport seam.
-        // Exercise the real authenticated stream and mock controller without hardware.
-        const send = win.WebSocket.prototype.send;
-        win.WebSocket.prototype.send = function (data) {
-          if (this.url.includes("/api/robot-transport/stream") && typeof data === "string") {
-            const packet = JSON.parse(data);
-            if ("tracking" in packet) data = JSON.stringify({ ...packet, tracking: true,
-              positions: typeof fakeArmTargets === "object" ? fakeArmTargets : { right_shoulder_roll_joint: .4 } });
-          }
-          send.call(this, data);
-        };
-      }
-      if (!fakeCamera) return;
-      Object.defineProperty(win.navigator.mediaDevices,"enumerateDevices",{configurable:true,value:async()=>[1,2,3].map(i=>({kind:"videoinput",deviceId:`camera-${i}`,label:`Test camera ${i}`,groupId:`group-${i}`}))});
-      Object.defineProperty(win.navigator.mediaDevices, "getUserMedia", {
-        configurable: true,
-        value: async (constraints: MediaStreamConstraints) => {
-          expect((constraints.video as MediaTrackConstraints & { resizeMode: string }).resizeMode).to.equal("none");
-          const canvas = win.document.createElement("canvas");
-          canvas.width = dimensions.width;
-          canvas.height = dimensions.height;
-          const context = canvas.getContext("2d")!;
-          const stream = canvas.captureStream(10);
-          const deviceId=(constraints.video as MediaTrackConstraints).deviceId;
-          stream.getVideoTracks().forEach(track=>{const settings=track.getSettings.bind(track);track.getSettings=()=>({...settings(),deviceId:typeof deviceId==="object"?String(deviceId.exact):"camera-1"});});
-          let frame = 0;
-          const timer = win.setInterval(() => {
-            context.fillStyle = frame++ % 2 ? "#333" : "#444";
-            context.fillRect(0, 0, dimensions.width, dimensions.height);
-            context.fillStyle = "#2687e8";
-            context.fillRect(0, 0, dimensions.width, 16);
-            context.fillStyle = "#e85826";
-            context.fillRect(0, dimensions.height - 16, dimensions.width, 16);
-            if (stream.getTracks().every((track) => track.readyState === "ended")) win.clearInterval(timer);
-          }, 100);
-          return stream;
-        },
-      });
-    },
-  });
-  cy.wait("@defaultRobot");
-  cy.wait("@createCameraSession");
-  cy.contains("a", "Camera").click();
-}
-
-function setupTab() { cy.contains('[role="tab"]', 'Camera setup').click().should('have.attr', 'aria-selected', 'true'); }
-function robotSettings() { cy.contains('summary', 'Robot settings and diagnostics').click(); }
-function stubLandmarks() {
-  // Simulate perception only; use the actual camera lifecycle, owned stream and backend mock motors.
-  const pose = Array.from({ length: 33 }, () => ({ x: .5, y: .5, z: 0, visibility: 1 }));
-  for (const [index, x, y] of [[11, .65, .2], [12, .35, .2], [13, .65, .4], [14, .35, .4], [15, .65, .6], [16, .35, .6], [23, .6, .5], [24, .4, .5]]) pose[index] = { x, y, z: 0, visibility: 1 };
-  const frame = { pose, pose_world: pose, left_hand: [], right_hand: [], confidence: 1, source_width: 320, source_height: 240 };
-  cy.intercept('GET', '**/src/domain/cameraProcessing.ts*', { statusCode: 200, headers: { 'content-type': 'application/javascript' }, body:
-    `export async function createCameraDetector(){ return { mode: 'worker', close() {} }; }
-     export async function detectCameraFrame(detector,source,timestamp){ return { timestamp, ...${JSON.stringify(frame)} }; }
-     export async function extractCameraRecording(){ throw new Error('Not available in the perception fixture'); }` });
-}
+import { openCameraPage, setupTab, robotSettings, stubLandmarks } from "../support/cameraFixture";
 describe('Camera workspace', () => {
   it('detects calibration snapshots through the isolated API and blocks robot startup in Calibration', () => {
     openCameraPage(true); setupTab();
@@ -129,6 +31,8 @@ describe('Camera workspace', () => {
       });
       cy.window().then(win => expect(win.document.documentElement.scrollWidth).to.be.at.most(win.innerWidth));
     }
+    cy.viewport(1280, 900); cy.get('.camera-workspace-grid').scrollIntoView();
+    cy.screenshot('camera-setup-final-desktop', { capture: 'viewport' });
     cy.reload(); cy.wait('@defaultRobot'); cy.wait('@createCameraSession');
     cy.contains('button', 'Start live preview').should('be.enabled'); setupTab();
     cy.get('[aria-label="Camera count"]').should('have.value', '3');
@@ -169,6 +73,30 @@ describe('Camera workspace', () => {
     cy.get('[aria-label="Camera count"]').should('be.disabled');
     cy.contains('button', 'Close cameras').filter(':visible').first().click();
     cy.get('[aria-label="Camera count"]').should('be.enabled');
+  });
+  it('records a mixed USB and configured IP rig with retained pixels from every source', () => {
+    cy.intercept('GET', '/api/camera-gateway/sources', { sources: [{ id: 'side', name: 'Side IP camera' }] });
+    let jpeg = '', sequence = 0;
+    cy.intercept('GET', '/api/camera-gateway/sources/side/frame', req => req.reply({ epoch: 'fixture-source', sequence: sequence++, jpeg, width: 160, height: 90, source_age_ms: 0 }));
+    openCameraPage(true); setupTab();
+    cy.window().then(win => { const canvas = win.document.createElement('canvas'); canvas.width = 160; canvas.height = 90;
+      const context = canvas.getContext('2d')!; context.fillStyle = '#607080'; context.fillRect(0,0,160,90); jpeg = canvas.toDataURL('image/jpeg').split(',')[1]; });
+    cy.get('[aria-label="Camera count"]').select('3');
+    for (const i of [1,2]) cy.get(`[aria-label="USB camera ${i}"]`).select(`camera-${i}`);
+    cy.get('[aria-label="Camera 3 source"]').select('ip');
+    cy.get('[aria-label="Camera 3 IP access"]').select('gateway:side');
+    cy.get('[aria-label="Processing mode"]').select('offline');
+    cy.contains('button', 'Test all cameras').click();
+    cy.contains('Camera 3: Camera ready to record', { timeout: 30000 }).should('exist');
+    cy.contains('[role="tab"]', 'Live camera').click(); cy.get('[aria-label="Countdown"]').select('1');
+    cy.contains('button', 'Start recording').click(); cy.contains('button', 'Stop recording', { timeout: 10000 }).should('exist'); cy.wait(1100);
+    cy.contains('button', 'Stop recording').click(); cy.contains('Recording saved on this device', { timeout: 20000 }).should('exist');
+    cy.contains('[role="tab"]', 'Recordings').click(); cy.get('.camera-recorded-views video').should('have.length', 3);
+    cy.window().then(win => new Cypress.Promise<void>((resolve, reject) => {
+      const request = win.indexedDB.open('robot-learning-workbench-camera-v1'); request.onerror = () => reject(request.error);
+      request.onsuccess = () => { const db = request.result, tx = db.transaction('videos'), get = tx.objectStore('videos').getAll();
+        tx.oncomplete = () => { const group = get.result.find(row => row.views); expect(group.views).to.have.length(3); group.views.forEach(view => expect(view.video.size).to.be.greaterThan(0)); db.close(); resolve(); }; };
+    }));
   });
   it('starts the preview directly and never opens a robot connection', () => {
     cy.intercept('POST', '/api/robot-transport/connect', req => { throw new Error('Preview must not connect hardware'); });

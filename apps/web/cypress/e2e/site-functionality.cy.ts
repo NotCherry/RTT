@@ -37,6 +37,7 @@ const sampleRobot = {
 };
 
 function stubSession() {
+  cy.intercept("GET", "/api/robots/default", { body: sampleRobot });
   cy.intercept("GET", "/api/robots/demo", { body: sampleRobot }).as(
     "loadDemoRobot",
   );
@@ -60,6 +61,7 @@ describe("site functionality coverage", () => {
     cy.clearLocalStorage();
     stubSession();
     cy.visit("/teach/pose");
+    cy.wait("@createSession");
   });
 
   it("inserts keyframes quantized to deterministic grid (no random hundreds)", () => {
@@ -199,7 +201,7 @@ describe("site functionality coverage", () => {
     cy.contains("Archive").click();
     cy.contains("Untitled dataset").should("be.visible");
     cy.contains("Train").click();
-    cy.contains("Train from keyframe motion.").should("be.visible");
+    cy.contains("Build, compare, then train.").should("be.visible");
     cy.contains("Evaluate").click();
     cy.contains("Inspect the learned motion.").should("be.visible");
   });

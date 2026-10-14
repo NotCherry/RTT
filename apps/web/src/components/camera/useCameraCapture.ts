@@ -7,6 +7,7 @@ import { openCameraGatewayStream } from "@/domain/cameraGatewayStream";
 import { hasUsablePose } from "@/domain/retargeting";
 import { cameraFrameMetrics } from "@/domain/cameraFrameMetrics";
 import type { CameraDetectorModel } from "@/domain/cameraDetectorModels";
+import { createImageFreshnessProbe } from "@/domain/cameraImageFreshness";
 
 export function useCameraCapture(options: {
   processing: "live" | "offline";
@@ -172,6 +173,8 @@ export function useCameraCapture(options: {
       let lastGatewaySequence = "";
       const times: number[] = [], durations: number[] = [];
       let dropped = 0;
+      const receivedCounts: { at: number; count: number }[] = [];
+      const imageFresh = source === "ip" ? createImageFreshnessProbe() : undefined;
       const tick = async () => {
         if (generation !== r.generation) return;
         const timestamp = performance.now();
@@ -188,21 +191,35 @@ export function useCameraCapture(options: {
           if (input instanceof HTMLImageElement && input.dataset.cameraSequence) lastGatewaySequence = input.dataset.cameraSequence;
           const sourceAge = input instanceof HTMLImageElement && input.dataset.cameraReceivedAt
             ? Number(input.dataset.cameraSourceAge) + timestamp - Number(input.dataset.cameraReceivedAt) : 0;
+          const provenance = input instanceof HTMLVideoElement ? { media_time_ms: input.currentTime*1000, source_clock: "browser-media" as const }
+            : input.dataset.cameraSequence ? { source_sequence: input.dataset.cameraSequence, source_age_ms: sourceAge, source_clock: "backend-decode" as const } : {};
           if (Number.isFinite(last)) dropped += Math.max(0, Math.floor((timestamp - last) * current.current.sampleRate / 1000) - 1);
           last = timestamp;
           try {
+            if (input instanceof HTMLImageElement && imageFresh && !imageFresh(input, timestamp)) {
+              setStatus("IP camera pixels repeated · tracking held until the image changes");
+              current.current.onFrame(null); r.raf = requestAnimationFrame(tick); return;
+            }
+            if (imageFresh) setStatus("Live processing ready");
             const frame = await detectCameraFrame(r.detector, input, timestamp);
             if (generation !== r.generation) return;
             const processedAt = performance.now();
             times.push(processedAt); durations.push(processedAt - timestamp);
             if (times.length > 60) { times.shift(); durations.shift(); }
-            setMetrics(cameraFrameMetrics(times, durations, dropped, r.detector.mode ?? "main-thread"));
+            if (input instanceof HTMLVideoElement && typeof input.getVideoPlaybackQuality === "function") {
+              receivedCounts.push({ at: processedAt, count: input.getVideoPlaybackQuality().totalVideoFrames });
+              if (receivedCounts.length > 60) receivedCounts.shift();
+            }
+            const receivedFirst = receivedCounts[0], receivedLast = receivedCounts.at(-1);
+            const receivedFps = receivedFirst && receivedLast && receivedLast.at > receivedFirst.at && receivedLast.count > receivedFirst.count
+              ? (receivedLast.count-receivedFirst.count)*1000/(receivedLast.at-receivedFirst.at) : null;
+            setMetrics(cameraFrameMetrics(times, durations, dropped, r.detector.mode ?? "main-thread" , receivedFps));
             const accepted = frame && sourceAge + processedAt - timestamp <= 250 && (current.current.acceptFrame ?? hasUsablePose)(frame)
-              ? { ...frame, timing: { observed_at_ms: timestamp, processed_at_ms: processedAt, source: "browser-observation" as const } } : null;
+              ? { ...frame, timing: { ...provenance, observed_at_ms: timestamp, processed_at_ms: processedAt, source: "browser-observation" as const } } : null;
             current.current.onFrame(accepted);
             if (r.recording) {
               if (accepted) r.frames.push({ ...accepted, timestamp: timestamp - r.start,
-                timing: { observed_at_ms: timestamp - r.start, processed_at_ms: processedAt - r.start, source: "browser-observation" } });
+                timing: { ...accepted.timing!, observed_at_ms: timestamp - r.start, processed_at_ms: processedAt - r.start } });
               else r.rejected++;
             }
           } catch (error) {

@@ -1,10 +1,12 @@
 import type { LandmarkFrame } from "@/types";
+import type { CameraTimingValidation } from "./cameraTimingValidation";
 
 export type CameraInput = {
   id: string;
   kind: "local" | "ip";
   deviceId: string;
   address: string;
+  label?: string;
 };
 export type PoseFusionModel = "body-aligned" | "triangulated";
 export type CalibratedCamera = {
@@ -23,6 +25,8 @@ export type CameraCalibration = {
   validation_rms_px?: number[];
   shared_poses?: number;
   solver?: string;
+  source_bindings?: CameraInput[];
+  timing_validation?: CameraTimingValidation;
 };
 export type CameraViewRecording = {
   id: string;
@@ -41,6 +45,7 @@ export type MultiCameraSource = {
   stream_count: 2 | 3;
   model: PoseFusionModel;
   calibration?: CameraCalibration;
+  timing_validation?: CameraTimingValidation;
 };
 export type MultiViewQuality = {
   model: PoseFusionModel;

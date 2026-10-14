@@ -11,8 +11,8 @@ Set `RTT_CAMERA_SOURCES` on the API process to a JSON object of stable identitie
 Select **Configured · Side view** in a camera slot's IP source menu. Keep
 credentials in the backend environment. The browser receives only identities,
 names, decoded JPEG frames and timing metadata. Endpoints are configured by the
-operator; the service is not an arbitrary URL proxy. Container deployments must
-explicitly forward this environment variable into the API service. Do not commit
+operator; the service is not an arbitrary URL proxy. The local Compose workflows
+forward this environment variable into the API service. Do not commit
 credentials to Compose files or source control.
 
 Up to three sources run in separate bounded decoder processes. Each retains
@@ -20,7 +20,9 @@ one latest frame, reports a source epoch and monotonic sequence, rejects decoded
 frames older than 250 ms, and exits after ten seconds without requests. Browser
 polling permits one outstanding request per source and invalidates a restarted
 source. The controller remains a separate process. This initial transport uses
-JPEG snapshots rather than WebRTC; hardware buffering and bandwidth must be
+JPEG snapshots rather than WebRTC. Identical downsampled IP pixels stop refreshing
+tracking after 250 ms; this conservative check can hold an entirely static scene
+and is not a hardware frame counter. Hardware buffering and bandwidth must be
 measured on the intended mixed USB/IP rig. Decode time is not exposure time.
 
 **Landmark detector** is separate from **3D reconstruction**. Holistic retains

@@ -47,7 +47,8 @@ export async function extractMultiCameraRecording(
         [11, 12, 23, 24].every((i) => visiblePosePoint(frame.pose[i])),
       recording.detector ?? "holistic",
     );
-    views.push({ ...view, ...result });
+    const { inference_times_ms: _inferenceTimes, ...extraction } = result;
+    views.push({ ...view, ...extraction });
   }
   const frames = fuseRecordedViews(
     views,

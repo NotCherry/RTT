@@ -11,7 +11,7 @@ it("expands the complete live frame and labels anatomical sides in native source
   vi.spyOn(HTMLVideoElement.prototype, "videoWidth", "get").mockReturnValue(1280);
   vi.spyOn(HTMLVideoElement.prototype, "videoHeight", "get").mockReturnValue(720);
   const camera = { videoRef: createRef<HTMLVideoElement>(), imageRef: createRef<HTMLImageElement>(),
-    connected: true, opening: false, recording: false, finalizing: false, elapsed: 0, status: "Ready", metrics: { processed_fps: 30, latency_ms: 10, p95_latency_ms: 12, dropped_frames: 0, detector: "worker", timing: "browser-observation" as const },
+    connected: true, opening: false, recording: false, finalizing: false, elapsed: 0, status: "Ready", metrics: { processed_fps: 30, received_fps: 30, latency_ms: 10, p95_latency_ms: 12, dropped_frames: 0, detector: "worker", timing: "browser-observation" as const },
     open: vi.fn(), close: vi.fn(), startRecording: vi.fn(), stopRecording: vi.fn() };
   const pose = Array.from({ length: 33 }, () => ({ x: .5, y: .5, z: 0, visibility: 0 }));
   pose[11] = { x: .75, y: .2, z: 0, visibility: 1 };

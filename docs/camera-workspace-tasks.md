@@ -11,7 +11,7 @@ Goal reference: camera-workspace-2026-10-14.
 | CAM-04 | Timed multi-camera reconstruction, diagnostics and synchronized recording inspection | Complete |
 | CAM-05 | Supported IP-camera gateway and detector performance evaluation | Complete |
 | CAM-06 | Physical motion-reference diagnostics and matching profile | Software complete; hardware acceptance pending |
-| CAM-07 | Integration journeys, layout review, acceptance report and clean commits | Pending |
+| CAM-07 | Integration journeys, layout review, acceptance report and clean commits | Complete; hardware checks documented |
 
 Each implementation task includes focused tests and relevant full suites. Actual
 camera accuracy and physical motor acceptance require an available rig; report
@@ -55,3 +55,18 @@ profile remains a candidate, not accepted parity. Hardware was explicitly
 unavailable; conservative defaults remain until measured G1 validation. Design
 lint reports pre-existing raw headings in App.tsx and typography.tsx; changed
 camera components use the system typography and styles.
+
+CAM-07 final verification: 229 frontend unit tests and production build passed;
+193 backend tests passed in the SDK-enabled robot image, including the previously
+skipped DDS, relay, ROS bridge and upper-body protocol modules. Eight launcher
+tests passed. All 28 browser journeys passed against the healthy canonical
+development stack. Desktop/mobile bounds and the final setup screenshot were
+checked. Manual branch review addressed cancellation, timing validation,
+configuration locks, saved mapping restoration, delayed initial state, recording playback during armed
+control, repeated IP pixels and conflicting OpenCV providers. The code-review
+skill remains unavailable; this is explicitly recorded in the acceptance report.
+
+Software delivery is complete. Actual G1 motion-profile acceptance, USB/IP rig
+timing and mocap accuracy remain hardware measurements, as requested by the
+operator. See `camera-workspace-acceptance.md` for the requirement audit and exact
+checks still needed; no physical speed-parity or accuracy claim is made.

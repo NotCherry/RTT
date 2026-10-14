@@ -613,7 +613,11 @@
 .camera-source-container { min-width: 0; }
 .camera-workspace-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; align-items: start; }
 .camera-rig-tiles { display: contents; }
+.camera-rig-view.camera-source-expanded { grid-column: 1 / -1; }
 .camera-workspace-grid .camera-source-panel .camera-live-preview { height: clamp(260px, 40vh, 480px); }
+.camera-setup-overview .camera-source-panel .camera-live-preview { height: clamp(180px, 24vh, 280px); }
+.camera-setup-overview .camera-pose-scene { height: clamp(240px, 32vh, 400px); }
+.camera-session-stop { position: fixed; right: 24px; bottom: 24px; z-index: 50; }
 .camera-settings-fields { display: contents; }
 .camera-calibration-snapshots { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; padding: 12px; }
 .camera-calibration-snapshots svg { display: block; width: 100%; border-radius: 5px; }

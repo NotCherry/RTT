@@ -14,8 +14,10 @@ import { directIpCameraStreamUrl } from "@/domain/ipCamera";
 import { defaultCameraInputs, loadCameraSetup, saveCameraSetup } from "@/domain/cameraSetup";
 import { nearestCameraFrame, TRIANGULATION_SYNC_MS } from "@/domain/cameraViewAlignment";
 import type { CameraDetectorModel } from "@/domain/cameraDetectorModels";
+import { cameraTimingOffset, type CameraTimingValidation } from "@/domain/cameraTimingValidation";
+import type { RetargetingProfile } from "@/domain/retargeting";
 
-type Options = Parameters<typeof useCameraCapture>[0];
+type Options = Parameters<typeof useCameraCapture>[0] & { profile?: RetargetingProfile };
 export function useMultiCameraCapture(options: Options, setupKey?: string) {
   const current = useRef(options);
   current.current = options;
@@ -27,6 +29,7 @@ export function useMultiCameraCapture(options: Options, setupKey?: string) {
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [model, setModel] = useState<PoseFusionModel>(savedSetup.current?.model ?? "body-aligned");
   const [calibration, setCalibration] = useState<CameraCalibration | undefined>(savedSetup.current?.calibration);
+  const [timing, setTiming] = useState<CameraTimingValidation | undefined>(savedSetup.current?.timing);
   const [message, setMessage] = useState("");
   const [opening, setOpening] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -48,6 +51,7 @@ export function useMultiCameraCapture(options: Options, setupKey?: string) {
   const mounted = useRef(true);
 
   function frame(index: number, value: LandmarkFrame | null) {
+    if (value && timing) value = { ...value, timestamp: value.timestamp-cameraTimingOffset(timing, inputs[index].id) };
     observed.current[index] = value;
     history.current[index] = value ? [...history.current[index], value].slice(-6) : [];
     setLatest([...observed.current]);
@@ -99,7 +103,7 @@ export function useMultiCameraCapture(options: Options, setupKey?: string) {
           { kind: "multi-camera" }
         >,
         offset_ms:
-          (c.recording_start_ms ?? 0) - (primary.recording_start_ms ?? 0),
+          (c.recording_start_ms ?? 0) - (primary.recording_start_ms ?? 0) - cameraTimingOffset(timing, inputs[i].id),
         duration_ms: c.duration_ms,
         width: c.width,
         height: c.height,
@@ -123,6 +127,7 @@ export function useMultiCameraCapture(options: Options, setupKey?: string) {
           stream_count: group.count as 2 | 3,
           model: group.model,
           calibration: group.calibration,
+          timing_validation: timing,
         },
       });
     } finally {
@@ -130,6 +135,7 @@ export function useMultiCameraCapture(options: Options, setupKey?: string) {
     }
   }
   function recordingError(index: number, error: string) {
+    if (error.includes("source restarted")) setTiming(undefined);
     const remaining = cameras.slice(0, count).filter((camera, i) => i !== index && camera.connected);
     if (ready.current && count === 3 && index !== 0 && remaining.length === 2
       && !batch.current && !active.some(camera => camera.recording || camera.finalizing)) {
@@ -262,7 +268,6 @@ export function useMultiCameraCapture(options: Options, setupKey?: string) {
       setMessage(
         "Import calibration for every selected view before triangulating.",
       );
-      return;
     }
     const generation = lifecycle.current;
     setOpening(true);
@@ -351,6 +356,12 @@ export function useMultiCameraCapture(options: Options, setupKey?: string) {
       calibration,
       setupName,
       detector,
+      timing,
+      setTiming: (value: CameraTimingValidation | undefined) => {
+        setTiming(value);
+        observed.current = [null, null, null]; history.current = [[], [], []];
+        setLatest([null, null, null]); current.current.onFrame(null);
+      },
       setDetector,
       setSetupName,
       setCount: (value: number) => {
@@ -358,11 +369,12 @@ export function useMultiCameraCapture(options: Options, setupKey?: string) {
         close();
         setCount(value);
         setCalibration(undefined);
+        setTiming(undefined);
       },
       saveSetup: () => {
         try {
           if (!setupKey) throw new Error("Open a robot before saving the camera setup.");
-          saveCameraSetup(setupKey, { version: 1, name: setupName.trim() || "My camera setup", inputs: inputs.slice(0, count), model, detector, calibration });
+          saveCameraSetup(setupKey, { version: 1, name: setupName.trim() || "My camera setup", inputs: inputs.slice(0, count), model, detector, calibration, timing, profile: options.profile });
           setMessage("Camera setup saved on this device.");
         } catch (error) { setMessage(error instanceof Error ? error.message : "Camera setup could not be saved."); }
       },
@@ -376,12 +388,13 @@ export function useMultiCameraCapture(options: Options, setupKey?: string) {
       },
       update: (index: number, patch: Partial<CameraInput>) => {
         setCalibration(undefined);
+        setTiming(undefined);
         setInputs((rows) =>
           rows.map((row, i) => (i === index ? { ...row, ...patch } : row)),
         );
       },
       setModel,
-      setCalibration,
+      setCalibration: (value: CameraCalibration | undefined) => { setCalibration(value); setTiming(undefined); },
       refreshDevices: () => refreshDevices(true),
     },
   };

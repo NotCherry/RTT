@@ -13,7 +13,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends git build-essen
 RUN ln -s /usr/lib/$(dpkg-architecture -qDEB_HOST_MULTIARCH)/libddsc.so /usr/lib/libddsc.so
 ENV CYCLONEDDS_HOME=/usr
 COPY requirements-robot.txt .
-RUN --mount=type=cache,target=/root/.cache/pip pip install -r requirements-robot.txt
+RUN --mount=type=cache,target=/root/.cache/pip pip install cyclonedds==0.10.2
+# The SDK's image utilities use the already pinned headless OpenCV provider.
+# Avoid installing a second, unbounded cv2 distribution over that namespace.
+RUN --mount=type=cache,target=/root/.cache/pip pip install --no-deps -r requirements-robot.txt
 RUN python -c 'from unitree_sdk2py.idl.default import unitree_hg_msg_dds__LowCmd_; from unitree_sdk2py.utils.crc import CRC; CRC().Crc(unitree_hg_msg_dds__LowCmd_())'
 
 FROM robot-dependencies AS robot

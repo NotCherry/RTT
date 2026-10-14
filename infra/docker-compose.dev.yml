@@ -3,6 +3,8 @@
 services:
   backend:
     build: apps/api
+    environment:
+      RTT_CAMERA_SOURCES: ${RTT_CAMERA_SOURCES:-}
     command:
       [
         "uvicorn",

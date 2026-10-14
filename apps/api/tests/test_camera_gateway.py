@@ -13,6 +13,8 @@ def test_gateway_configuration_exposes_only_named_supported_sources(monkeypatch)
     response = TestClient(app).get("/api/camera-gateway/sources")
     assert response.json() == {"sources": [{"id": "side", "name": "Side view"}]}
     assert "secret" not in response.text and "example.invalid" not in response.text
+    monkeypatch.setenv("RTT_CAMERA_SOURCES", "")
+    assert configured_sources() == {}
     with pytest.raises(ValueError, match="Invalid"):
         configured_sources('{"local":{"url":"file:///etc/passwd"}}')
     with pytest.raises(KeyError):
