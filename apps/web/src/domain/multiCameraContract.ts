@@ -47,6 +47,9 @@ export type MultiViewQuality = {
   contributing_views: string[];
   fused_landmarks: number;
   triangulated_landmarks: number;
+  landmark_quality?: { index: number; views: string[]; reprojection_error_px: number }[];
+  view_skew_ms?: number;
+  timing?: "browser-observation";
 };
 
 export function parseCameraCalibration(value: unknown): CameraCalibration {

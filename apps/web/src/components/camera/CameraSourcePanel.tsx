@@ -5,6 +5,7 @@ import type { Joint, LandmarkFrame } from "@/types";
 import type { RetargetingProfile } from "@/domain/retargeting";
 import { MappingInspector } from "./MappingInspector";
 import { StickFigure } from "./StickFigure";
+import { CameraMetrics } from "./CameraMetrics";
 import type { useCameraCapture } from "./useCameraCapture";
 import { CameraDeviceSelect, type CameraRig } from "./CameraRigControls";
 
@@ -117,6 +118,7 @@ export function CameraSourcePanel({
         {camera.connected ? `${width} × ${height} · entire camera frame` : "Entire camera frame · no crop or zoom"}.
         Unmirrored: L and R mark your own left and right.
       </p>
+      <CameraMetrics metrics={camera.metrics} />
       {processing === "live" && <MappingInspector frame={latest} joints={joints} profile={profile} />}
       <div className={showAction ? "route-actions" : "hidden"}>
         <Button disabled={disabled || locked} onClick={onToggle}>

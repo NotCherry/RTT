@@ -8,8 +8,8 @@ Goal reference: camera-workspace-2026-10-14.
 | CAM-01 | ADR, ownership contracts and verification environment | Complete |
 | CAM-02 | Live-first workspace, persistent 1/2/3-camera setup and one-click robot session | Complete |
 | CAM-03 | Guided in-app calibration with isolated solver and versioned calibration | Complete |
-| CAM-04 | Timed multi-camera reconstruction, diagnostics and synchronized recording inspection | In progress |
-| CAM-05 | Supported IP-camera gateway and detector performance evaluation | Pending |
+| CAM-04 | Timed multi-camera reconstruction, diagnostics and synchronized recording inspection | Complete |
+| CAM-05 | Supported IP-camera gateway and detector performance evaluation | In progress |
 | CAM-06 | Physical motion-reference diagnostics and matching profile | Pending |
 | CAM-07 | Integration journeys, layout review, acceptance report and clean commits | Pending |
 
@@ -32,3 +32,10 @@ were skipped because the simulation image has no SDK. Calibration tests exercise
 real ChArUco pixels, known three-camera geometry, held-out reprojection rejection,
 invalid source/board contracts and timeout process reaping. Camera accuracy on an
 actual arrangement remains a separate hardware acceptance check.
+
+CAM-04 verification: browser journeys verified real WASM worker processing and
+three retained videos seeking on one timeline. Focused tests protect one-inference
+scheduling, worker cleanup, stale-result rejection, coherent temporal alignment,
+two-view degradation and recording offsets. A 3D setup viewer and per-landmark
+reprojection diagnostics expose reconstructed geometry without claiming exposure
+synchronization. Full frontend verification and the production build passed.

@@ -116,6 +116,18 @@ it("only the primary view drives fresh targets and null state is propagated", as
   act(() => state.options[0].onFrame(null));
   expect(onFrame).toHaveBeenLastCalledWith(null);
 });
+it("keeps two live sources after a supplementary dropout but prevents grouped recording until reopened", async () => {
+  const { result } = setup();
+  act(() => result.current.rig.setCount(3));
+  act(() => { for (let i=0; i<3; i++) result.current.rig.update(i, { deviceId: `camera-${i}` }); });
+  await act(() => result.current.open("local", ""));
+  act(() => state.options[2].onRecordingError!("Device disconnected"));
+  expect(result.current.connected).toBe(true);
+  expect(result.current.allConnected).toBe(false);
+  expect(result.current.status).toMatch(/continuing live with two views/);
+  expect(result.current.rig.cameras[0].connected).toBe(true);
+  expect(result.current.rig.cameras[1].connected).toBe(true);
+});
 it("assembles one recording only after all views finalize, preserving independent timing and videos", async () => {
   const { result, onRecording } = setup();
   act(() => result.current.rig.add());

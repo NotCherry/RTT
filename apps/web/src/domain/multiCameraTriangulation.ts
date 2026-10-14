@@ -134,6 +134,7 @@ export function triangulateLandmark(
     world,
     visibility: Math.min(...best.inliers.map((o) => o.point.visibility ?? 1)),
     views: best.inliers.map((o) => o.camera.id),
+    reprojection_error_px: Math.max(...best.inliers.map(o => errorPx(world, o))),
   };
 }
 

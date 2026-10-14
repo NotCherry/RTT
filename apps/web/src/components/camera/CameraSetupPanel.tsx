@@ -33,7 +33,12 @@ export function CameraSetupPanel({ rig, disabled, calibrationOnly = false, onTes
           rig.setCalibration(calibration); setError("");
         } catch (failure) { setError(failure instanceof Error ? failure.message : "Invalid calibration"); }
       }} /></label></div>
-      <div className="route-actions"><Button variant="secondary" disabled={disabled || !rig.calibration} onClick={() => rig.setCalibration(undefined)}>Camera moved / recalibrate</Button></div></>}
+      <div className="route-actions"><Button variant="secondary" disabled={!rig.calibration} onClick={() => {
+        if (!rig.calibration) return;
+        const url = URL.createObjectURL(new Blob([JSON.stringify(rig.calibration, null, 2)], { type: "application/json" }));
+        const link = document.createElement("a"); link.href = url; link.download = "rtt-camera-calibration.json"; link.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      }}>Export calibration</Button><Button variant="secondary" disabled={disabled || !rig.calibration} onClick={() => rig.setCalibration(undefined)}>Camera moved / recalibrate</Button></div></>}
     <p className="helper-text">{rig.calibration ? `${rig.calibration.cameras.length} calibrated views · reprojection RMS ${rig.calibration.rms_px?.toFixed(2) ?? "unknown"} px.` : "No calibration loaded. Single-view and body-aligned depth are estimates."} USB and MJPEG exposure timing is unverified.</p>
     {rig.calibration?.validation_rms_px && <p className="helper-text">Held-out validation: {rig.calibration.validation_rms_px.map((error, i) => `view-${i+1}: ${error.toFixed(2)} px`).join(" · ")}.</p>}
     {error && <p role="alert" className="helper-text">{error}</p>}

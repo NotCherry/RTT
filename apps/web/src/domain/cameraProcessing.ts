@@ -1,29 +1,17 @@
 import type { LandmarkFrame } from "@/types";
 import { hasUsablePose } from "./retargeting";
+import { createCameraDetectorClient } from "./cameraDetectorClient";
 
 export async function createCameraDetector() {
-  const vision = await import("@mediapipe/tasks-vision");
-  const files = await vision.FilesetResolver.forVisionTasks("/mediapipe/wasm");
-  const create = (delegate: "GPU" | "CPU") =>
-    vision.HolisticLandmarker.createFromOptions(files, {
-      baseOptions: { modelAssetPath: "/mediapipe/models/holistic_landmarker.task", delegate },
-      runningMode: "VIDEO",
-      minPosePresenceConfidence: 0.5,
-      minHandLandmarksConfidence: 0.5,
-    });
-  try {
-    return await create("GPU");
-  } catch {
-    return create("CPU");
-  }
+  return createCameraDetectorClient();
 }
 export type CameraDetector = Awaited<ReturnType<typeof createCameraDetector>>;
-export function detectCameraFrame(
+export async function detectCameraFrame(
   detector: CameraDetector,
   source: HTMLVideoElement | HTMLImageElement,
   timestamp: number,
-): LandmarkFrame | null {
-  const result = detector.detectForVideo(source, timestamp);
+): Promise<LandmarkFrame | null> {
+  const result = await detector.detectForVideo(source, timestamp);
   const pose = result.poseLandmarks?.[0] ?? [];
   if (!pose.length) return null;
   const points = (input: typeof pose) => input.map(({ x, y, z, visibility }) => ({ x, y, z, visibility }));
@@ -111,7 +99,7 @@ export async function extractCameraRecording(
         await waitForMedia(video, "seeked", signal, () => {
           video.currentTime = seconds;
         });
-      const frame = detectCameraFrame(detector, video, timestamp);
+      const frame = await detectCameraFrame(detector, video, timestamp);
       if (frame && acceptFrame(frame)) frames.push(frame);
       else rejected++;
       progress(Math.min(100, Math.round(((timestamp + 1000 / sampleRate) / duration) * 100)));

@@ -4,6 +4,7 @@ import type { CameraRecording } from "@/domain/cameraArchive";
 import { createCameraDetector, detectCameraFrame, type CameraDetector } from "@/domain/cameraProcessing";
 import { directIpCameraStreamUrl } from "@/domain/ipCamera";
 import { hasUsablePose } from "@/domain/retargeting";
+import { cameraFrameMetrics } from "@/domain/cameraFrameMetrics";
 
 export function useCameraCapture(options: {
   processing: "live" | "offline";
@@ -37,6 +38,7 @@ export function useCameraCapture(options: {
   const stoppedAt = useRef(0);
   const [elapsed, setElapsed] = useState(0);
   const [status, setStatus] = useState("Camera off");
+  const [metrics, setMetrics] = useState(() => cameraFrameMetrics([], [], 0, "not started"));
   const mounted = useRef(true);
 
   function stopRecording() {
@@ -65,6 +67,7 @@ export function useCameraCapture(options: {
       setConnected(false);
       setOpening(false);
       setStatus("Camera off");
+      setMetrics(cameraFrameMetrics([], [], 0, "not started"));
       current.current.onFrame(null);
     }
   }
@@ -155,7 +158,9 @@ export function useCameraCapture(options: {
       setStatus(r.detector ? "Live processing ready" : "Camera ready to record; extract landmarks later");
       let last = -Infinity;
       let lastMediaTime = -Infinity;
-      const tick = () => {
+      const times: number[] = [], durations: number[] = [];
+      let dropped = 0;
+      const tick = async () => {
         if (generation !== r.generation) return;
         const timestamp = performance.now();
         const input = source === "local" ? videoRef.current : imageRef.current;
@@ -165,21 +170,30 @@ export function useCameraCapture(options: {
             return;
           }
           if (input instanceof HTMLVideoElement) lastMediaTime=input.currentTime;
+          if (Number.isFinite(last)) dropped += Math.max(0, Math.floor((timestamp - last) * current.current.sampleRate / 1000) - 1);
           last = timestamp;
           try {
-            const frame = detectCameraFrame(r.detector, input, timestamp);
-            const accepted = frame && (current.current.acceptFrame ?? hasUsablePose)(frame) ? frame : null;
+            const frame = await detectCameraFrame(r.detector, input, timestamp);
+            if (generation !== r.generation) return;
+            const processedAt = performance.now();
+            times.push(processedAt); durations.push(processedAt - timestamp);
+            if (times.length > 60) { times.shift(); durations.shift(); }
+            setMetrics(cameraFrameMetrics(times, durations, dropped, r.detector.mode ?? "main-thread"));
+            const accepted = frame && processedAt - timestamp <= 250 && (current.current.acceptFrame ?? hasUsablePose)(frame)
+              ? { ...frame, timing: { observed_at_ms: timestamp, processed_at_ms: processedAt, source: "browser-observation" as const } } : null;
             current.current.onFrame(accepted);
             if (r.recording) {
-              if (accepted) r.frames.push({ ...accepted, timestamp: timestamp - r.start });
+              if (accepted) r.frames.push({ ...accepted, timestamp: timestamp - r.start,
+                timing: { observed_at_ms: timestamp - r.start, processed_at_ms: processedAt - r.start, source: "browser-observation" } });
               else r.rejected++;
             }
           } catch (error) {
+            if (generation !== r.generation) return;
             setStatus(
               `Live processing stopped: ${error instanceof Error ? error.message : "Unknown error"}. Reopen the camera to retry.`,
             );
             r.processingFailed = true;
-            r.detector.close();
+            r.detector?.close();
             r.detector = undefined;
             current.current.onFrame(null);
           }
@@ -312,6 +326,7 @@ export function useCameraCapture(options: {
     finalizing,
     elapsed,
     status,
+    metrics,
     open,
     close,
     startRecording,

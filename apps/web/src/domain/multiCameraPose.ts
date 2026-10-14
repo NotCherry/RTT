@@ -7,6 +7,7 @@ import {
   type Vector,
 } from "./retargetingGeometry";
 import type { CameraCalibration, PoseFusionModel } from "./multiCameraContract";
+import { coherentCameraViews, TRIANGULATION_SYNC_MS } from "./cameraViewAlignment";
 import {
   cameraRelative,
   triangulateLandmark,
@@ -62,7 +63,7 @@ export function fuseCameraViews(
 ): LandmarkFrame | null {
   const primary = views[0]?.frame;
   if (!primary) return null;
-  const fresh = views.filter(
+  const fresh = model === "triangulated" ? coherentCameraViews(views, TRIANGULATION_SYNC_MS) : views.filter(
     (v) =>
       v.frame &&
       Math.abs(v.frame.timestamp - primary.timestamp) <= VIEW_SYNC_MS,
@@ -79,9 +80,10 @@ export function fuseCameraViews(
       },
     };
   const reference = torso(primary);
-  const contributors = new Set([views[0].id]);
+  const contributors = new Set<string>(model === "triangulated" ? [] : [views[0].id]);
   let fused = 0,
     triangulated = 0;
+  const landmarkQuality: { index: number; views: string[]; reprojection_error_px: number }[] = [];
   const primaryCamera = calibration?.cameras.find((c) => c.id === views[0].id);
   const calibrated = fresh.filter((v) => {
     const c = calibration?.cameras.find((c) => c.id === v.id),
@@ -114,6 +116,7 @@ export function fuseCameraViews(
         estimate.views.forEach((id) => contributors.add(id));
         fused++;
         triangulated++;
+        landmarkQuality.push({ index: i, views: estimate.views, reprojection_error_px: estimate.reprojection_error_px });
         return { ...point, visibility: estimate.visibility };
       }
       return { x: 0, y: 0, z: 0, visibility: 0 };
@@ -165,6 +168,9 @@ export function fuseCameraViews(
       contributing_views: [...contributors],
       fused_landmarks: fused,
       triangulated_landmarks: triangulated,
+      landmark_quality: landmarkQuality,
+      view_skew_ms: fresh.length ? Math.max(...fresh.map(v => v.frame!.timestamp)) - Math.min(...fresh.map(v => v.frame!.timestamp)) : 0,
+      timing: "browser-observation",
     },
   };
 }

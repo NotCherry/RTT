@@ -92,15 +92,10 @@ function stubLandmarks() {
   const pose = Array.from({ length: 33 }, () => ({ x: .5, y: .5, z: 0, visibility: 1 }));
   for (const [index, x, y] of [[11, .65, .2], [12, .35, .2], [13, .65, .4], [14, .35, .4], [15, .65, .6], [16, .35, .6], [23, .6, .5], [24, .4, .5]]) pose[index] = { x, y, z: 0, visibility: 1 };
   const frame = { pose, pose_world: pose, left_hand: [], right_hand: [], confidence: 1, source_width: 320, source_height: 240 };
-  cy.intercept('GET', '**/src/domain/cameraProcessing.ts', req => {
-    delete req.headers['if-none-match'];
-    req.continue(res => {
-    const marker = 'const result = detector.detectForVideo(source, timestamp);';
-    expect(res.body).to.contain(marker);
-    res.body = res.body.replace('export async function createCameraDetector() {', 'export async function createCameraDetector() { return { close() {} };')
-      .replace(marker, `return { timestamp, ...${JSON.stringify(frame)} }; ${marker}`);
-    });
-  });
+  cy.intercept('GET', '**/src/domain/cameraProcessing.ts*', { statusCode: 200, headers: { 'content-type': 'application/javascript' }, body:
+    `export async function createCameraDetector(){ return { mode: 'worker', close() {} }; }
+     export async function detectCameraFrame(detector,source,timestamp){ return { timestamp, ...${JSON.stringify(frame)} }; }
+     export async function extractCameraRecording(){ throw new Error('Not available in the perception fixture'); }` });
 }
 describe('Camera workspace', () => {
   it('detects calibration snapshots through the isolated API and blocks robot startup in Calibration', () => {
@@ -165,6 +160,11 @@ describe('Camera workspace', () => {
     cy.get('.camera-source-panel video').each($video => expect(($video[0] as HTMLVideoElement).srcObject).not.to.equal(null));
     cy.contains('[role="tab"]', 'Recordings').click();
     cy.contains('button', 'Export camera videos').should('exist');
+    cy.get('.camera-recorded-views video').should('have.length', 3);
+    cy.contains('button', 'Next frame').click();
+    cy.get('.camera-recorded-views video').should($videos => {
+      expect(($videos[0] as HTMLVideoElement).currentTime).to.be.greaterThan(0);
+    });
     cy.contains('[role="tab"]', 'Camera setup').click();
     cy.get('[aria-label="Camera count"]').should('be.disabled');
     cy.contains('button', 'Close cameras').filter(':visible').first().click();
@@ -175,6 +175,7 @@ describe('Camera workspace', () => {
     openCameraPage(true);
     cy.contains('button', 'Start live preview').click();
     cy.contains('Live preview ready', { timeout: 120000 }).should('exist');
+    cy.contains('Worker processing', { timeout: 30000 }).should('exist');
     cy.contains('[role="tab"]', 'Camera setup').click();
     cy.contains('Live processing ready').should('exist');
     cy.get('[aria-label="Camera count"]').should('be.disabled');

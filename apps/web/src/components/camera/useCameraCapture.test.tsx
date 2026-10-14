@@ -75,11 +75,11 @@ function setup() {
   hook.result.current.videoRef.current = document.createElement("video");
   return { ...hook, onFrame, onRecordingError };
 }
-function tick(timestamp: number) {
+async function tick(timestamp: number) {
   time = timestamp;
   const pending = [...callbacks.values()];
   callbacks.clear();
-  act(() => pending.forEach((callback) => callback(timestamp)));
+  await act(async () => { await Promise.all(pending.map(callback => callback(timestamp))); });
 }
 it("selects the exact device, ignores repeated media frames, and stops all resources on close", async () => {
   const { result } = setup();
@@ -89,12 +89,12 @@ it("selects the exact device, ignores repeated media frames, and stops all resou
       video: expect.objectContaining({ deviceId: { exact: "chosen-camera" } }),
     }),
   );
-  tick(0);
-  tick(40);
-  tick(80);
+  await tick(0);
+  await tick(40);
+  await tick(80);
   expect(model.detect).toHaveBeenCalledTimes(1);
   result.current.videoRef.current!.currentTime = 0.1;
-  tick(120);
+  await tick(120);
   expect(model.detect).toHaveBeenCalledTimes(2);
   act(() => result.current.close());
   expect(track.stop).toHaveBeenCalled();
@@ -131,4 +131,15 @@ it("reports device loss and invalidates its observation", async () => {
   expect(onRecordingError).toHaveBeenCalledWith(
     expect.stringContaining("Camera disconnected"),
   );
+});
+it("rejects a stale worker result instead of refreshing live tracking", async () => {
+  const { result, onFrame } = setup();
+  let finish!: (value: unknown) => void;
+  model.detect.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  await act(() => result.current.open("local", ""));
+  const pending = tick(0);
+  time = 300;
+  await act(async () => { finish({ pose: [], confidence: 1 }); await pending; });
+  expect(onFrame).toHaveBeenLastCalledWith(null);
+  expect(result.current.metrics.latency_ms).toBe(300);
 });

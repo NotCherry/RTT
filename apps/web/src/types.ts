@@ -112,6 +112,7 @@ export type LandmarkFrame = {
   left_hand: LandmarkPoint[];
   right_hand: LandmarkPoint[];
   confidence: number;
+  timing?: { observed_at_ms: number; processed_at_ms: number; source: "browser-observation" };
   multi_view?: import("@/domain/multiCameraContract").MultiViewQuality;
 };
 

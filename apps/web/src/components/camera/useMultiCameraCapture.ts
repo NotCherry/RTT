@@ -12,6 +12,7 @@ import { hasUsablePose } from "@/domain/retargeting";
 import { visiblePosePoint } from "@/domain/retargetingGeometry";
 import { directIpCameraStreamUrl } from "@/domain/ipCamera";
 import { defaultCameraInputs, loadCameraSetup, saveCameraSetup } from "@/domain/cameraSetup";
+import { nearestCameraFrame, TRIANGULATION_SYNC_MS } from "@/domain/cameraViewAlignment";
 
 type Options = Parameters<typeof useCameraCapture>[0];
 export function useMultiCameraCapture(options: Options, setupKey?: string) {
@@ -33,6 +34,7 @@ export function useMultiCameraCapture(options: Options, setupKey?: string) {
     null,
   ]);
   const observed = useRef<(LandmarkFrame | null)[]>([null, null, null]);
+  const history = useRef<LandmarkFrame[][]>([[], [], []]);
   const batch = useRef<{
     count: number;
     model: PoseFusionModel;
@@ -45,6 +47,7 @@ export function useMultiCameraCapture(options: Options, setupKey?: string) {
 
   function frame(index: number, value: LandmarkFrame | null) {
     observed.current[index] = value;
+    history.current[index] = value ? [...history.current[index], value].slice(-6) : [];
     setLatest([...observed.current]);
     // Only the primary clock drives targets; supplementary cameras never refresh a stale primary view.
     const mismatched =
@@ -69,7 +72,7 @@ export function useMultiCameraCapture(options: Options, setupKey?: string) {
                 .slice(0, count)
                 .map((input, i) => ({
                   id: input.id,
-                  frame: observed.current[i],
+                  frame: i === 0 ? value : value ? nearestCameraFrame(history.current[i], value.timestamp, model === "triangulated" ? TRIANGULATION_SYNC_MS : 100) : null,
                 })),
               model,
               calibration,
@@ -124,7 +127,17 @@ export function useMultiCameraCapture(options: Options, setupKey?: string) {
       if (mounted.current) setSaving(false);
     }
   }
-  function recordingError(error: string) {
+  function recordingError(index: number, error: string) {
+    const remaining = cameras.slice(0, count).filter((camera, i) => i !== index && camera.connected);
+    if (ready.current && count === 3 && index !== 0 && remaining.length === 2
+      && !batch.current && !active.some(camera => camera.recording || camera.finalizing)) {
+      cameras[index].close();
+      observed.current[index] = null;
+      history.current[index] = [];
+      setLatest([...observed.current]);
+      setMessage(`Camera ${index + 1} unavailable · continuing live with two views. ${error} Reopen the full setup before recording.`);
+      return;
+    }
     batch.current = null;
     close();
     if (mounted.current) setMessage(error);
@@ -137,21 +150,21 @@ export function useMultiCameraCapture(options: Options, setupKey?: string) {
     acceptFrame,
     onFrame: (value) => frame(0, value),
     onRecording: (clip) => recorded(0, clip),
-    onRecordingError: recordingError,
+    onRecordingError: error => recordingError(0, error),
   });
   const second = useCameraCapture({
     ...options,
     acceptFrame,
     onFrame: (value) => frame(1, value),
     onRecording: (clip) => recorded(1, clip),
-    onRecordingError: recordingError,
+    onRecordingError: error => recordingError(1, error),
   });
   const third = useCameraCapture({
     ...options,
     acceptFrame,
     onFrame: (value) => frame(2, value),
     onRecording: (clip) => recorded(2, clip),
-    onRecordingError: recordingError,
+    onRecordingError: error => recordingError(2, error),
   });
   const cameras = [first, second, third];
   const active = cameras.slice(0, count);
@@ -197,6 +210,7 @@ export function useMultiCameraCapture(options: Options, setupKey?: string) {
     ready.current = false;
     cameras.forEach((camera) => camera.close());
     observed.current = [null, null, null];
+    history.current = [[], [], []];
     if (mounted.current) {
       setOpening(false);
       setLatest([null, null, null]);
@@ -313,7 +327,8 @@ export function useMultiCameraCapture(options: Options, setupKey?: string) {
         : active.map((c, i) => `Camera ${i + 1}: ${c.status}`).join(" · "));
   return {
     ...first,
-    connected: active.every((c) => c.connected),
+    connected: active.some((c) => c.connected),
+    allConnected: active.every((c) => c.connected),
     opening: opening || active.some((c) => c.opening),
     recording: active.some((c) => c.recording),
     finalizing: saving || active.some((c) => c.finalizing),

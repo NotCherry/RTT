@@ -7,6 +7,8 @@ import type { RetargetingProfile } from "@/domain/retargeting";
 import type { Joint, Robot, SimulationState } from "@/types";
 import { StickFigure } from "./StickFigure";
 import { MappingInspector } from "./MappingInspector";
+import { RecordingViews } from "./RecordingViews";
+import { PoseScene3D } from "./PoseScene3D";
 
 export function RecordingPlayer({
   recording,
@@ -162,6 +164,10 @@ export function RecordingPlayer({
           <RobotViewport robot={robot} state={state} title="Retargeted preview" label="ROBOT PREVIEW" />
         )}
       </div>
+      {recording.views && <details className="camera-mapping-inspector" open><summary>All recorded camera views · synchronized timeline</summary>
+        <RecordingViews views={recording.views} time={time} playing={playing} speed={speed} maximumGapMs={2000 / recording.sample_rate} />
+        <PoseScene3D frame={frame} calibration={recording.source.kind === "multi-camera" ? recording.source.calibration : undefined} />
+      </details>}
       <p className="camera-tracking-status" aria-live="polite">
         {!recording.frames.length
           ? recording.processed ? "No confident pose found. Re-extract with a clearer view." : "Video ready. Extract its stick figure to inspect robot motion."

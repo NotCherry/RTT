@@ -13,6 +13,7 @@ import { useLiveCameraSession } from "@/components/camera/useLiveCameraSession";
 import { CameraSetupPanel } from "@/components/camera/CameraSetupPanel";
 import { CameraCalibrationPanel } from "@/components/camera/CameraCalibrationPanel";
 import { CameraRigControls } from "@/components/camera/CameraRigControls";
+import { PoseScene3D } from "@/components/camera/PoseScene3D";
 import { mappingCoverage, retargetLandmarkFrame, type RetargetingProfile } from "@/domain/retargeting";
 import { directIpCameraStreamUrl } from "@/domain/ipCamera";
 import { useCameraRecordingLibrary } from "@/components/camera/useCameraRecordingLibrary";
@@ -73,7 +74,7 @@ function CameraWorkspace({ robot, state, joints, neutral, onPreview, onSave }: P
   }, robot?.id);
   const source=camera.rig.inputs[0].kind, address=camera.rig.inputs[0].address;
   const locked = busy || extracting || calibrationBusy || camera.recording || camera.finalizing || camera.opening || remaining !== null;
-  const session = useLiveCameraSession({ cameraConnected: camera.connected, openCamera: () => camera.open(source, address),
+  const session = useLiveCameraSession({ cameraConnected: camera.allConnected, openCamera: () => camera.open(source, address),
     closeCamera: camera.close, connection, liveProcessing: processing === "live",
     trackingFresh: () => performance.now() - trackingAt.current <= 250 });
   function cancelCountdown() {
@@ -192,9 +193,12 @@ function CameraWorkspace({ robot, state, joints, neutral, onPreview, onSave }: P
             />
           </div>
           <div className={tab === "live" ? "hidden" : "camera-rig-tiles"}><CameraRigControls rig={camera.rig} disabled={locked || session.busy || camera.connected} showSettings={tab === "setup"} /></div>
+          {tab !== "live" && tab !== "recordings" && <PoseScene3D frame={latest} calibration={camera.rig.calibration} />}
+          <div className={tab === "live" ? "camera-capture-container" : "hidden"}>
           <CameraCapturePanel robotOnly={robotOnly} onToggleView={() => setRobotOnly(!robotOnly)} motionStatus={motion.status} mode={mode} setMode={setMode} countdown={countdown} setCountdown={setCountdown}
             processing={processing} locked={locked || session.busy} robot={robot} state={state} latest={latest && mappingCoverage(latest, joints, profile).mapped.length ? latest : null}
-            remaining={remaining} camera={camera} cancelCountdown={cancelCountdown} start={start} savePose={savePose} />
+            remaining={remaining} camera={{ ...camera, connected: camera.allConnected }} cancelCountdown={cancelCountdown} start={start} savePose={savePose} />
+          </div>
         </div>
       {tab === "recordings" && (
         <RecordingLibrary
