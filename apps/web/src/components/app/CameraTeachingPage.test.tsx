@@ -38,7 +38,7 @@ it("offers saved recordings and processing without opening a camera", async () =
       onSave={vi.fn()}
     />,
   );
-  fireEvent.click(screen.getByRole("button", { name: "Recordings" }));
+  fireEvent.click(screen.getByRole("tab", { name: "Recordings" }));
   fireEvent.click(await screen.findByRole("button", { name: /Earlier recording/ }));
   expect(await screen.findByRole("button", { name: "Extract stick figure" })).toBeEnabled();
   expect(screen.getByRole("button", { name: "Save robot gesture" })).toBeDisabled();
@@ -75,7 +75,7 @@ it("reopens extracted frames and reports archive save failures without claiming 
       onSave={save}
     />,
   );
-  fireEvent.click(screen.getByRole("button", { name: "Recordings" }));
+  fireEvent.click(screen.getByRole("tab", { name: "Recordings" }));
   fireEvent.click(await screen.findByRole("button", { name: /Processed movement/ }));
   expect(await screen.findByRole("button", { name: "Play" })).toBeEnabled();
   fireEvent.change(screen.getByLabelText("Mapping scope"), { target: { value: "g1-full-body" } });
@@ -102,7 +102,7 @@ it("holds the entry neutral across preview feedback and prevents saving unmappab
     joints: [{ name: "right_shoulder_roll_joint", lower: -3, upper: 3, controllable: true } as never],
     neutral: [.2], onPreview: vi.fn(), onSave: vi.fn().mockResolvedValue(undefined) };
   const page = render(<CameraTeachingPage {...props} />);
-  fireEvent.click(screen.getByRole("button", { name: "Recordings" }));
+  fireEvent.click(screen.getByRole("tab", { name: "Recordings" }));
   fireEvent.click(await screen.findByRole("button", { name: /Standing/ }));
   expect(await screen.findByRole("button", { name: "Play" })).toBeEnabled();
   page.rerender(<CameraTeachingPage {...props} neutral={[1]} />);
@@ -127,21 +127,23 @@ it("expands the robot while retaining the hidden camera resources", async () => 
   fireEvent.click(screen.getByRole("button", { name: "Show camera" }));
   expect(screen.getByRole("button", { name: "Expand robot" })).toHaveAttribute("aria-pressed", "false");
 });
-it("adds and removes up to three cameras and exposes fusion and calibration setup",async()=> {
+it("selects one, two or three cameras in the setup workspace and imports calibration separately", async () => {
   storage.list.mockResolvedValue([]);
-  render(<CameraTeachingPage robot={{id:"robot"} as never} state={null} joints={[]} neutral={[]} onPreview={vi.fn()} onSave={vi.fn()}/>);
-  fireEvent.click(screen.getByRole("button",{name:"Add camera"}));
-  expect(screen.getByLabelText("Camera 2 source")).toBeInTheDocument();
-  expect(screen.getByLabelText("USB camera 1")).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button",{name:"Add camera"}));
-  expect(screen.getByLabelText("Camera 3 source")).toBeInTheDocument();
-  expect(screen.getByRole("button",{name:"Add camera"})).toBeDisabled();
-  fireEvent.change(screen.getByLabelText("Multi-camera pose model"),{target:{value:"triangulated"}});
-  expect(screen.getByLabelText("Camera calibration JSON")).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button",{name:"Remove last camera"}));
+  render(<CameraTeachingPage robot={{ id: "robot" } as never} state={null} joints={[]} neutral={[]} onPreview={vi.fn()} onSave={vi.fn()} />);
+  expect(screen.getByLabelText("Processing mode")).toHaveValue("live");
+  expect(screen.getByLabelText("Robot connection")).toHaveValue("unitree-sdk2");
+  fireEvent.click(screen.getByRole("tab", { name: "Camera setup" }));
+  fireEvent.change(screen.getByLabelText("Camera count"), { target: { value: "2" } });
+  expect(screen.getByLabelText("Camera 2 source")).toBeVisible();
+  fireEvent.change(screen.getByLabelText("Camera count"), { target: { value: "3" } });
+  expect(screen.getByLabelText("Camera 3 source")).toBeVisible();
+  fireEvent.change(screen.getByLabelText("3D reconstruction"), { target: { value: "triangulated" } });
+  fireEvent.click(screen.getByRole("tab", { name: "Calibration" }));
+  expect(screen.getByLabelText("Camera calibration JSON")).toBeVisible();
+  fireEvent.click(screen.getByRole("tab", { name: "Camera setup" }));
+  fireEvent.change(screen.getByLabelText("Camera count"), { target: { value: "1" } });
   expect(screen.queryByLabelText("Camera 3 source")).not.toBeInTheDocument();
 });
-
 it("reports where a tracking gap stops an archived gesture", async () => {
   vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
   const recording = {
@@ -157,7 +159,7 @@ it("reports where a tracking gap stops an archived gesture", async () => {
   render(<CameraTeachingPage robot={{ id: "robot" } as never} state={null}
     joints={[{ name: "right_shoulder_roll_joint", lower: -3, upper: 3, controllable: true } as never]}
     neutral={[0]} onPreview={vi.fn()} onSave={save} />);
-  fireEvent.click(screen.getByRole("button", { name: "Recordings" }));
+  fireEvent.click(screen.getByRole("tab", { name: "Recordings" }));
   fireEvent.click(await screen.findByRole("button", { name: /Interrupted motion/ }));
   fireEvent.click(await screen.findByRole("button", { name: "Save robot gesture" }));
   expect(await screen.findByText(/A tracking break at 0.50 s/)).toBeInTheDocument();

@@ -7,7 +7,9 @@ import { CameraTeachingPage } from "./CameraTeachingPage";
 
 const live = vi.hoisted(() => ({ submit: vi.fn(), joints: null as Joint[] | null, frame: null as null | ((frame: LandmarkFrame) => void) }));
 vi.mock("@/domain/cameraArchive", () => ({ listCameraRecordings: async () => [] }));
-vi.mock("@/components/camera/useRobotTransport", () => ({ useRobotTransport: () => ({ submit: live.submit, controlJoints: live.joints, status: null, busy: false }) }));
+vi.mock("@/components/camera/useRobotTransport", () => ({ useRobotTransport: () => ({ submit: live.submit, controlJoints: live.joints, status: null, busy: false, cancelPendingConnect: vi.fn() }) }));
+vi.mock("@/components/camera/CameraSetupPanel", () => ({ CameraSetupPanel: () => null }));
+vi.mock("@/components/camera/CameraRigControls", () => ({ CameraRigControls: () => null }));
 vi.mock("@/components/camera/RobotConnectionPanel", () => ({ RobotConnectionPanel: () => null }));
 vi.mock("@/components/camera/CameraCapturePanel", () => ({ CameraCapturePanel: () => null }));
 vi.mock("@/components/camera/CameraSourcePanel", () => ({ CameraSourcePanel: () => null }));

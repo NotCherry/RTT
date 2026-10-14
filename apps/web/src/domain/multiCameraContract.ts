@@ -20,6 +20,9 @@ export type CameraCalibration = {
   version: 1;
   cameras: CalibratedCamera[];
   rms_px?: number;
+  validation_rms_px?: number[];
+  shared_poses?: number;
+  solver?: string;
 };
 export type CameraViewRecording = {
   id: string;
@@ -101,6 +104,9 @@ export function parseCameraCalibration(value: unknown): CameraCalibration {
   }
   if (new Set(rig.cameras.map((c) => c.id)).size !== rig.cameras.length)
     throw new Error("Camera calibration IDs must be unique.");
+  if (rig.validation_rms_px && (!Array.isArray(rig.validation_rms_px) || rig.validation_rms_px.length !== rig.cameras.length
+    || rig.validation_rms_px.some(error => !Number.isFinite(error) || error < 0 || error > 2)))
+    throw new Error("Held-out calibration error must be at most 2 pixels for every camera.");
   if (
     rig.rms_px !== undefined &&
     (!Number.isFinite(rig.rms_px) || rig.rms_px < 0 || rig.rms_px > 2)

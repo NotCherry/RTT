@@ -4,12 +4,13 @@ import { cleanup, fireEvent, render, screen, within } from "@testing-library/rea
 import { afterEach, expect, it, vi } from "vitest";
 import { RobotConnectionPanel } from "./RobotConnectionPanel";
 afterEach(cleanup);
-const connection = () => ({ status: null, owned: false, streamReady: false, controlJoints: null, busy: false, error: "", connect: vi.fn(), action: vi.fn(), submit: vi.fn() });
+const connection = () => ({ status: null, owned: false, streamReady: false, controlJoints: null, busy: false, error: "", connect: vi.fn(), action: vi.fn(), submit: vi.fn(), cancelPendingConnect: vi.fn() });
 const connected = { connected: true, armed: false, transport: "mock" as const, state_fresh: true, reason: "Connected", measured: { left_elbow_joint: .2 }, commanded: {}, packets_sent: 0, engagement: 0, stream_connected: true, targets_received: 12, camera_target: { left_elbow_joint: .5 } };
 it("offers a mock connection and distinct hardware speed", () => {
   const c = connection();
   render(<RobotConnectionPanel connection={c} live={false} />);
   fireEvent.change(screen.getByLabelText("Robot speed"), { target: { value: "1.5" } });
+  fireEvent.change(screen.getByLabelText("Robot connection"), { target: { value: "mock" } });
   fireEvent.click(screen.getByRole("button", { name: "Connect mock robot" }));
   expect(c.connect).toHaveBeenCalledWith(expect.objectContaining({ transport: "mock", max_joint_speed: 1.5, kp: 60, kd: 1.5 }));
 });
@@ -17,6 +18,7 @@ it("changes arm strength independently of motion speed and never arms on selecti
   const c = connection();
   render(<RobotConnectionPanel connection={c} live={true} />);
   fireEvent.change(screen.getByLabelText("Arm strength"), { target: { value: "40" } });
+  fireEvent.change(screen.getByLabelText("Robot connection"), { target: { value: "mock" } });
   fireEvent.click(screen.getByRole("button", { name: "Connect mock robot" }));
   expect(c.connect).toHaveBeenCalledWith(expect.objectContaining({ kp: 40, kd: 1.5, max_joint_speed: 1, max_joint_acceleration: 3 }));
   expect(c.action).not.toHaveBeenCalled();
@@ -26,6 +28,7 @@ it("connects the selected arm with a held torso and the confirmed waist contract
   render(<RobotConnectionPanel connection={c} live={false} profile="g1-left-arm" />);
   expect(screen.getByText(/left arm follows the camera/)).toBeInTheDocument();
   fireEvent.change(screen.getByLabelText("Movable waist axes"), { target: { value: "1" } });
+  fireEvent.change(screen.getByLabelText("Robot connection"), { target: { value: "mock" } });
   fireEvent.click(screen.getByRole("button", { name: "Connect mock robot" }));
   expect(c.connect).toHaveBeenCalledWith(expect.objectContaining({ control_mode: "single-arm", active_arm: "left", waist_dof: 1 }));
   expect(c.action).not.toHaveBeenCalled();

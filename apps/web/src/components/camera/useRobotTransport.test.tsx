@@ -5,6 +5,19 @@ import { useRobotTransport } from "./useRobotTransport";
 const api = vi.hoisted(() => ({ connect: vi.fn(), action: vi.fn(), status: vi.fn(), socket: vi.fn() }));
 vi.mock("@/domain/robotTransport", () => ({ connectRobotTransport: api.connect, robotTransportAction: api.action, getRobotTransportStatus: api.status, createRobotTargetSocket: api.socket }));
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); });
+it("releases delayed connection ownership after startup cancellation", async () => {
+  api.status.mockResolvedValue({ connected: false });
+  api.action.mockResolvedValue({ connected: false });
+  let finish!: (value: unknown) => void;
+  api.connect.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  const { result } = renderHook(() => useRobotTransport());
+  let pending!: Promise<boolean>;
+  act(() => { pending = result.current.connect({ transport: "mock", robot_model: "g1-29", network_interface: "lo", domain_id: 0, max_joint_speed: 1, max_joint_acceleration: 3 }); });
+  act(() => result.current.cancelPendingConnect());
+  await act(async () => { finish({ connected: true, token: "late-owner" }); expect(await pending).toBe(false); });
+  expect(api.action).toHaveBeenCalledWith("disconnect", "late-owner");
+  expect(result.current.owned).toBe(false);
+});
 it("authenticates its stream, sends latest tracking targets, and drops congestion", async () => {
   const status = { connected: true, armed: false, state_fresh: true, transport: "mock", reason: "Connected", packets_sent: 0 };
   const stream = { readyState: 1, bufferedAmount: 0, send: vi.fn(), close: vi.fn(), onopen: null, onmessage: null, onclose: null };

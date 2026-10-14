@@ -6,7 +6,7 @@ import type { RetargetingProfile } from "@/domain/retargeting";
 import { MappingInspector } from "./MappingInspector";
 import { StickFigure } from "./StickFigure";
 import type { useCameraCapture } from "./useCameraCapture";
-import { CameraDeviceSelect, CameraRigControls, type CameraRig } from "./CameraRigControls";
+import { CameraDeviceSelect, type CameraRig } from "./CameraRigControls";
 
 type Props = {
   source: "local" | "ip";
@@ -24,6 +24,8 @@ type Props = {
   disabled: boolean;
   onToggle: () => void;
   rig?: CameraRig;
+  showSettings?: boolean;
+  showAction?: boolean;
 };
 export function CameraSourcePanel({
   source,
@@ -41,6 +43,8 @@ export function CameraSourcePanel({
   disabled,
   onToggle,
   rig,
+  showSettings = true,
+  showAction = true,
 }: Props) {
   const [expanded, setExpanded] = useState(false);
   const width = (source === "local" ? camera.videoRef.current?.videoWidth : camera.imageRef.current?.naturalWidth) || 640;
@@ -56,7 +60,7 @@ export function CameraSourcePanel({
           {expanded ? "Reduce camera" : "Expand camera"}
         </Button>
       </PanelHeader>
-      <div className="route-form-grid">
+      <div className={showSettings ? "route-form-grid" : "hidden"}>
         <label>
           Video source
           <select
@@ -109,13 +113,12 @@ export function CameraSourcePanel({
           height={height}
         />}
       </div>
-      {rig && <CameraRigControls rig={rig} disabled={locked || camera.connected}/>}
       <p className="camera-framing-status">
         {camera.connected ? `${width} × ${height} · entire camera frame` : "Entire camera frame · no crop or zoom"}.
         Unmirrored: L and R mark your own left and right.
       </p>
       {processing === "live" && <MappingInspector frame={latest} joints={joints} profile={profile} />}
-      <div className="route-actions">
+      <div className={showAction ? "route-actions" : "hidden"}>
         <Button disabled={disabled || locked} onClick={onToggle}>
           {camera.connected ? "Close camera" : "Open camera"}{rig && rig.inputs.length>1 ? "s" : ""}
         </Button>

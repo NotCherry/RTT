@@ -18,6 +18,7 @@ export function useRobotTransport() {
   const clockOffset = useRef(0);
   const congestedAt = useRef<number | null>(null);
   const mounted = useRef(true);
+  const lifecycle = useRef(0);
   useEffect(() => {
     mounted.current = true;
     let polling = false;
@@ -41,6 +42,7 @@ export function useRobotTransport() {
     const timer = setInterval(poll, 500);
     return () => {
       mounted.current = false;
+      lifecycle.current++;
       clearInterval(timer);
       const stream = socket.current;
       socket.current = null;
@@ -52,17 +54,19 @@ export function useRobotTransport() {
   async function operate(action: () => Promise<void>) {
     setBusy(true);
     setError("");
-    try { await action(); }
-    catch (failure) { if (mounted.current) setError(failure instanceof Error ? failure.message : "Robot connection failed"); }
+    try { await action(); return true; }
+    catch (failure) { if (mounted.current) setError(failure instanceof Error ? failure.message : "Robot connection failed"); return false; }
     finally { if (mounted.current) setBusy(false); }
   }
   return {
     status, error, busy, owned, streamReady, controlJoints,
+    cancelPendingConnect: () => { lifecycle.current++; },
     connect: (settings: RobotConnectionConfig) => operate(async () => {
+      const generation = ++lifecycle.current;
       ready.current = false;
       setStreamReady(false);
       const next = await connectRobotTransport(settings);
-      if (!mounted.current) { await robotTransportAction("disconnect", next.token); return; }
+      if (!mounted.current || generation !== lifecycle.current) { await robotTransportAction("disconnect", next.token); throw new Error("Robot startup cancelled"); }
       token.current = next.token;
       config.current = settings;
       setControlJoints(next.joint_contract ?? null);
@@ -104,6 +108,7 @@ export function useRobotTransport() {
       };
     }),
     action: (action: "arm" | "disarm" | "disconnect") => operate(async () => {
+      if (action === "disconnect") lifecycle.current++;
       const next = await robotTransportAction(action, token.current);
       if (mounted.current) setStatus(next);
       if (action === "disconnect") {

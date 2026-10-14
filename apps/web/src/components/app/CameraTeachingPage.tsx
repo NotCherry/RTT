@@ -10,6 +10,9 @@ import { CameraCapturePanel } from "@/components/camera/CameraCapturePanel";
 import { RecordingLibrary } from "@/components/camera/RecordingLibrary";
 import { CameraSourcePanel } from "@/components/camera/CameraSourcePanel";
 import { useMultiCameraCapture } from "@/components/camera/useMultiCameraCapture";
+import { useLiveCameraSession } from "@/components/camera/useLiveCameraSession";
+import { CameraSetupPanel } from "@/components/camera/CameraSetupPanel";
+import { CameraRigControls } from "@/components/camera/CameraRigControls";
 import { mappingCoverage, retargetLandmarkFrame, RETARGETING_PROFILE_VERSION, type RetargetingProfile } from "@/domain/retargeting";
 import {
   deleteCameraRecording,
@@ -40,8 +43,8 @@ export function CameraTeachingPage(props: Props) {
 function CameraWorkspace({ robot, state, joints, neutral, onPreview, onSave }: Props) {
   const [previewSpeed, setPreviewSpeed] = useState(3);
   const [robotOnly, setRobotOnly] = useState(false);
-  const [tab, setTab] = useState<"live" | "recordings">("live");
-  const [processing, setProcessing] = useState<"live" | "offline">("offline");
+  const [tab, setTab] = useState<"live" | "setup" | "calibration" | "recordings">("live");
+  const [processing, setProcessing] = useState<"live" | "offline">("live");
   const [sampleRate, setSampleRate] = useState<10 | 15 | 30>(30);
   const [mode, setMode] = useState<"simple" | "continuous">("continuous");
   const [profile, setProfile] = useState<RetargetingProfile>("g1-upper-body");
@@ -61,7 +64,8 @@ function CameraWorkspace({ robot, state, joints, neutral, onPreview, onSave }: P
   // Preview positions feed back through props; keep the entry pose as a stable neutral.
   const baseline = useRef([...neutral]);
   const connection = useRobotTransport();
-  const motion = useSafeCameraMotion(joints, baseline.current, profile, onPreview, state?.positions ?? neutral, previewSpeed);
+  const trackingAt = useRef(-Infinity);
+  const motion = useSafeCameraMotion(joints, baseline.current, profile, positions => { if (tab !== "recordings") onPreview(positions); }, state?.positions ?? neutral, previewSpeed);
   async function refresh() {
     if (robot) {
       const next = await listCameraRecordings(robot.id);
@@ -83,6 +87,7 @@ function CameraWorkspace({ robot, state, joints, neutral, onPreview, onSave }: P
     onFrame: (frame) => {
       setLatest(frame);
       const target = motion.observe(frame);
+      trackingAt.current = target && frame ? performance.now() : -Infinity;
       const physicalJoints = connection.controlJoints ?? joints;
       const physicalNeutral = physicalJoints.map(joint => baseline.current[joints.findIndex(preview => preview.name === joint.name)] ?? 0);
       const physicalTarget = target && frame && connection.controlJoints
@@ -102,21 +107,22 @@ function CameraWorkspace({ robot, state, joints, neutral, onPreview, onSave }: P
         saved = false;
       }
       if (!mounted.current) return;
-      camera.close();
       setSelected(recording);
       setStorageFailed(!saved);
-      setTab("recordings");
       setBusy(false);
       setStatus(
         saved
-          ? "Recording saved on this device. Extract or inspect its motion."
+          ? "Recording saved on this device. Live preview continues; inspect it in Recordings."
           : "Browser storage failed. This recording is available only in this session; use Retry saving recording.",
       );
       if (saved) await refresh();
     },
-  });
+  }, robot?.id);
   const source=camera.rig.inputs[0].kind, address=camera.rig.inputs[0].address;
   const locked = busy || extracting || camera.recording || camera.finalizing || camera.opening || remaining !== null;
+  const session = useLiveCameraSession({ cameraConnected: camera.connected, openCamera: () => camera.open(source, address),
+    closeCamera: camera.close, connection, liveProcessing: processing === "live",
+    trackingFresh: () => performance.now() - trackingAt.current <= 250 });
   function cancelCountdown() {
     if (countdownTimer.current) clearInterval(countdownTimer.current);
     countdownTimer.current = null;
@@ -273,40 +279,23 @@ function CameraWorkspace({ robot, state, joints, neutral, onPreview, onSave }: P
         <div>
           <Kicker>TEACH / CAMERA</Kicker>
           <H2>Teach from your movement.</H2>
-          <IntroCopy>Record locally, extract a stick figure, then inspect and save its mapped robot motion.</IntroCopy>
+          <IntroCopy>Preview your movement live, run your robot, and keep poses or gestures as demonstrations.</IntroCopy>
         </div>
       </div>
-      <ol className="camera-workflow" aria-label="Camera teaching workflow">
-        <li>1 · Capture</li><li>2 · Process</li><li>3 · Inspect mapping</li><li>4 · Save to Archive</li>
-      </ol>
-      <div className="route-actions">
-        <Button
-          variant={tab === "live" ? "primary" : "secondary"}
-          disabled={locked}
-          onClick={() => {
-            setTab("live");
-            setStatus("");
-          }}
-        >
-          Live camera
-        </Button>
-        <Button
-          variant={tab === "recordings" ? "primary" : "secondary"}
-          disabled={locked}
-          onClick={() => {
-            camera.close();
-            setTab("recordings");
-          }}
-        >
-          Recordings
-        </Button>
+      <RobotConnectionPanel connection={connection} profile={profile} live={camera.connected && processing === "live"} previewConnected={camera.connected} session={session} canStart={Boolean(robot) && !locked}
+        preview={() => { if (camera.connected) camera.close(); else void session.start(); }} />
+      <div className="route-actions" role="tablist" aria-label="Camera workspace">
+        {([["live", "Live camera"], ["setup", "Camera setup"], ["calibration", "Calibration"], ["recordings", "Recordings"]] as const).map(([value, label]) =>
+          <Button key={value} role="tab" aria-selected={tab === value} variant={tab === value ? "primary" : "secondary"} onClick={() => setTab(value)}>{label}</Button>)}
       </div>
+      <p className="helper-text">{camera.rig.inputs.length} camera{camera.rig.inputs.length > 1 ? "s" : ""} · {camera.rig.setupName} · {camera.rig.inputs.length === 1 ? "Single-view estimate" : camera.rig.model === "triangulated" ? "Calibrated triangulation" : "Body-aligned fusion"}. Configure all views in Camera setup.</p>
       {!robot && <p className="helper-text">Open a robot to capture and inspect its recordings.</p>}
       <div role="status" className="helper-text">
-        {status || (tab === "live" ? camera.status : "Select a recording to process or replay.")}
+        {status || camera.status}
       </div>
-      <MappingControls profile={profile} disabled={locked || connection.busy || Boolean(connection.status?.connected)} onChange={setProfile} />
-      <RobotConnectionPanel connection={connection} profile={profile} live={tab === "live" && camera.connected && processing === "live"} />
+      <div className={tab === "recordings" || tab === "live" ? "" : "hidden"}><MappingControls profile={profile} disabled={locked || session.busy || connection.busy || Boolean(connection.status?.connected)} onChange={setProfile} /></div>
+      <div className={tab === "setup" ? "" : "hidden"}><CameraSetupPanel rig={camera.rig} disabled={locked || session.busy || camera.connected || Boolean(connection.status?.connected)}
+        connected={camera.connected} testDisabled={locked || session.busy || Boolean(connection.status?.armed)} onTest={() => { if (camera.connected) camera.close(); else void camera.open(source, address); }} />
       <div className="route-form-grid camera-inspection-settings">
         <label>Preview speed
           <select aria-label="Preview speed" value={previewSpeed} onChange={(event) => setPreviewSpeed(Number(event.target.value))}>
@@ -328,10 +317,10 @@ function CameraWorkspace({ robot, state, joints, neutral, onPreview, onSave }: P
             ))}
           </select>
         </label>
-      </div>
-      {tab === "live" ? (
-        <div className={`route-two-column camera-live-layout${robotOnly ? " camera-robot-only" : ""}`}>
-          <div className={`camera-source-container${robotOnly ? " hidden" : ""}`}>
+      </div></div>
+      <div className={tab === "calibration" ? "" : "hidden"}><CameraSetupPanel rig={camera.rig} disabled={locked || session.busy || camera.connected || Boolean(connection.status?.connected)} calibrationOnly /></div>
+        <div className={tab === "recordings" ? "hidden" : `camera-workspace-grid${tab === "live" && robotOnly ? " camera-robot-only" : ""}`}>
+          <div className={`camera-source-container${tab === "live" && robotOnly ? " hidden" : ""}`}>
             <CameraSourcePanel
               source={source}
               setSource={value=>camera.rig.update(0,{kind:typeof value==="function"?value(source):value})}
@@ -342,6 +331,8 @@ function CameraWorkspace({ robot, state, joints, neutral, onPreview, onSave }: P
               setMode={setMode}
               camera={camera}
               rig={camera.rig}
+              showSettings={tab === "setup"}
+              showAction={false}
               latest={latest}
               joints={joints}
               profile={profile}
@@ -356,11 +347,12 @@ function CameraWorkspace({ robot, state, joints, neutral, onPreview, onSave }: P
               }}
             />
           </div>
+          <div className={tab === "live" ? "hidden" : "camera-rig-tiles"}><CameraRigControls rig={camera.rig} disabled={locked || session.busy || camera.connected} showSettings={tab === "setup"} /></div>
           <CameraCapturePanel robotOnly={robotOnly} onToggleView={() => setRobotOnly(!robotOnly)} motionStatus={motion.status} mode={mode} setMode={setMode} countdown={countdown} setCountdown={setCountdown}
-            processing={processing} locked={locked} robot={robot} state={state} latest={latest && mappingCoverage(latest, joints, profile).mapped.length ? latest : null}
+            processing={processing} locked={locked || session.busy} robot={robot} state={state} latest={latest && mappingCoverage(latest, joints, profile).mapped.length ? latest : null}
             remaining={remaining} camera={camera} cancelCountdown={cancelCountdown} start={start} savePose={savePose} />
         </div>
-      ) : (
+      {tab === "recordings" && (
         <RecordingLibrary
           recordings={rows}
           selected={selected}

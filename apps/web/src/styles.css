@@ -604,6 +604,12 @@
 }
 
 .camera-source-container { min-width: 0; }
+.camera-workspace-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; align-items: start; }
+.camera-rig-tiles { display: contents; }
+.camera-workspace-grid .camera-source-panel .camera-live-preview { height: clamp(260px, 40vh, 480px); }
+.camera-settings-fields { display: contents; }
+.camera-workspace-grid.camera-robot-only { grid-template-columns: minmax(0, 1fr); }
+@media (max-width: 760px) { .camera-workspace-grid { grid-template-columns: minmax(0, 1fr); } }
 .camera-robot-only { grid-template-columns: minmax(0, 1fr); }
 .camera-live-layout.camera-robot-only .camera-capture-panel .camera-live-robot { height: clamp(480px, 75vh, 900px); flex: none; }
 .camera-inspection .route-viewport-panel { min-height: 65vh; max-height: 85vh; }
