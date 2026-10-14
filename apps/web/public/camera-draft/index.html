@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Camera workspace · RTT draft</title><link rel="stylesheet" href="style.css"></head>
+<body>
+<header class="app-header"><a class="brand" href="#">▧ <strong>RTT</strong><span>Robot teaching environment</span></a><span class="draft-label">INTERACTIVE DRAFT · SIMULATED DATA</span></header>
+<main>
+  <div class="breadcrumb">TEACH / CAMERA</div>
+  <div class="page-heading"><div><h1>Movement starts here.</h1><p>Teach your robot by moving. Preview first, or go straight to live control.</p></div><span class="model-badge"><i></i> G1 EDU · 29 DOF</span></div>
+  <section class="session-bar" aria-label="Live session controls">
+    <div><span class="eyebrow">LIVE SESSION</span><h2 id="session-title">Ready when you are</h2><p id="session-detail" aria-live="polite">Your default camera and robot settings are ready.</p></div>
+    <div class="route-actions"><button id="preview" class="secondary">▷ Start live preview</button><button id="run" class="primary">↗ Run on physical robot</button><button id="stop" class="danger" hidden>■ Stop robot</button><button id="cancel" class="secondary" hidden>Cancel startup</button></div>
+  </section>
+  <div class="connection-strip"><span><i id="camera-dot"></i> <span id="camera-status">Default camera</span></span><span><i id="robot-dot"></i> <span id="robot-status">Physical robot · Unitree DDS</span></span><span>↔ Match preview speed</span><button id="settings-toggle" aria-expanded="false" aria-controls="settings">Settings ⚙</button></div>
+  <section id="settings" class="settings" hidden>
+    <label>Camera<select id="camera-choice"><option>Default local camera</option><option>USB camera (mock)</option></select></label>
+    <label>Mapping scope<select id="mapping"><option>Upper body</option><option>Left arm</option><option>Right arm</option></select></label>
+    <label>Connection<select id="transport"><option>Unitree DDS</option><option>Mock robot</option><option>ROS bridge</option></select></label>
+    <label>Network interface<input value="eth0" aria-label="Network interface"></label>
+    <label>DDS domain<input type="number" min="0" max="232" value="0" aria-label="DDS domain"></label>
+    <p>Live processing is the default. All controls on this page are simulated; no camera or robot is accessed.</p>
+  </section>
+  <div class="preview-grid">
+    <section class="panel"><div class="panel-heading"><div><span class="eyebrow">01 / OBSERVE</span><h2>Camera</h2></div><span id="tracking-badge" class="badge">STANDBY</span></div>
+      <div class="stage camera-stage"><div class="stage-caption">DEFAULT CAMERA <span>30 FPS · MOCK</span></div><div class="frame-corner top-left"></div><div class="frame-corner bottom-right"></div>
+      <svg viewBox="0 0 600 400" role="img" aria-label="Illustrated camera view with a tracked person">
+        <path class="room" d="M0 330H600M80 0V330M520 0V330M0 330L80 400M600 330L520 400"/>
+        <ellipse cx="300" cy="365" rx="100" ry="15" fill="#0b1117"/>
+        <g class="person"><circle cx="300" cy="85" r="29" fill="#344550"/><path d="M270 120Q300 112 330 120L345 235H255Z" fill="#344550"/><path d="M277 235L265 350M323 235L339 350" stroke="#344550" stroke-width="30" stroke-linecap="round"/>
+        <g class="moving-arm"><path d="M264 135L221 192L172 145" stroke="#344550" stroke-width="25" stroke-linecap="round" stroke-linejoin="round"/><path class="skeleton" d="M264 135L221 192L172 145"/><g class="joint"><circle cx="264" cy="135" r="5"/><circle cx="221" cy="192" r="5"/><circle cx="172" cy="145" r="5"/></g></g>
+        <path d="M336 135L379 192L428 145" stroke="#344550" stroke-width="25" stroke-linecap="round" stroke-linejoin="round"/><path class="skeleton" d="M264 135L336 135L379 192L428 145M264 135L278 233L323 233L336 135M300 115V90"/>
+        <g class="joint"><circle cx="336" cy="135" r="5"/><circle cx="379" cy="192" r="5"/><circle cx="428" cy="145" r="5"/><circle cx="278" cy="233" r="5"/><circle cx="323" cy="233" r="5"/></g></g>
+        <text x="240" y="115" class="side-label">R</text><text x="350" y="115" class="side-label">L</text>
+      </svg><div class="stage-footer"><span class="live-indicator">●</span><span id="camera-hint">Start a session to preview movement</span></div></div>
+      <div class="panel-footer"><span>Full frame · unmirrored</span><span id="mapping-summary">Upper-body tracking</span></div>
+    </section>
+    <section class="panel"><div class="panel-heading"><div><span class="eyebrow">02 / FOLLOW</span><h2>Robot preview</h2></div><span class="badge blue">URDF REFERENCE</span></div>
+      <div class="stage robot-stage"><div class="stage-caption">G1 EDU <span>REFERENCE MOTION</span></div>
+      <svg viewBox="0 0 600 400" role="img" aria-label="Simplified geometric robot illustrating URDF reference movement">
+        <defs><pattern id="grid" width="45" height="22" patternUnits="userSpaceOnUse"><path d="M45 0H0V22" fill="none" stroke="#263644" stroke-width="1"/></pattern><linearGradient id="metal" x2="1" y2="1"><stop stop-color="#c6d6e0"/><stop offset="1" stop-color="#667c90"/></linearGradient></defs>
+        <path d="M140 260H460L600 400H0Z" fill="url(#grid)"/><ellipse cx="300" cy="356" rx="85" ry="17" fill="#080e14"/>
+        <g class="robot"><rect x="279" y="62" width="43" height="42" rx="12" fill="url(#metal)"/><rect x="284" y="75" width="33" height="12" rx="5" fill="#15222d"/><path d="M289 81H312" stroke="#79bcff" stroke-width="2"/>
+        <path d="M266 117L334 117L326 220H274Z" fill="url(#metal)"/><path d="M279 130H321L316 182H284Z" fill="#263848"/><rect x="288" y="141" width="24" height="4" rx="2" fill="#75b5ff"/>
+        <rect x="272" y="227" width="57" height="22" rx="7" fill="#40566a"/>
+        <g stroke="url(#metal)" stroke-width="24" stroke-linecap="round" stroke-linejoin="round"><path d="M282 251L277 295L269 345M319 251L323 295L331 345"/><g class="moving-arm"><path d="M261 132L218 190L170 144"/></g><path d="M339 132L382 190L430 144"/></g>
+        <g fill="#1a2b3b" stroke="#6f8ba3" stroke-width="3"><circle cx="261" cy="132" r="13"/><circle cx="339" cy="132" r="13"/><circle cx="382" cy="190" r="10"/><circle cx="277" cy="295" r="10"/><circle cx="323" cy="295" r="10"/></g><path d="M252 355H280M320 355H348" stroke="#a2b7c7" stroke-width="13" stroke-linecap="round"/></g>
+        <path d="M67 348H101M67 348V318" stroke="#6997ba" stroke-width="2"/><text x="108" y="352" class="axis-label">X</text><text x="62" y="311" class="axis-label">Z</text>
+      </svg><div class="stage-footer"><span class="reference-indicator">◇</span><span id="robot-hint">Preview is the movement reference</span></div></div>
+      <div class="panel-footer"><span>Target speed <strong>3 rad/s</strong></span><span class="green">Match preview profile</span></div>
+    </section>
+  </div>
+  <section class="capture-bar"><div><span class="eyebrow">KEEP THE MOVEMENT</span><h2>Turn a moment into a demonstration.</h2><p id="capture-detail" aria-live="polite">Save a pose or record a gesture without leaving live preview.</p></div><div class="route-actions"><button id="save" class="secondary" disabled>＋ Save pose</button><button id="record" class="secondary" disabled>● Record gesture</button></div></section>
+  <section class="saved-section"><div class="saved-heading"><h2>Session captures <span id="capture-count">0</span></h2><span>Mock captures · reset when this page reloads</span></div><div id="captures"><p class="empty">Your saved poses and gestures will appear here.</p></div></section>
+  <footer>CAMERA WORKSPACE / DESIGN EXPLORATION <span>Live first. One action to begin.</span></footer>
+</main><script src="script.js"></script></body></html>
