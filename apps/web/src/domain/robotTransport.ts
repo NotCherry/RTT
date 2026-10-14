@@ -34,7 +34,14 @@ export type RobotTransportStatus = {
   waist_dof?: 1 | 3 | null;
   arm_kp?: number | null;
   last_stream_error?: string | null;
+  motion?: RobotMotionSample;
 };
+export type RobotMotionJoint = { reference: number | null; target: number | null; commanded: number; measured: number | null;
+  command_error: number | null; tracking_error: number | null; reference_error: number | null; velocity: number;
+  speed_limit: number; acceleration_limit: number; range_limited: boolean; speed_limited: boolean; acceleration_limited: boolean };
+export type RobotMotionSample = { server_time_ms: number; command_at_ms: number | null; feedback_age_ms: number | null;
+  target_age_ms: number | null; engagement: number; armed: boolean; packet: { sequence?: number; transport_age_ms?: number; observation_age_ms?: number; processing_ms?: number }; joints: Record<string, RobotMotionJoint> };
+export const getRobotMotionDiagnostics = () => robotTransportRequest<{ version: number; transport: string | null; samples: RobotMotionSample[] }>("diagnostics");
 export const getRobotTransportStatus = () => robotTransportRequest<RobotTransportStatus>("status");
 export const connectRobotTransport = (config: RobotConnectionConfig) =>
   robotTransportRequest<RobotTransportStatus & { token: string; joint_contract?: Joint[] }>("connect", config);

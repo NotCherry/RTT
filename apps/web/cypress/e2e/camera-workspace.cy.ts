@@ -205,10 +205,17 @@ describe('Camera workspace', () => {
   it('opens, processes, connects and arms through one explicit Run action', () => {
     stubLandmarks(); openCameraPage(true);
     robotSettings(); cy.get('[aria-label="Robot connection"]').select('mock');
+    cy.get('[aria-label="Robot motion profile"]').select('match-preview');
+    cy.intercept('POST', '/api/robot-transport/connect').as('connectRobot');
     cy.intercept('POST', '/api/robot-transport/arm').as('armRobot');
     cy.contains('button', 'Run on mock robot').click();
     cy.contains('button', 'Stop robot', { timeout: 45000 }).should('be.enabled');
     cy.wait('@armRobot').its('response.body.armed').should('equal', true);
+    cy.wait('@connectRobot').its('request.body').should('include', { max_joint_speed: 3, max_joint_acceleration: 10 });
+    cy.request('/api/robot-transport/diagnostics').its('body').should(body => {
+      expect(body.transport).to.equal('mock'); expect(body.samples.length).to.be.greaterThan(0);
+      expect(body.samples[0]).to.have.property('packet'); expect(body.analysis).to.have.property('steady_samples');
+    });
     cy.contains('button', 'Stop robot', { timeout: 15000 }).should('be.enabled').click();
     cy.contains('button', 'Close cameras').filter(':visible').should('exist');
     cy.contains('button', 'Disconnect robot').click();

@@ -6,35 +6,44 @@ import type { RobotConnectionConfig } from "@/domain/robotTransport";
 import type { RetargetingProfile } from "@/domain/retargeting";
 import { controlForProfile } from "@/domain/robotControlMapping";
 import type { useLiveCameraSession } from "./useLiveCameraSession";
+import { loadRobotConnectionSettings, saveRobotConnectionSettings } from "@/domain/robotConnectionSettings";
+import { RobotMotionDiagnostics } from "./RobotMotionDiagnostics";
 
-export function RobotConnectionPanel({ connection, live, profile = "g1-upper-body", session, preview, canStart = true, previewConnected = live, runBlocked = false }: {
+export function RobotConnectionPanel({ connection, live, profile = "g1-upper-body", session, preview, canStart = true, previewConnected = live, runBlocked = false, previewSpeed = 3 }: {
   connection: ReturnType<typeof useRobotTransport>; live: boolean; profile?: RetargetingProfile;
   session?: ReturnType<typeof useLiveCameraSession>; preview?: () => void; canStart?: boolean; previewConnected?: boolean; runBlocked?: boolean;
+  previewSpeed?: number;
 }) {
-  const [transport, setTransport] = useState<RobotConnectionConfig["transport"]>("unitree-sdk2");
-  const [model, setModel] = useState<"g1-29" | "g1-23">("g1-29");
-  const [network, setNetwork] = useState("eth0");
-  const [domain, setDomain] = useState("0");
-  const [peers, setPeers] = useState("");
-  const [multicast, setMulticast] = useState(true);
+  const [saved] = useState(loadRobotConnectionSettings);
+  const [transport, setTransport] = useState<RobotConnectionConfig["transport"]>(saved.transport);
+  const [model, setModel] = useState<"g1-29" | "g1-23">(saved.robot_model);
+  const [network, setNetwork] = useState(saved.network_interface);
+  const [domain, setDomain] = useState(String(saved.domain_id));
+  const [peers, setPeers] = useState(saved.discovery_peers?.join(", ") ?? "");
+  const [multicast, setMulticast] = useState(saved.allow_multicast ?? true);
   const peerList = peers.split(/[\s,]+/).filter(Boolean);
   const ddsValid = !!network.trim() && !!domain.trim() && Number.isInteger(Number(domain)) && Number(domain) >= 0 && Number(domain) <= 232
     && (multicast || peerList.length > 0) && peerList.length <= 16 && peerList.every(peer => {
       const parts = peer.split(".");
       return parts.length === 4 && parts.every(part => /^(0|[1-9]\d{0,2})$/.test(part) && Number(part) <= 255);
     });
-  const [speed, setSpeed] = useState(1);
-  const [armStrength, setArmStrength] = useState(60);
-  const [waistDof, setWaistDof] = useState<1 | 3>(3);
+  const [speed, setSpeed] = useState(saved.max_joint_speed);
+  const [matchPreview, setMatchPreview] = useState(saved.motion_profile === "match-preview");
+  const [armStrength, setArmStrength] = useState(saved.kp ?? 60);
+  const [waistDof, setWaistDof] = useState<1 | 3>(saved.waist_dof ?? 3);
   const control = controlForProfile(profile);
-  const [bridgeUrl, setBridgeUrl] = useState("ws://192.168.123.164:9090");
+  const [bridgeUrl, setBridgeUrl] = useState(saved.rosbridge_url ?? "ws://192.168.123.164:9090");
   const bridgeValid = /^wss?:\/\/[^\s/]+/.test(bridgeUrl.trim());
   const status = connection.status;
-  const settings = (): RobotConnectionConfig => ({ transport, robot_model: model, ...control, waist_dof: waistDof, kp: armStrength, kd: 1.5,
+  const settings = (): RobotConnectionConfig => {
+    const config: RobotConnectionConfig = { transport, robot_model: model, ...control, waist_dof: waistDof, kp: armStrength, kd: 1.5,
     network_interface: transport === "unitree-rosbridge" ? "lo" : network.trim(), domain_id: transport === "unitree-sdk2" ? Number(domain) : 0,
-    max_joint_speed: speed, max_joint_acceleration: 3,
+    max_joint_speed: matchPreview ? Math.min(previewSpeed, 3) : speed, max_joint_acceleration: matchPreview ? 10 : 3,
     ...(transport === "unitree-sdk2" ? { discovery_peers: peerList, allow_multicast: multicast } : {}),
-    ...(transport === "unitree-rosbridge" ? { rosbridge_url: bridgeUrl.trim() } : {}) });
+    ...(transport === "unitree-rosbridge" ? { rosbridge_url: bridgeUrl.trim() } : {}) };
+    saveRobotConnectionSettings({ ...config, allow_multicast: multicast, discovery_peers: peerList, motion_profile: matchPreview ? "match-preview" : "custom" });
+    return config;
+  };
   const armBlock = !connection.owned ? "This browser does not own the connection. Return to the browser that connected the robot and disconnect there first."
     : !live ? "Open the camera with Live preview processing to arm."
     : !connection.streamReady ? "Waiting for the camera target stream to connect."
@@ -60,7 +69,10 @@ export function RobotConnectionPanel({ connection, live, profile = "g1-upper-bod
       <label>Robot model<select aria-label="Physical robot model" value={model} onChange={e => { setModel(e.target.value as typeof model); if (e.target.value === "g1-23") setWaistDof(1); }} disabled={connection.busy}>
         <option value="g1-29">G1 EDU · 29 DOF</option><option value="g1-23">G1 · 23 DOF</option>
       </select></label>
-      <label>Robot speed<select aria-label="Robot speed" value={speed} onChange={e => setSpeed(Number(e.target.value))} disabled={connection.busy}>
+      <label>Motion profile<select aria-label="Robot motion profile" value={matchPreview ? "match-preview" : "custom"} onChange={e => setMatchPreview(e.target.value === "match-preview")} disabled={connection.busy}>
+        <option value="custom">Conservative / custom speed</option><option value="match-preview">Match preview · validation candidate</option>
+      </select></label>
+      <label>Robot speed<select aria-label="Robot speed" value={speed} onChange={e => setSpeed(Number(e.target.value))} disabled={connection.busy || matchPreview}>
         {[0.5, 1, 1.5, 2, 3].map(value => <option key={value} value={value}>{value} rad/s</option>)}
       </select></label>
       <label>Movable waist axes<select aria-label="Movable waist axes" value={waistDof} onChange={e => setWaistDof(Number(e.target.value) as 1 | 3)} disabled={connection.busy || model === "g1-23"}>
@@ -105,13 +117,8 @@ export function RobotConnectionPanel({ connection, live, profile = "g1-upper-bod
       {Object.keys(status.camera_target ?? {}).length ? "Live upper-body targets are reaching the backend."
         : "No fresh visible upper-body targets. Keep your selected arm or shoulders and hips in view."}
     </p>}
-    {status?.connected && <details className="camera-mapping-inspector">
-      <summary>Measured and commanded upper-body positions</summary>
-      <div className="overflow-x-auto rounded border border-line-650"><table className="w-full border-collapse text-left font-mono text-xs"><thead><tr><th className="px-3 py-2">Joint</th><th className="px-3 py-2">Measured · rad</th><th className="px-3 py-2">Camera target · rad</th><th className="px-3 py-2">{status.armed ? "Commanded · rad" : "Last command · rad"}</th></tr></thead>
-        <tbody>{Object.entries(status.measured).map(([name, measured]) => <tr key={name}><td className="px-3 py-2">{name}</td><td className="px-3 py-2">{measured.toFixed(3)}</td><td className="px-3 py-2">{status.camera_target?.[name]?.toFixed(3) ?? "—"}</td><td className="px-3 py-2">{status.commanded[name]?.toFixed(3) ?? "—"}</td></tr>)}</tbody>
-      </table></div>
-    </details>}
-    <p className="helper-text">Torso mapping needs visible shoulders and hips; yaw and pitch also need depth landmarks. Preview speed is separate from robot speed. Arming engages the arms and available waist axes; use the robot’s local stop for an emergency.</p>
+    {status?.connected && <RobotMotionDiagnostics status={status} />}
+    <p className="helper-text">{matchPreview ? `Match preview candidate: arms up to ${Math.min(previewSpeed, 3)} rad/s and 10 rad/s², fixed at connect. Physical parity requires measured G1 validation.` : "Conservative motion uses the selected arm speed and 3 rad/s². Choose Match preview to evaluate the faster candidate."} Waist remains independently limited. URDF limits, two-second engagement, watchdogs and tracking-error release still apply. Use the robot’s local stop for an emergency.</p>
     </details>
     {connection.error && <p role="alert" className="helper-text">{connection.error}</p>}
     {status?.last_stream_error && !connection.error && <p role="alert" className="helper-text">{status.last_stream_error}</p>}

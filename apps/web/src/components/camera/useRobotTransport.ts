@@ -122,7 +122,7 @@ export function useRobotTransport() {
         if (mounted.current) setStreamReady(false);
       }
     }),
-    submit(positions: Record<string, number> | null) {
+    submit(positions: Record<string, number> | null, reference?: Record<string, number>, timing?: { observation_age_ms: number; processing_ms: number }) {
       const stream = socket.current;
       if (!ready.current || stream?.readyState !== WebSocket.OPEN) return;
       // A single pending browser write is normal; drop this frame, never queue it.
@@ -137,7 +137,8 @@ export function useRobotTransport() {
       }
       congestedAt.current = null;
       const target = selectRobotTargets(positions, config.current);
-      stream.send(JSON.stringify({ sequence: sequence.current++, sent_at_ms: Date.now() + clockOffset.current, tracking: Boolean(target), positions: target ?? {} }));
+      stream.send(JSON.stringify({ sequence: sequence.current++, sent_at_ms: Date.now() + clockOffset.current, tracking: Boolean(target), positions: target ?? {},
+        ...(reference ? { reference: selectRobotTargets(reference, config.current) ?? {} } : {}), ...timing }));
     },
   };
 }

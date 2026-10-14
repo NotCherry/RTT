@@ -53,10 +53,13 @@ class TargetPacket(BaseModel):
     sent_at_ms: float = Field(ge=0, allow_inf_nan=False)
     tracking: bool
     positions: dict[str, float] = Field(default_factory=dict, max_length=17)
+    reference: dict[str, float] = Field(default_factory=dict, max_length=17)
+    observation_age_ms: float | None = Field(default=None, ge=0, le=250, allow_inf_nan=False)
+    processing_ms: float | None = Field(default=None, ge=0, le=250, allow_inf_nan=False)
 
     @model_validator(mode="after")
     def validate_positions(self):
         import math
-        if any(name not in UPPER_BODY_INDICES or not math.isfinite(q) for name, q in self.positions.items()):
+        if any(name not in UPPER_BODY_INDICES or not math.isfinite(q) for values in (self.positions, self.reference) for name, q in values.items()):
             raise ValueError("Only finite, named G1 upper-body positions are accepted")
         return self

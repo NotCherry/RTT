@@ -29,6 +29,7 @@ export function useSafeCameraMotion(joints: Joint[], neutral: number[], profile:
   }, []);
   return {
     status,
+    reference: () => [...guard.current.positions],
     observe(frame: LandmarkFrame | null) {
       const c = current.current;
       if (!guard.current.target && c.positions.length === guard.current.positions.length && c.positions.every(Number.isFinite)) {

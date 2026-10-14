@@ -70,7 +70,11 @@ function CameraWorkspace({ robot, state, joints, neutral, onPreview, onSave }: P
       const positions = physicalTarget ? Object.fromEntries(physicalJoints.flatMap((joint, i) =>
         visible.has(joint.name) && (/^(left|right)_(shoulder_(pitch|roll|yaw)|elbow|wrist_(roll|pitch|yaw))_joint$/.test(joint.name) || /^waist_(yaw|roll|pitch)_joint$/.test(joint.name))
           ? [[joint.name, physicalTarget[i]]] : [])) : null;
-      connection.submit(positions && Object.keys(positions).length ? positions : null);
+      const reference = Object.fromEntries(joints.flatMap((joint, i) => visible.has(joint.name) ? [[joint.name, motion.reference()[i]]] : []));
+      const timing = frame?.timing ? { observation_age_ms: Math.max(0, performance.now() - frame.timing.observed_at_ms),
+        processing_ms: Math.max(0, frame.timing.processed_at_ms - frame.timing.observed_at_ms) } : undefined;
+      connection.submit(positions && Object.keys(positions).length ? positions : null, reference,
+        timing && timing.observation_age_ms <= 250 && timing.processing_ms <= 250 ? timing : undefined);
     },
     onRecording: library.acceptRecording,
   }, robot?.id);
@@ -127,6 +131,7 @@ function CameraWorkspace({ robot, state, joints, neutral, onPreview, onSave }: P
         </div>
       </div>
       <RobotConnectionPanel connection={connection} profile={profile} live={camera.connected && processing === "live"} previewConnected={camera.connected} session={session} canStart={Boolean(robot) && !locked}
+        previewSpeed={previewSpeed}
         runBlocked={tab === "calibration"}
         preview={() => { if (camera.connected) camera.close(); else void session.start(); }} />
       <div className="route-actions" role="tablist" aria-label="Camera workspace">

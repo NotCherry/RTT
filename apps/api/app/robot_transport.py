@@ -40,6 +40,10 @@ def create_transport_router(runtime):
     def status():
         return runtime.status()
 
+    @routes.get("/diagnostics")
+    def diagnostics():
+        return runtime.diagnostics()
+
     @routes.post("/connect")
     def connect(config: ConnectionConfig):
         token = call(runtime.connect, config)

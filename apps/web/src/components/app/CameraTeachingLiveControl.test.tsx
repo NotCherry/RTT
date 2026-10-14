@@ -14,7 +14,7 @@ vi.mock("@/components/camera/CameraRigControls", () => ({ CameraRigControls: () 
 vi.mock("@/components/camera/RobotConnectionPanel", () => ({ RobotConnectionPanel: () => null }));
 vi.mock("@/components/camera/CameraCapturePanel", () => ({ CameraCapturePanel: () => null }));
 vi.mock("@/components/camera/CameraSourcePanel", () => ({ CameraSourcePanel: () => null }));
-vi.mock("@/components/camera/useSafeCameraMotion", () => ({ useSafeCameraMotion: () => ({ observe: () => [.1, -.1, .2, .3, .4, .5], status: "" }) }));
+vi.mock("@/components/camera/useSafeCameraMotion", () => ({ useSafeCameraMotion: () => ({ observe: () => [.1, -.1, .2, .3, .4, .5], reference: () => [.01, -.01, .02, .03, .04, .05], status: "" }) }));
 vi.mock("@/components/camera/useMultiCameraCapture", () => ({ useMultiCameraCapture: (options: { onFrame: (frame: LandmarkFrame) => void }) => {
   live.frame = options.onFrame;
   return { rig: { inputs: [{ kind: "local", address: "" }] }, connected: true, status: "Ready" };
@@ -36,20 +36,20 @@ it("passes all visible torso axes through the actual live camera callback withou
   open();
   await act(async () => live.frame!(frame()));
   expect(live.submit).toHaveBeenLastCalledWith({ waist_yaw_joint: .1, waist_roll_joint: -.1, waist_pitch_joint: .2,
-    left_elbow_joint: .3, right_elbow_joint: .4 });
+    left_elbow_joint: .3, right_elbow_joint: .4 }, expect.objectContaining({ right_elbow_joint: .04 }), undefined);
   const hiddenHips = frame();
   hiddenHips.pose[23].visibility = hiddenHips.pose[24].visibility = 0;
   await act(async () => live.frame!(hiddenHips));
-  expect(live.submit).toHaveBeenLastCalledWith({ left_elbow_joint: .3, right_elbow_joint: .4 });
+  expect(live.submit).toHaveBeenLastCalledWith({ left_elbow_joint: .3, right_elbow_joint: .4 }, expect.any(Object), undefined);
 });
 it("single-arm camera mapping passes only the selected side even when both arms and hips are visible", async () => {
   open();
   fireEvent.change(screen.getByLabelText("Mapping scope"), { target: { value: "single" } });
   await act(async () => live.frame!(frame()));
-  expect(live.submit).toHaveBeenLastCalledWith({ right_elbow_joint: .4 });
+  expect(live.submit).toHaveBeenLastCalledWith({ right_elbow_joint: .4 }, expect.any(Object), undefined);
   fireEvent.change(screen.getByLabelText("Arm selection"), { target: { value: "g1-left-arm" } });
   await act(async () => live.frame!(frame()));
-  expect(live.submit).toHaveBeenLastCalledWith({ left_elbow_joint: .3 });
+  expect(live.submit).toHaveBeenLastCalledWith({ left_elbow_joint: .3 }, expect.any(Object), undefined);
 });
 it("maps the connected hardware waist even when the preview model lacks roll and pitch", async () => {
   live.joints = joints.filter(joint => !joint.name.includes("knee"));
@@ -57,6 +57,7 @@ it("maps the connected hardware waist even when the preview model lacks roll and
   render(<CameraTeachingPage robot={{ id: "basic-preview" } as never} state={null} joints={preview} neutral={preview.map(() => 0)} onPreview={vi.fn()} onSave={vi.fn()} />);
   await act(async () => live.frame!(frame()));
   expect(live.submit).toHaveBeenLastCalledWith(expect.objectContaining({ waist_yaw_joint: expect.any(Number),
-    waist_roll_joint: expect.any(Number), waist_pitch_joint: expect.any(Number) }));
+    waist_roll_joint: expect.any(Number), waist_pitch_joint: expect.any(Number) }), expect.any(Object), undefined);
+  expect(live.submit.mock.lastCall![1]).not.toHaveProperty("waist_roll_joint");
   expect(live.submit.mock.lastCall![0]).not.toHaveProperty("left_knee_joint");
 });

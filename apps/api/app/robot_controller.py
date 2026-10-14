@@ -2,9 +2,12 @@
 import secrets
 import threading
 import time
+from collections import deque
 from .robot_dds import create_adapter
 from .robot_motion import UPPER_BODY_LIMITS, advance_upper_body, controlled_names, target_names
 from .robot_transport_contract import TargetPacket
+from .robot_motion_diagnostics import motion_diagnostics
+from .robot_motion_analysis import analyze_motion
 
 
 class RobotController:
@@ -24,10 +27,14 @@ class RobotController:
         self.camera_at = -float("inf")
         self.received = 0
         self.positions, self.velocities = {}, {}
+        self.accelerations = {}
         self.weight = 0.0
         self.reason = "Disconnected"
         self.sent = 0
         self.last_stream_error = None
+        self.reference, self.telemetry = {}, {}
+        self.command_at = None
+        self.trace = deque(maxlen=1500)
 
     def connect(self, config, run_worker=True):
         with self.lifecycle:
@@ -45,10 +52,14 @@ class RobotController:
                 self.token = secrets.token_urlsafe(32)
                 self.armed, self.weight, self.sent = False, 0.0, 0
                 self.positions, self.velocities = {}, {}
+                self.accelerations = {}
                 self.camera_target, self.camera_at, self.received = None, -float("inf"), 0
                 self.target, self.target_at, self.sequence = None, -float("inf"), -1
                 self.reason = "Connected · waiting for measured state"
                 self.last_stream_error = None
+                self.reference, self.telemetry = {}, {}
+                self.command_at = None
+                self.trace.clear()
                 self.stop_event.clear()
                 if run_worker:
                     self.worker = threading.Thread(target=self._run, name="robot-arm-control", daemon=True)
@@ -76,6 +87,7 @@ class RobotController:
                 raise ValueError("Measured upper-body positions do not match the selected G1 contract or joint limits")
             self.positions = dict(state.positions)
             self.velocities = dict.fromkeys(names, 0.0)
+            self.accelerations = {}
             self.target, self.target_at, self.sequence = None, -float("inf"), -1
             self.weight, self.armed = 0.0, True
             self.reason = "Armed · waiting for live camera"
@@ -113,11 +125,17 @@ class RobotController:
                 raise ValueError("Out-of-order target packet")
             if any(name not in target_names(self.config) for name in packet.positions):
                 raise ValueError("Joint is unavailable in the selected robot model or control mode")
+            if any(name not in target_names(self.config) for name in packet.reference):
+                raise ValueError("Reference joint is unavailable in the selected robot contract")
             self.sequence = packet.sequence
             # Diagnostics remain visible while disarmed; they never initialize motion.
             self.camera_target = dict(packet.positions) if packet.tracking and packet.positions else None
             self.camera_at = self.clock()
             self.received += 1
+            self.reference = dict(packet.reference) if packet.tracking else {}
+            self.telemetry = {"sequence": packet.sequence, "sent_at_ms": packet.sent_at_ms,
+                              "transport_age_ms": age_ms, "observation_age_ms": packet.observation_age_ms,
+                              "processing_ms": packet.processing_ms}
             # Disarmed targets never carry over to a subsequent arm action.
             if self.armed:
                 self.target = dict(packet.positions) if packet.tracking and packet.positions else None
@@ -126,6 +144,7 @@ class RobotController:
     def _release(self, reason):
         self.armed, self.target = False, None
         self.velocities = dict.fromkeys(self.positions, 0.0)
+        self.accelerations = {}
         self.weight = 0.0
         self.reason = reason
         if self.adapter and self.positions:
@@ -150,16 +169,23 @@ class RobotController:
             active = self.target is not None and self.clock() - self.target_at <= self.config.stale_after_ms / 1000
             if active:
                 # Missing/occluded channels retain their last command, not browser neutral.
+                previous_velocities = self.velocities
                 self.positions, self.velocities = advance_upper_body(self.positions, self.velocities, self.target, dt,
                     self.config.max_joint_speed, self.config.max_joint_acceleration)
+                elapsed = max(0, min(dt, .04))
+                self.accelerations = {name: (velocity-previous_velocities.get(name, 0))/elapsed
+                                      for name, velocity in self.velocities.items()} if elapsed else {}
                 self.reason = "Following live camera"
             else:
                 self.velocities = dict.fromkeys(self.positions, 0.0)
+                self.accelerations = {}
                 self.reason = "Tracking lost · holding last command"
             self.weight = min(1.0, self.weight + min(dt, 0.04) / 2.0)
             try:
                 self.adapter.publish(self.positions, self.velocities, self.weight, state.mode_machine)
                 self.sent += 1
+                self.command_at = self.wall_clock()*1000
+                self.trace.append(self._diagnostic_snapshot(state))
             except Exception as exc:
                 self._release(f"Transport fault · disarmed: {exc}")
 
@@ -178,7 +204,29 @@ class RobotController:
                 "measured": dict(state.positions) if state else {}, "commanded": dict(self.positions),
                 "packets_sent": self.sent, "engagement": self.weight,
                 "stream_connected": self.stream is not None, "targets_received": self.received,
-                "camera_target": dict(self.camera_target) if camera_fresh and self.camera_target else {}}
+                "camera_target": dict(self.camera_target) if camera_fresh and self.camera_target else {},
+                "motion": self._diagnostic_snapshot(state)}
+
+    def _diagnostic_snapshot(self, state):
+        fresh = self.config and self.stream is not None and self.clock()-self.camera_at <= self.config.stale_after_ms/1000
+        return {"server_time_ms": self.wall_clock()*1000, "command_at_ms": self.command_at,
+                "feedback_age_ms": (self.clock()-state.received_at)*1000 if state else None,
+                "target_age_ms": (self.clock()-self.camera_at)*1000 if fresh else None,
+                "engagement": self.weight, "armed": self.armed,
+                "packet": dict(self.telemetry) if fresh else {},
+                "joints": motion_diagnostics(self.config, self.reference if fresh else {},
+                    self.camera_target if fresh and self.camera_target else {}, self.positions,
+                    state.positions if state else {}, self.velocities, self.accelerations) if self.config else {}}
+
+    def diagnostics(self):
+        with self.lock:
+            report = {"version": 1, "transport": self.config.transport if self.config else None,
+                    "config": self.config.model_dump(exclude={"rosbridge_url", "discovery_peers"}) if self.config else None,
+                    "timing": "browser observation and backend receive; exposure unverified",
+                    "feedback": "measured joint positions; feedback age is backend receipt age",
+                    "samples": list(self.trace)}
+        report["analysis"] = analyze_motion(report["samples"])
+        return report
 
     def record_stream_error(self, reason):
         with self.lock:

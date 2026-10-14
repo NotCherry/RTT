@@ -19,6 +19,10 @@ UPPER_BODY_LIMITS = {
     j.attrib["name"]: (float(j.find("limit").attrib["lower"]), float(j.find("limit").attrib["upper"]))
     for j in _ROOT.findall("joint") if j.attrib["name"] in UPPER_BODY_INDICES
 }
+UPPER_BODY_SPEEDS = {
+    j.attrib["name"]: float(j.find("limit").attrib["velocity"])
+    for j in _ROOT.findall("joint") if j.attrib["name"] in UPPER_BODY_INDICES
+}
 WAIST_TARGET_LIMITS = {"waist_yaw_joint": (-.6, .6), "waist_roll_joint": (-.2, .2), "waist_pitch_joint": (-.25, .25)}
 
 
@@ -51,6 +55,7 @@ def camera_joint_contract(config):
                        "origin": {field: [float(value) for value in origin.attrib.get(field, "0 0 0").split()]
                                   for field in ("xyz", "rpy")},
                        "lower": UPPER_BODY_LIMITS[name][0], "upper": UPPER_BODY_LIMITS[name][1],
+                       "velocity": UPPER_BODY_SPEEDS[name],
                        "controllable": True})
     return result
 
@@ -82,7 +87,7 @@ def advance_motion(positions, velocities, target, dt, speed, acceleration):
         lo, hi = UPPER_BODY_LIMITS[name]
         desired = max(lo, min(hi, target.get(name, q)))
         error = desired - q
-        desired_v = math.copysign(min(speed, math.sqrt(2 * acceleration * abs(error))), error) if error else 0.0
+        desired_v = math.copysign(min(speed, UPPER_BODY_SPEEDS[name], math.sqrt(2 * acceleration * abs(error))), error) if error else 0.0
         v = velocities.get(name, 0.0)
         v += max(-acceleration * dt, min(acceleration * dt, desired_v - v))
         # Exact arrival is allowed only when the required velocity is reachable.

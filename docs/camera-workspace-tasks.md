@@ -10,7 +10,7 @@ Goal reference: camera-workspace-2026-10-14.
 | CAM-03 | Guided in-app calibration with isolated solver and versioned calibration | Complete |
 | CAM-04 | Timed multi-camera reconstruction, diagnostics and synchronized recording inspection | Complete |
 | CAM-05 | Supported IP-camera gateway and detector performance evaluation | Complete |
-| CAM-06 | Physical motion-reference diagnostics and matching profile | Pending |
+| CAM-06 | Physical motion-reference diagnostics and matching profile | Software complete; hardware acceptance pending |
 | CAM-07 | Integration journeys, layout review, acceptance report and clean commits | Pending |
 
 Each implementation task includes focused tests and relevant full suites. Actual
@@ -46,3 +46,12 @@ simulation image. A real MJPEG source exercises isolated decoding; the browser
 compares both real WASM models against the same retained pixels. Hardware RTSP
 buffering, mixed-rig timing and accuracy remain unmeasured. See
 `camera-ip-gateway.md` for configuration, supported protocols and benchmark scope.
+
+CAM-06 verification: 222 frontend tests, production build, 166 backend tests
+and six workspace journeys passed. Tests distinguish a synthetic 80 ms command
+delay from a 60 ms tracking delay, prove diagnostic reference values cannot drive
+motors, and exercise the candidate through one-click mock control. The physical
+profile remains a candidate, not accepted parity. Hardware was explicitly
+unavailable; conservative defaults remain until measured G1 validation. Design
+lint reports pre-existing raw headings in App.tsx and typography.tsx; changed
+camera components use the system typography and styles.

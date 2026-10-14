@@ -3,7 +3,7 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { RobotConnectionPanel } from "./RobotConnectionPanel";
-afterEach(cleanup);
+afterEach(() => { cleanup(); localStorage.clear(); });
 const connection = () => ({ status: null, owned: false, streamReady: false, controlJoints: null, busy: false, error: "", connect: vi.fn(), action: vi.fn(), submit: vi.fn(), cancelPendingConnect: vi.fn() });
 const connected = { connected: true, armed: false, transport: "mock" as const, state_fresh: true, reason: "Connected", measured: { left_elbow_joint: .2 }, commanded: {}, packets_sent: 0, engagement: 0, stream_connected: true, targets_received: 12, camera_target: { left_elbow_joint: .5 } };
 it("offers a mock connection and distinct hardware speed", () => {
@@ -89,10 +89,19 @@ it("shows received camera targets while disarmed and requires explicit arming", 
   expect(screen.getByText(/Disarmed · motor commands are not being published/)).toBeInTheDocument();
   expect(screen.getByText(/12 camera frames received/)).toBeInTheDocument();
   const row = screen.getByText("left_elbow_joint").closest("tr")!;
-  expect(within(row).getAllByRole("cell").map(cell => cell.textContent)).toEqual(["left_elbow_joint", "0.200", "0.500", "—"]);
+  expect(within(row).getAllByRole("cell").slice(0,4).map(cell => cell.textContent)).toEqual(["left_elbow_joint", "0.200", "0.500", "—"]);
   expect(c.action).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole("button", { name: "Arm live control" }));
   expect(c.action).toHaveBeenCalledWith("arm");
+});
+it("offers the preview-speed candidate without arming or changing the reference", () => {
+  const c = connection();
+  render(<RobotConnectionPanel connection={c} live={true} previewSpeed={5} />);
+  fireEvent.change(screen.getByLabelText("Robot motion profile"), { target: { value: "match-preview" } });
+  fireEvent.change(screen.getByLabelText("Robot connection"), { target: { value: "mock" } });
+  fireEvent.click(screen.getByRole("button", { name: "Connect mock robot" }));
+  expect(c.connect).toHaveBeenCalledWith(expect.objectContaining({ max_joint_speed: 3, max_joint_acceleration: 10 }));
+  expect(c.action).not.toHaveBeenCalled();
 });
 
 it("explains stream readiness and ownership blockers", () => {
