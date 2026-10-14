@@ -182,6 +182,26 @@ describe('Camera workspace', () => {
     cy.contains('button', 'Close cameras').filter(':visible').first().click();
     cy.get('[aria-label="Camera count"]').should('be.enabled');
   });
+  it('compares both real detector workers on the same retained recording', () => {
+    openCameraPage(true); setupTab();
+    cy.get('[aria-label="Landmark detector"]').select('pose');
+    cy.get('[aria-label="Processing mode"]').select('offline');
+    cy.contains('button', 'Test all cameras').click();
+    cy.contains('Camera ready to record', { timeout: 30000 }).should('exist');
+    cy.contains('[role="tab"]', 'Live camera').click();
+    cy.get('[aria-label="Countdown"]').select('1');
+    cy.contains('button', 'Start recording').click();
+    cy.contains('button', 'Stop recording', { timeout: 10000 }).should('exist'); cy.wait(1100);
+    cy.contains('button', 'Stop recording').click();
+    cy.contains('Recording saved on this device', { timeout: 20000 }).should('exist');
+    cy.contains('button', 'Close cameras').filter(':visible').first().click();
+    cy.contains('[role="tab"]', 'Recordings').click();
+    cy.contains('summary', 'Compare landmark detectors').click();
+    cy.contains('button', 'Compare detectors').should('be.enabled').click();
+    cy.contains('button', 'Export comparison', { timeout: 120000 }).should('exist');
+    cy.contains('td', 'MediaPipe Pose').should('exist');
+    cy.contains('td', 'MediaPipe Holistic').should('exist');
+  });
   it('opens, processes, connects and arms through one explicit Run action', () => {
     stubLandmarks(); openCameraPage(true);
     robotSettings(); cy.get('[aria-label="Robot connection"]').select('mock');

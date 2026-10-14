@@ -6,6 +6,7 @@ import type { RetargetingProfile } from "@/domain/retargeting";
 import { MappingInspector } from "./MappingInspector";
 import { StickFigure } from "./StickFigure";
 import { CameraMetrics } from "./CameraMetrics";
+import { IPCameraSourceSelect } from "./IPCameraSourceSelect";
 import type { useCameraCapture } from "./useCameraCapture";
 import { CameraDeviceSelect, type CameraRig } from "./CameraRigControls";
 
@@ -74,18 +75,7 @@ export function CameraSourcePanel({
             <option value="ip">Android IP camera</option>
           </select>
         </label>
-        {source === "ip" && (
-          <label>
-            IP camera URL
-            <input
-              aria-label="IP camera URL"
-              value={address}
-              disabled={locked || camera.connected}
-              onChange={(event) => setAddress(event.target.value)}
-              placeholder="http://192.168.1.20:8080/video"
-            />
-          </label>
-        )}
+        {source === "ip" && <IPCameraSourceSelect address={address} onChange={setAddress} disabled={locked || camera.connected} />}
         {rig && source==="local" && <CameraDeviceSelect rig={rig} index={0} disabled={locked || camera.connected}/>}
         <label>
           Processing

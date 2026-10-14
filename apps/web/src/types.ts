@@ -118,6 +118,7 @@ export type LandmarkFrame = {
 
 /** A device-local stick-figure source for a camera-derived demonstration. */
 export type CameraCapture = {
+  detector?: import("@/domain/cameraDetectorModels").CameraDetectorModel;
   id: string;
   version: 1;
   name: string;

@@ -19,6 +19,8 @@ export async function extractMultiCameraRecording(
       recording.duration_ms,
       signal,
       progress,
+      hasUsablePose,
+      recording.detector ?? "holistic",
     );
   }
   const retained = recording.views;
@@ -43,6 +45,7 @@ export async function extractMultiCameraRecording(
       (frame) =>
         hasUsablePose(frame) ||
         [11, 12, 23, 24].every((i) => visiblePosePoint(frame.pose[i])),
+      recording.detector ?? "holistic",
     );
     views.push({ ...view, ...result });
   }

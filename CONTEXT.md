@@ -52,6 +52,21 @@ _Avoid_: Neutral robot pose, behavior-model training
 A perception model and optional multi-view geometry that produce human landmarks from camera observations. It supplies a Demonstration source; the behavior-model MLP still learns from robot demonstrations.
 _Avoid_: Trained robot behavior, guaranteed person identity
 
+**Landmark detector**:
+A perception model that locates body or hand landmarks in one camera image. Its
+outputs can be used directly or combined by a 3D reconstruction method.
+_Avoid_: Behavior-model MLP, calibrated camera geometry
+
+**3D reconstruction**:
+Combining camera observations into a common three-dimensional frame. Calibrated
+triangulation uses measured camera geometry; body-aligned fusion retains inferred depth.
+_Avoid_: Guaranteed physical accuracy, robot training
+
+**Camera gateway**:
+A backend service that decodes configured IP-camera streams for browser capture.
+Camera credentials remain on the backend; decode time is not exposure time.
+_Avoid_: Robot ROS bridge, arbitrary URL proxy, synchronized camera trigger
+
 **Retargeting profile**:
 A versioned mapping from observable human landmarks to a robot's controllable joints, including neutral-pose preservation and joint-limit clamping.
 _Avoid_: Model prediction, training configuration

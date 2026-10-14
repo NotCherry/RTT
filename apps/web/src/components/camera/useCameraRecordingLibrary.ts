@@ -97,6 +97,7 @@ export function useCameraRecordingLibrary({ robot, joints, neutral, profile, sam
       name: captureMode === "simple" ? "Camera pose" : recording.name,
       created_at: recording.created_at,
       mode: captureMode,
+      detector: recording.detector,
       sample_rate: recording.sample_rate,
       source: recording.source,
       frames: recording.frames,

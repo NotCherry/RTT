@@ -6,6 +6,7 @@ export type CameraRecording = {
   name: string;
   created_at: string;
   source: CameraCapture["source"];
+  detector?: import("./cameraDetectorModels").CameraDetectorModel;
   sample_rate: CameraCapture["sample_rate"];
   duration_ms: number;
   width?: number;

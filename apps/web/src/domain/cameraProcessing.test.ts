@@ -5,6 +5,7 @@ const create = vi.hoisted(() => vi.fn());
 vi.mock("@mediapipe/tasks-vision", () => ({
   FilesetResolver: { forVisionTasks: vi.fn() },
   HolisticLandmarker: { createFromOptions: create },
+  PoseLandmarker: { createFromOptions: vi.fn(async () => ({ close: vi.fn(), detectForVideo: () => ({ landmarks: [], worldLandmarks: [] }) })) },
 }));
 import { extractCameraRecording } from "./cameraProcessing";
 let position = 0;
@@ -48,6 +49,13 @@ it("cancels extraction and closes the detector without returning partial frames"
 });
 it("reports rejected frames instead of inventing a successful gesture", async () => {
   detector.detectForVideo.mockReturnValue({ poseLandmarks: [] });
+  const result = await extractCameraRecording(new Blob(), 10, 300, new AbortController().signal, vi.fn());
+  expect(result.frames).toEqual([]);
+  expect(result.rejected_frames).toBe(3);
+});
+it("rejects detected multiple people instead of choosing the first person's target", async () => {
+  const pose = Array.from({ length: 33 }, () => ({ x: .5, y: .5, z: 0, visibility: 1 }));
+  detector.detectForVideo.mockReturnValue({ poseLandmarks: [pose, pose] });
   const result = await extractCameraRecording(new Blob(), 10, 300, new AbortController().signal, vi.fn());
   expect(result.frames).toEqual([]);
   expect(result.rejected_frames).toBe(3);

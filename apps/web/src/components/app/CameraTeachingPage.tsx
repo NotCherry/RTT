@@ -14,6 +14,7 @@ import { CameraSetupPanel } from "@/components/camera/CameraSetupPanel";
 import { CameraCalibrationPanel } from "@/components/camera/CameraCalibrationPanel";
 import { CameraRigControls } from "@/components/camera/CameraRigControls";
 import { PoseScene3D } from "@/components/camera/PoseScene3D";
+import { DetectorBenchmarkPanel } from "@/components/camera/DetectorBenchmarkPanel";
 import { mappingCoverage, retargetLandmarkFrame, type RetargetingProfile } from "@/domain/retargeting";
 import { directIpCameraStreamUrl } from "@/domain/ipCamera";
 import { useCameraRecordingLibrary } from "@/components/camera/useCameraRecordingLibrary";
@@ -44,6 +45,7 @@ function CameraWorkspace({ robot, state, joints, neutral, onPreview, onSave }: P
   const [remaining, setRemaining] = useState<number | null>(null);
   const [latest, setLatest] = useState<LandmarkFrame | null>(null);
   const [calibrationBusy, setCalibrationBusy] = useState(false);
+  const [benchmarkBusy, setBenchmarkBusy] = useState(false);
   const countdownTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   // Preview positions feed back through props; keep the entry pose as a stable neutral.
   const baseline = useRef([...neutral]);
@@ -73,7 +75,7 @@ function CameraWorkspace({ robot, state, joints, neutral, onPreview, onSave }: P
     onRecording: library.acceptRecording,
   }, robot?.id);
   const source=camera.rig.inputs[0].kind, address=camera.rig.inputs[0].address;
-  const locked = busy || extracting || calibrationBusy || camera.recording || camera.finalizing || camera.opening || remaining !== null;
+  const locked = busy || extracting || calibrationBusy || benchmarkBusy || camera.recording || camera.finalizing || camera.opening || remaining !== null;
   const session = useLiveCameraSession({ cameraConnected: camera.allConnected, openCamera: () => camera.open(source, address),
     closeCamera: camera.close, connection, liveProcessing: processing === "live",
     trackingFresh: () => performance.now() - trackingAt.current <= 250 });
@@ -101,6 +103,7 @@ function CameraWorkspace({ robot, state, joints, neutral, onPreview, onSave }: P
         {
           id: `camera-${crypto.randomUUID()}`,
           name: "Camera pose",
+          detector: camera.rig.detector,
           created_at: new Date().toISOString(),
           source: camera.rig.inputs.length>1
             ? {kind:"multi-camera",stream_count:camera.rig.inputs.length as 2|3,model:camera.rig.model,calibration:camera.rig.calibration}
@@ -223,6 +226,7 @@ function CameraWorkspace({ robot, state, joints, neutral, onPreview, onSave }: P
           onDelete={() => void remove()}
         />
       )}
+      {tab === "recordings" && selected && <DetectorBenchmarkPanel recording={selected} blocked={locked || camera.connected || Boolean(connection.status?.connected)} onBusyChange={setBenchmarkBusy} />}
       <p className="helper-text">
         Videos stay in this browser until deleted. Exported archives contain demonstrations, not videos. Left and right refer to your body.
         Continuous gestures use bounded motion and recover automatically after tracking settles. Keep one person in every view; tracking cannot guarantee person identity. Mapping drives compatible G1 joints; unsupported or unobserved joints keep the neutral pose.

@@ -64,6 +64,8 @@ export function loadDemoRobot() {
 export function cameraCalibrationRequest<T>(operation: "board" | "detect" | "solve", payload: unknown, signal?: AbortSignal) {
   return request<T>(`/api/camera-calibration/${operation}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload), signal });
 }
+export const getCameraGatewaySources = (signal?: AbortSignal) => request<{ sources: { id: string; name: string }[] }>("/api/camera-gateway/sources", { signal });
+export const getCameraGatewayFrame = <T>(identity: string, signal?: AbortSignal) => request<T>(`/api/camera-gateway/sources/${encodeURIComponent(identity)}/frame`, { signal });
 
 export function loadDefaultRobot() {
   return request<Robot>("/api/robots/default");

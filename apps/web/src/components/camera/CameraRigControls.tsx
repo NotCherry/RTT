@@ -3,6 +3,7 @@ import { H3 } from "@/components/ui/typography";
 import type { useMultiCameraCapture } from "./useMultiCameraCapture";
 import { StickFigure } from "./StickFigure";
 import { CameraMetrics } from "./CameraMetrics";
+import { IPCameraSourceSelect } from "./IPCameraSourceSelect";
 
 export type CameraRig = ReturnType<typeof useMultiCameraCapture>["rig"];
 export function CameraDeviceSelect({ rig, index, disabled }: { rig: CameraRig; index: number; disabled: boolean }) {
@@ -22,7 +23,7 @@ export function CameraRigControls({ rig, disabled, showSettings = true }: { rig:
       <PanelHeader><div><PanelLabel>{input.id.toUpperCase()}</PanelLabel><H3>Camera {index + 1}</H3></div></PanelHeader>
       {showSettings && <div className="route-form-grid"><label>Video source<select aria-label={`Camera ${index + 1} source`} value={input.kind} disabled={disabled} onChange={e => rig.update(index, { kind: e.target.value as typeof input.kind })}>
         <option value="local">Laptop / USB camera</option><option value="ip">Android IP camera · HTTP/MJPEG</option>
-      </select></label>{input.kind === "local" ? <CameraDeviceSelect rig={rig} index={index} disabled={disabled} /> : <label>IP camera URL<input aria-label={`Camera ${index + 1} IP URL`} value={input.address} disabled={disabled} onChange={e => rig.update(index, { address: e.target.value })} /></label>}</div>}
+      </select></label>{input.kind === "local" ? <CameraDeviceSelect rig={rig} index={index} disabled={disabled} /> : <IPCameraSourceSelect label={`Camera ${index + 1} IP`} address={input.address} onChange={value => rig.update(index, { address: value })} disabled={disabled} />}</div>}
       <div className="camera-live-preview"><video ref={camera.videoRef} muted playsInline className={input.kind === "local" ? "camera-live-media" : "hidden"} />
         <img ref={camera.imageRef} alt={`Camera ${index + 1} IP stream`} className={input.kind === "ip" ? "camera-live-media" : "hidden"} />
         {camera.connected && <StickFigure frame={rig.latest[index]} overlay showSides width={width} height={height} />}

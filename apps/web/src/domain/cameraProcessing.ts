@@ -1,9 +1,10 @@
 import type { LandmarkFrame } from "@/types";
 import { hasUsablePose } from "./retargeting";
 import { createCameraDetectorClient } from "./cameraDetectorClient";
+import type { CameraDetectorModel } from "./cameraDetectorModels";
 
-export async function createCameraDetector() {
-  return createCameraDetectorClient();
+export async function createCameraDetector(model: CameraDetectorModel = "holistic") {
+  return createCameraDetectorClient(model);
 }
 export type CameraDetector = Awaited<ReturnType<typeof createCameraDetector>>;
 export async function detectCameraFrame(
@@ -13,7 +14,7 @@ export async function detectCameraFrame(
 ): Promise<LandmarkFrame | null> {
   const result = await detector.detectForVideo(source, timestamp);
   const pose = result.poseLandmarks?.[0] ?? [];
-  if (!pose.length) return null;
+  if (!pose.length || result.poseLandmarks.length > 1) return null;
   const points = (input: typeof pose) => input.map(({ x, y, z, visibility }) => ({ x, y, z, visibility }));
   return {
     timestamp,
@@ -65,6 +66,8 @@ export async function extractCameraRecording(
   signal: AbortSignal,
   progress: (percent: number) => void,
   acceptFrame = hasUsablePose,
+  model: CameraDetectorModel = "holistic",
+  maximumDurationMs = Infinity,
 ) {
   signal.throwIfAborted();
   if (!Number.isFinite(sampleRate) || sampleRate <= 0 || sampleRate > 60)
@@ -84,11 +87,12 @@ export async function extractCameraRecording(
       await waitForMedia(video, "seeked", signal, () => {
         video.currentTime = 1e10;
       });
-    const duration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration * 1000 : durationMs;
+    const duration = Math.min(maximumDurationMs, Number.isFinite(video.duration) && video.duration > 0 ? video.duration * 1000 : durationMs);
     if (!Number.isFinite(duration) || duration <= 0)
       throw new Error("The recording has no readable duration. Record a new clip.");
     signal.throwIfAborted();
-    detector = await createCameraDetector();
+    detector = await createCameraDetector(model);
+    const inferenceTimes: number[] = [];
     signal.throwIfAborted();
     const frames: LandmarkFrame[] = [];
     let rejected = 0;
@@ -99,7 +103,9 @@ export async function extractCameraRecording(
         await waitForMedia(video, "seeked", signal, () => {
           video.currentTime = seconds;
         });
+      const started = performance.now();
       const frame = await detectCameraFrame(detector, video, timestamp);
+      inferenceTimes.push(performance.now() - started);
       if (frame && acceptFrame(frame)) frames.push(frame);
       else rejected++;
       progress(Math.min(100, Math.round(((timestamp + 1000 / sampleRate) / duration) * 100)));
@@ -112,6 +118,8 @@ export async function extractCameraRecording(
       processed: true,
       width: video.videoWidth,
       height: video.videoHeight,
+      detector: model,
+      inference_times_ms: inferenceTimes,
     };
   } finally {
     detector?.close();

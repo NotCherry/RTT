@@ -29,6 +29,7 @@ from .bundled_robots import ASSETS_DIR, attach_bundled_meshes, bundled_example_s
 from .session_runtime import SessionEvents, serialized
 from .robot_transport import controller as robot_controller, router as robot_transport_router
 from .camera_calibration_routes import router as camera_calibration_router
+from .camera_gateway_routes import router as camera_gateway_router
 from .modeling import compile_policy, legacy_model_spec
 from .schemas import (
     Dataset,
@@ -74,6 +75,7 @@ SESSION_IDLE_SECONDS = 30 * 60
 app = FastAPI(title="Robot Learning Workbench", version="0.1.0")
 app.include_router(robot_transport_router)
 app.include_router(camera_calibration_router)
+app.include_router(camera_gateway_router)
 app.mount(
     "/api/robot-meshes",
     StaticFiles(directory=ASSETS_DIR / "unitree_g1" / "meshes"),

@@ -1,15 +1,16 @@
 import type { HolisticLandmarkerResult } from "@mediapipe/tasks-vision";
 import { createHolisticCameraDetector } from "./holisticCameraDetector";
+import type { CameraDetectorModel } from "./cameraDetectorModels";
 export type CameraDetector = {
   mode: "worker" | "main-thread";
   detectForVideo: (source: HTMLVideoElement | HTMLImageElement, timestamp: number) => Promise<Pick<HolisticLandmarkerResult, "poseLandmarks" | "poseWorldLandmarks" | "leftHandLandmarks" | "rightHandLandmarks">>;
   close: () => void;
 };
-export async function createCameraDetectorClient(): Promise<CameraDetector> {
+export async function createCameraDetectorClient(model: CameraDetectorModel = "holistic"): Promise<CameraDetector> {
   if (typeof Worker !== "undefined" && typeof createImageBitmap === "function") {
     let worker: Worker;
     try { worker = new Worker("/camera-detector-worker.js"); }
-    catch { return mainThreadDetector(); }
+    catch { return mainThreadDetector(model); }
     let sequence = 0, closed = false;
     const pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>();
     function close() {
@@ -28,7 +29,7 @@ export async function createCameraDetectorClient(): Promise<CameraDetector> {
       const id = sequence++;
       const timer = setTimeout(() => { pending.delete(id); reject(new Error("Camera inference worker timed out")); close(); }, operation === "init" ? 20000 : 10000);
       pending.set(id, { resolve, reject, timer });
-      try { worker.postMessage({ id, operation, image, timestamp }, image ? [image] : []); }
+      try { worker.postMessage({ id, operation, image, timestamp, model }, image ? [image] : []); }
       catch (error) { pending.delete(id); clearTimeout(timer); image?.close(); reject(error); }
     });
     try {
@@ -43,9 +44,9 @@ export async function createCameraDetectorClient(): Promise<CameraDetector> {
       } };
     } catch { close(); }
   }
-  return mainThreadDetector();
+  return mainThreadDetector(model);
 }
-async function mainThreadDetector(): Promise<CameraDetector> {
-  const detector = await createHolisticCameraDetector();
+async function mainThreadDetector(model: CameraDetectorModel): Promise<CameraDetector> {
+  const detector = await createHolisticCameraDetector(model);
   return { mode: "main-thread", close: () => detector.close(), detectForVideo: async (source, timestamp) => detector.detectForVideo(source, timestamp) };
 }

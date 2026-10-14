@@ -2,12 +2,15 @@ import { useEffect, useRef, useState } from "react";
 import type { CameraCapture, LandmarkFrame } from "@/types";
 import type { CameraRecording } from "@/domain/cameraArchive";
 import { createCameraDetector, detectCameraFrame, type CameraDetector } from "@/domain/cameraProcessing";
-import { directIpCameraStreamUrl } from "@/domain/ipCamera";
+import { directIpCameraStreamUrl, gatewayCameraIdentity } from "@/domain/ipCamera";
+import { openCameraGatewayStream } from "@/domain/cameraGatewayStream";
 import { hasUsablePose } from "@/domain/retargeting";
 import { cameraFrameMetrics } from "@/domain/cameraFrameMetrics";
+import type { CameraDetectorModel } from "@/domain/cameraDetectorModels";
 
 export function useCameraCapture(options: {
   processing: "live" | "offline";
+  detector?: CameraDetectorModel;
   sampleRate: CameraCapture["sample_rate"];
   onFrame: (frame: LandmarkFrame | null) => void;
   onRecording: (recording: CameraRecording) => Promise<void>;
@@ -30,6 +33,7 @@ export function useCameraCapture(options: {
     rejected: number;
     recording: boolean;
     processingFailed?: boolean;
+    gateway?: ReturnType<typeof openCameraGatewayStream>;
   }>({ generation: 0, frames: [], start: 0, rejected: 0, recording: false });
   const [connected, setConnected] = useState(false);
   const [opening, setOpening] = useState(false);
@@ -58,6 +62,7 @@ export function useCameraCapture(options: {
     if (r.raf) cancelAnimationFrame(r.raf);
     r.detector?.close();
     r.detector = undefined;
+    r.gateway?.close(); r.gateway = undefined;
     r.stream?.getTracks().forEach((track) => { track.onended = null; track.stop(); });
     r.stream = undefined;
     if (videoRef.current) videoRef.current.srcObject = null;
@@ -120,6 +125,11 @@ export function useCameraCapture(options: {
           throw new Error("An HTTPS workbench requires an HTTPS IP camera.");
         const image = imageRef.current;
         if (!image) throw new Error("IP preview is unavailable.");
+        const identity = gatewayCameraIdentity(address);
+        if (identity) {
+          r.gateway = openCameraGatewayStream(identity, image, error => { close(); current.current.onRecordingError?.(error); });
+          await r.gateway.ready;
+        } else {
         await new Promise<void>((resolve, reject) => {
           const finish = (error?: Error) => {
             clearTimeout(timer);
@@ -141,12 +151,13 @@ export function useCameraCapture(options: {
           image.crossOrigin = "anonymous";
           image.src = url;
         });
+        }
         r.source = { kind: "ip-image-stream", url };
       }
       if (generation !== r.generation) return;
       if (current.current.processing === "live") {
         setStatus("Loading local pose model…");
-        const detector = await createCameraDetector();
+        const detector = await createCameraDetector(current.current.detector);
         if (generation !== r.generation) {
           detector.close();
           return;
@@ -158,6 +169,7 @@ export function useCameraCapture(options: {
       setStatus(r.detector ? "Live processing ready" : "Camera ready to record; extract landmarks later");
       let last = -Infinity;
       let lastMediaTime = -Infinity;
+      let lastGatewaySequence = "";
       const times: number[] = [], durations: number[] = [];
       let dropped = 0;
       const tick = async () => {
@@ -165,11 +177,17 @@ export function useCameraCapture(options: {
         const timestamp = performance.now();
         const input = source === "local" ? videoRef.current : imageRef.current;
         if (input && r.detector && timestamp - last >= 1000 / current.current.sampleRate) {
+          if (input instanceof HTMLImageElement && (input.dataset.cameraLoading === "true" || (input.dataset.cameraSequence && input.dataset.cameraSequence === lastGatewaySequence))) {
+            r.raf = requestAnimationFrame(tick); return;
+          }
           if (input instanceof HTMLVideoElement && input.currentTime===lastMediaTime) {
             r.raf=requestAnimationFrame(tick);
             return;
           }
           if (input instanceof HTMLVideoElement) lastMediaTime=input.currentTime;
+          if (input instanceof HTMLImageElement && input.dataset.cameraSequence) lastGatewaySequence = input.dataset.cameraSequence;
+          const sourceAge = input instanceof HTMLImageElement && input.dataset.cameraReceivedAt
+            ? Number(input.dataset.cameraSourceAge) + timestamp - Number(input.dataset.cameraReceivedAt) : 0;
           if (Number.isFinite(last)) dropped += Math.max(0, Math.floor((timestamp - last) * current.current.sampleRate / 1000) - 1);
           last = timestamp;
           try {
@@ -179,7 +197,7 @@ export function useCameraCapture(options: {
             times.push(processedAt); durations.push(processedAt - timestamp);
             if (times.length > 60) { times.shift(); durations.shift(); }
             setMetrics(cameraFrameMetrics(times, durations, dropped, r.detector.mode ?? "main-thread"));
-            const accepted = frame && processedAt - timestamp <= 250 && (current.current.acceptFrame ?? hasUsablePose)(frame)
+            const accepted = frame && sourceAge + processedAt - timestamp <= 250 && (current.current.acceptFrame ?? hasUsablePose)(frame)
               ? { ...frame, timing: { observed_at_ms: timestamp, processed_at_ms: processedAt, source: "browser-observation" as const } } : null;
             current.current.onFrame(accepted);
             if (r.recording) {
@@ -284,6 +302,7 @@ export function useCameraCapture(options: {
           frames: [...r.frames],
           rejected_frames: r.rejected,
           processed: processed && !r.processingFailed,
+          detector: current.current.detector ?? "holistic",
           recording_start_ms: r.start,
           video: new Blob(chunks, { type: recorder.mimeType || mimeType || "video/webm" }),
         };

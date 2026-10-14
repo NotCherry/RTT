@@ -13,6 +13,7 @@ import { visiblePosePoint } from "@/domain/retargetingGeometry";
 import { directIpCameraStreamUrl } from "@/domain/ipCamera";
 import { defaultCameraInputs, loadCameraSetup, saveCameraSetup } from "@/domain/cameraSetup";
 import { nearestCameraFrame, TRIANGULATION_SYNC_MS } from "@/domain/cameraViewAlignment";
+import type { CameraDetectorModel } from "@/domain/cameraDetectorModels";
 
 type Options = Parameters<typeof useCameraCapture>[0];
 export function useMultiCameraCapture(options: Options, setupKey?: string) {
@@ -22,6 +23,7 @@ export function useMultiCameraCapture(options: Options, setupKey?: string) {
   const [inputs, setInputs] = useState<CameraInput[]>(() => defaultCameraInputs().map((input, i) => savedSetup.current?.inputs[i] ?? input));
   const [count, setCount] = useState(savedSetup.current?.inputs.length ?? 1);
   const [setupName, setSetupName] = useState(savedSetup.current?.name ?? "My camera setup");
+  const [detector, setDetector] = useState<CameraDetectorModel>(savedSetup.current?.detector ?? "holistic");
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [model, setModel] = useState<PoseFusionModel>(savedSetup.current?.model ?? "body-aligned");
   const [calibration, setCalibration] = useState<CameraCalibration | undefined>(savedSetup.current?.calibration);
@@ -147,6 +149,7 @@ export function useMultiCameraCapture(options: Options, setupKey?: string) {
     (count > 1 && [11, 12, 23, 24].every((i) => visiblePosePoint(f.pose[i])));
   const first = useCameraCapture({
     ...options,
+    detector,
     acceptFrame,
     onFrame: (value) => frame(0, value),
     onRecording: (clip) => recorded(0, clip),
@@ -154,6 +157,7 @@ export function useMultiCameraCapture(options: Options, setupKey?: string) {
   });
   const second = useCameraCapture({
     ...options,
+    detector,
     acceptFrame,
     onFrame: (value) => frame(1, value),
     onRecording: (clip) => recorded(1, clip),
@@ -161,6 +165,7 @@ export function useMultiCameraCapture(options: Options, setupKey?: string) {
   });
   const third = useCameraCapture({
     ...options,
+    detector,
     acceptFrame,
     onFrame: (value) => frame(2, value),
     onRecording: (clip) => recorded(2, clip),
@@ -345,6 +350,8 @@ export function useMultiCameraCapture(options: Options, setupKey?: string) {
       model,
       calibration,
       setupName,
+      detector,
+      setDetector,
       setSetupName,
       setCount: (value: number) => {
         if (![1, 2, 3].includes(value)) return;
@@ -355,7 +362,7 @@ export function useMultiCameraCapture(options: Options, setupKey?: string) {
       saveSetup: () => {
         try {
           if (!setupKey) throw new Error("Open a robot before saving the camera setup.");
-          saveCameraSetup(setupKey, { version: 1, name: setupName.trim() || "My camera setup", inputs: inputs.slice(0, count), model, calibration });
+          saveCameraSetup(setupKey, { version: 1, name: setupName.trim() || "My camera setup", inputs: inputs.slice(0, count), model, detector, calibration });
           setMessage("Camera setup saved on this device.");
         } catch (error) { setMessage(error instanceof Error ? error.message : "Camera setup could not be saved."); }
       },
