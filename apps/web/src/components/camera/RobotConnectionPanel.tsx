@@ -7,9 +7,9 @@ import type { RetargetingProfile } from "@/domain/retargeting";
 import { controlForProfile } from "@/domain/robotControlMapping";
 import type { useLiveCameraSession } from "./useLiveCameraSession";
 
-export function RobotConnectionPanel({ connection, live, profile = "g1-upper-body", session, preview, canStart = true, previewConnected = live }: {
+export function RobotConnectionPanel({ connection, live, profile = "g1-upper-body", session, preview, canStart = true, previewConnected = live, runBlocked = false }: {
   connection: ReturnType<typeof useRobotTransport>; live: boolean; profile?: RetargetingProfile;
-  session?: ReturnType<typeof useLiveCameraSession>; preview?: () => void; canStart?: boolean; previewConnected?: boolean;
+  session?: ReturnType<typeof useLiveCameraSession>; preview?: () => void; canStart?: boolean; previewConnected?: boolean; runBlocked?: boolean;
 }) {
   const [transport, setTransport] = useState<RobotConnectionConfig["transport"]>("unitree-sdk2");
   const [model, setModel] = useState<"g1-29" | "g1-23">("g1-29");
@@ -47,7 +47,7 @@ export function RobotConnectionPanel({ connection, live, profile = "g1-upper-bod
         {session.busy ? <Button variant="secondary" onClick={session.cancel}>Cancel startup</Button> : <>
           {!status?.armed && <Button variant="secondary" disabled={!canStart || connection.busy} onClick={preview}>{previewConnected ? "Close cameras" : "Start live preview"}</Button>}
           {status?.armed ? <Button variant="recording" disabled={!connection.owned || connection.busy} onClick={() => void connection.action("disarm")}>Stop robot</Button>
-            : <Button disabled={!canStart || connection.busy || (status?.connected && !connection.owned) || (transport === "unitree-sdk2" && !ddsValid) || (transport === "unitree-rosbridge" && !bridgeValid)} onClick={() => void session.start(settings())}>{transport === "mock" ? "Run on mock robot" : "Run on physical robot"}</Button>}
+            : <Button disabled={runBlocked || !canStart || connection.busy || (status?.connected && !connection.owned) || (transport === "unitree-sdk2" && !ddsValid) || (transport === "unitree-rosbridge" && !bridgeValid)} onClick={() => void session.start(settings())}>{transport === "mock" ? "Run on mock robot" : "Run on physical robot"}</Button>}
           {status?.connected && <Button variant="secondary" disabled={!connection.owned || connection.busy} onClick={() => void connection.action("disconnect")}>Disconnect robot</Button>}
         </>}
       </div><p aria-live="polite" className="helper-text">{session.stage}</p>{session.error && <p role="alert" className="helper-text">{session.error}</p>}</>}

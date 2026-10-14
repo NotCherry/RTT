@@ -61,6 +61,10 @@ export function loadDemoRobot() {
   return request<Robot>("/api/robots/demo");
 }
 
+export function cameraCalibrationRequest<T>(operation: "board" | "detect" | "solve", payload: unknown, signal?: AbortSignal) {
+  return request<T>(`/api/camera-calibration/${operation}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload), signal });
+}
+
 export function loadDefaultRobot() {
   return request<Robot>("/api/robots/default");
 }

@@ -7,8 +7,8 @@ Goal reference: camera-workspace-2026-10-14.
 | --- | --- | --- |
 | CAM-01 | ADR, ownership contracts and verification environment | Complete |
 | CAM-02 | Live-first workspace, persistent 1/2/3-camera setup and one-click robot session | Complete |
-| CAM-03 | Guided in-app calibration with isolated solver and versioned calibration | In progress |
-| CAM-04 | Timed multi-camera reconstruction, diagnostics and synchronized recording inspection | Pending |
+| CAM-03 | Guided in-app calibration with isolated solver and versioned calibration | Complete |
+| CAM-04 | Timed multi-camera reconstruction, diagnostics and synchronized recording inspection | In progress |
 | CAM-05 | Supported IP-camera gateway and detector performance evaluation | Pending |
 | CAM-06 | Physical motion-reference diagnostics and matching profile | Pending |
 | CAM-07 | Integration journeys, layout review, acceptance report and clean commits | Pending |
@@ -25,3 +25,10 @@ arming. Desktop/mobile bounds were checked. The code-review skill is unavailable
 startup races and the changed UI received a manual review. The canonical WSL
 container build was started; a separate container backend plus host Vite server
 was used while its frontend dependency download continued.
+
+CAM-03 verification: 206 frontend tests, production build and five workspace
+journeys passed. Backend verification passed 162 tests; four Unitree SDK modules
+were skipped because the simulation image has no SDK. Calibration tests exercise
+real ChArUco pixels, known three-camera geometry, held-out reprojection rejection,
+invalid source/board contracts and timeout process reaping. Camera accuracy on an
+actual arrangement remains a separate hardware acceptance check.

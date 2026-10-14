@@ -608,6 +608,9 @@
 .camera-rig-tiles { display: contents; }
 .camera-workspace-grid .camera-source-panel .camera-live-preview { height: clamp(260px, 40vh, 480px); }
 .camera-settings-fields { display: contents; }
+.camera-calibration-snapshots { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; padding: 12px; }
+.camera-calibration-snapshots svg { display: block; width: 100%; border-radius: 5px; }
+.camera-board-corner { fill: var(--color-success-400); stroke: var(--color-ink-950); stroke-width: 2px; }
 .camera-workspace-grid.camera-robot-only { grid-template-columns: minmax(0, 1fr); }
 @media (max-width: 760px) { .camera-workspace-grid { grid-template-columns: minmax(0, 1fr); } }
 .camera-robot-only { grid-template-columns: minmax(0, 1fr); }

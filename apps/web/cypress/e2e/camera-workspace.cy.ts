@@ -103,6 +103,23 @@ function stubLandmarks() {
   });
 }
 describe('Camera workspace', () => {
+  it('detects calibration snapshots through the isolated API and blocks robot startup in Calibration', () => {
+    openCameraPage(true); setupTab();
+    cy.get('[aria-label="Camera count"]').select('2');
+    for (const i of [1, 2]) cy.get(`[aria-label="USB camera ${i}"]`).select(`camera-${i}`);
+    cy.get('[aria-label="Processing mode"]').select('offline');
+    cy.contains('button', 'Test all cameras').click();
+    cy.contains('Camera 2: Camera ready to record', { timeout: 30000 }).should('exist');
+    cy.contains('[role="tab"]', 'Calibration').click();
+    cy.contains('button', 'Run on physical robot').should('be.disabled');
+    cy.intercept('POST', '/api/camera-calibration/detect').as('detectBoard');
+    cy.contains('button', 'Capture board pose').click();
+    cy.wait('@detectBoard', { timeout: 30000 }).its('response.statusCode').should('equal', 200);
+    cy.contains('Board needs at least 12 matching corners').should('exist');
+    cy.get('[aria-label="view-1 detected board corners"]').should('be.visible');
+    cy.contains('button', 'Solve calibration (0/14 poses)').should('be.disabled');
+    cy.contains('button', 'Close cameras').filter(':visible').first().click();
+  });
   it('selects and saves three independent sources and shows all views together', () => {
     openCameraPage(true);
     setupTab();

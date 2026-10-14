@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui";
 import { H2, IntroCopy, Kicker } from "@/components/ui/typography";
-import { safeCameraGesture } from "@/domain/cameraMotionSafety";
 import { useSafeCameraMotion } from "@/components/camera/useSafeCameraMotion";
 import { useRobotTransport } from "@/components/camera/useRobotTransport";
 import { RobotConnectionPanel } from "@/components/camera/RobotConnectionPanel";
@@ -12,18 +11,11 @@ import { CameraSourcePanel } from "@/components/camera/CameraSourcePanel";
 import { useMultiCameraCapture } from "@/components/camera/useMultiCameraCapture";
 import { useLiveCameraSession } from "@/components/camera/useLiveCameraSession";
 import { CameraSetupPanel } from "@/components/camera/CameraSetupPanel";
+import { CameraCalibrationPanel } from "@/components/camera/CameraCalibrationPanel";
 import { CameraRigControls } from "@/components/camera/CameraRigControls";
-import { mappingCoverage, retargetLandmarkFrame, RETARGETING_PROFILE_VERSION, type RetargetingProfile } from "@/domain/retargeting";
-import {
-  deleteCameraRecording,
-  listCameraRecordings,
-  loadCameraRecording,
-  saveCameraRecording,
-  type CameraRecording,
-  type CameraRecordingSummary,
-} from "@/domain/cameraArchive";
+import { mappingCoverage, retargetLandmarkFrame, type RetargetingProfile } from "@/domain/retargeting";
 import { directIpCameraStreamUrl } from "@/domain/ipCamera";
-import { extractMultiCameraRecording } from "@/domain/multiCameraRecording";
+import { useCameraRecordingLibrary } from "@/components/camera/useCameraRecordingLibrary";
 import type { CameraCapture, Joint, LandmarkFrame, Robot, SimulationState } from "@/types";
 
 type Props = {
@@ -34,7 +26,6 @@ type Props = {
   onPreview: (positions: number[]) => void;
   onSave: (capture: CameraCapture, positions: number[][]) => Promise<void>;
 };
-const message = (error: unknown) => (error instanceof Error ? error.message : "Camera operation failed.");
 
 export function CameraTeachingPage(props: Props) {
   // Remount all camera resources when the robot changes; do not reuse another robot's recordings.
@@ -51,36 +42,16 @@ function CameraWorkspace({ robot, state, joints, neutral, onPreview, onSave }: P
   const [countdown, setCountdown] = useState(3);
   const [remaining, setRemaining] = useState<number | null>(null);
   const [latest, setLatest] = useState<LandmarkFrame | null>(null);
-  const [rows, setRows] = useState<CameraRecordingSummary[]>([]);
-  const [selected, setSelected] = useState<CameraRecording | null>(null);
-  const [status, setStatus] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [extracting, setExtracting] = useState(false);
-  const [progress, setProgress] = useState(0);
-  const [storageFailed, setStorageFailed] = useState(false);
-  const abort = useRef<AbortController | null>(null);
-  const mounted = useRef(true);
+  const [calibrationBusy, setCalibrationBusy] = useState(false);
   const countdownTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   // Preview positions feed back through props; keep the entry pose as a stable neutral.
   const baseline = useRef([...neutral]);
+  const library = useCameraRecordingLibrary({ robot, joints, neutral: baseline.current, profile, sampleRate, setSampleRate, onSave });
+  const { rows, selected, status, setStatus, busy, extracting, progress, storageFailed, select, extract, saveDemonstration, retrySave, remove } = library;
   const connection = useRobotTransport();
   const trackingAt = useRef(-Infinity);
   const motion = useSafeCameraMotion(joints, baseline.current, profile, positions => { if (tab !== "recordings") onPreview(positions); }, state?.positions ?? neutral, previewSpeed);
-  async function refresh() {
-    if (robot) {
-      const next = await listCameraRecordings(robot.id);
-      if (mounted.current) setRows(next);
-    }
-  }
-  useEffect(() => {
-    mounted.current = true;
-    void refresh().catch((error) => setStatus(message(error)));
-    return () => {
-      mounted.current = false;
-      abort.current?.abort();
-      if (countdownTimer.current) clearInterval(countdownTimer.current);
-    };
-  }, []);
+  useEffect(() => () => { if (countdownTimer.current) clearInterval(countdownTimer.current); }, []);
   const camera = useMultiCameraCapture({
     processing,
     sampleRate,
@@ -98,28 +69,10 @@ function CameraWorkspace({ robot, state, joints, neutral, onPreview, onSave }: P
           ? [[joint.name, physicalTarget[i]]] : [])) : null;
       connection.submit(positions && Object.keys(positions).length ? positions : null);
     },
-    onRecording: async (recording) => {
-      if (!robot) return;
-      let saved = true;
-      try {
-        await saveCameraRecording(robot.id, recording);
-      } catch {
-        saved = false;
-      }
-      if (!mounted.current) return;
-      setSelected(recording);
-      setStorageFailed(!saved);
-      setBusy(false);
-      setStatus(
-        saved
-          ? "Recording saved on this device. Live preview continues; inspect it in Recordings."
-          : "Browser storage failed. This recording is available only in this session; use Retry saving recording.",
-      );
-      if (saved) await refresh();
-    },
+    onRecording: library.acceptRecording,
   }, robot?.id);
   const source=camera.rig.inputs[0].kind, address=camera.rig.inputs[0].address;
-  const locked = busy || extracting || camera.recording || camera.finalizing || camera.opening || remaining !== null;
+  const locked = busy || extracting || calibrationBusy || camera.recording || camera.finalizing || camera.opening || remaining !== null;
   const session = useLiveCameraSession({ cameraConnected: camera.connected, openCamera: () => camera.open(source, address),
     closeCamera: camera.close, connection, liveProcessing: processing === "live",
     trackingFresh: () => performance.now() - trackingAt.current <= 250 });
@@ -140,119 +93,6 @@ function CameraWorkspace({ robot, state, joints, neutral, onPreview, onSave }: P
         camera.startRecording();
       }
     }, 1000);
-  }
-  async function select(id: string) {
-    if (!robot) return;
-    setBusy(true);
-    setStatus("");
-    try {
-      const recording = await loadCameraRecording(robot.id, id);
-      if (!recording) throw new Error("This recording no longer exists.");
-      if (mounted.current) {
-        setSelected(recording);
-        setStorageFailed(false);
-        setSampleRate(recording.sample_rate);
-      }
-    } catch (error) {
-      setStatus(message(error));
-    } finally {
-      if (mounted.current) setBusy(false);
-    }
-  }
-  async function extract() {
-    if (!robot || !selected?.video) return;
-    const controller = new AbortController();
-    abort.current = controller;
-    setExtracting(true);
-    setProgress(0);
-    setStatus("Extracting stick figure locally…");
-    try {
-      const result = await extractMultiCameraRecording(
-        selected,
-        sampleRate,
-        controller.signal,
-        setProgress,
-      );
-      controller.signal.throwIfAborted();
-      const next = { ...selected, ...result, sample_rate: sampleRate };
-      setSelected(next);
-      setStorageFailed(true);
-      await saveCameraRecording(robot.id, next);
-      setStorageFailed(false);
-      await refresh();
-      setStatus(
-        result.frames.length
-          ? `Extracted ${result.frames.length} frames. Inspect the mapping, then save the robot gesture.`
-          : "No confident pose found. The recording is retained; try a clearer view or re-extract.",
-      );
-    } catch (error) {
-      if (mounted.current)
-        setStatus(
-          controller.signal.aborted
-            ? "Extraction cancelled. The recording and previous extraction are retained."
-            : `${message(error)} The recording remains available; retry extraction or saving.`,
-        );
-    } finally {
-      if (mounted.current) setExtracting(false);
-      abort.current = null;
-    }
-  }
-  async function saveDemonstration(recording: CameraRecording, captureMode: "simple" | "continuous") {
-    if (!recording.frames.some((frame) => mappingCoverage(frame, joints, profile).mapped.length)) return;
-    setBusy(true);
-    const capture: CameraCapture = {
-      id: recording.id,
-      version: 1,
-      name: captureMode === "simple" ? "Camera pose" : recording.name,
-      created_at: recording.created_at,
-      mode: captureMode,
-      sample_rate: recording.sample_rate,
-      source: recording.source,
-      frames: recording.frames,
-      quality: { accepted_frames: recording.frames.length, rejected_frames: recording.rejected_frames ?? 0 },
-      retargeting_profile: profile,
-      retargeting_profile_version: RETARGETING_PROFILE_VERSION,
-      ...(recording.video ? { video_id: recording.id } : {}),
-    };
-    const guarded = captureMode === "continuous" ? safeCameraGesture(recording.frames, joints, baseline.current, profile) : null;
-    try {
-      await onSave(capture, guarded?.positions ?? recording.frames.map((frame) => retargetLandmarkFrame(frame, joints, baseline.current, profile)));
-      setStatus(guarded?.pausedAt != null
-        ? `Saved to Archive. A tracking break at ${(guarded.pausedAt / 1000).toFixed(2)} s was held and recovered automatically. Inspect the gesture before training.`
-        : "Saved to Archive. The robot demonstration is ready for training.");
-    } catch (error) {
-      setStatus(`Save failed: ${message(error)}`);
-    } finally {
-      if (mounted.current) setBusy(false);
-    }
-  }
-  async function retrySave() {
-    if (!robot || !selected) return;
-    setBusy(true);
-    try {
-      await saveCameraRecording(robot.id, selected);
-      setStorageFailed(false);
-      await refresh();
-      setStatus("Recording saved on this device.");
-    } catch (error) {
-      setStatus(message(error));
-    } finally {
-      setBusy(false);
-    }
-  }
-  async function remove() {
-    if (!robot || !selected) return;
-    setBusy(true);
-    try {
-      await deleteCameraRecording(robot.id, selected.id);
-      setSelected(null);
-      await refresh();
-      setStatus("Local recording deleted. Saved robot demonstrations remain in Archive.");
-    } catch (error) {
-      setStatus(message(error));
-    } finally {
-      setBusy(false);
-    }
   }
   function savePose() {
     if (latest)
@@ -283,6 +123,7 @@ function CameraWorkspace({ robot, state, joints, neutral, onPreview, onSave }: P
         </div>
       </div>
       <RobotConnectionPanel connection={connection} profile={profile} live={camera.connected && processing === "live"} previewConnected={camera.connected} session={session} canStart={Boolean(robot) && !locked}
+        runBlocked={tab === "calibration"}
         preview={() => { if (camera.connected) camera.close(); else void session.start(); }} />
       <div className="route-actions" role="tablist" aria-label="Camera workspace">
         {([["live", "Live camera"], ["setup", "Camera setup"], ["calibration", "Calibration"], ["recordings", "Recordings"]] as const).map(([value, label]) =>
@@ -318,7 +159,10 @@ function CameraWorkspace({ robot, state, joints, neutral, onPreview, onSave }: P
           </select>
         </label>
       </div></div>
-      <div className={tab === "calibration" ? "" : "hidden"}><CameraSetupPanel rig={camera.rig} disabled={locked || session.busy || camera.connected || Boolean(connection.status?.connected)} calibrationOnly /></div>
+      <div className={tab === "calibration" ? "" : "hidden"}>
+        <CameraCalibrationPanel rig={camera.rig} connected={camera.connected} blocked={camera.recording || camera.finalizing || session.busy || Boolean(connection.status?.connected)} onBusyChange={setCalibrationBusy} />
+        <CameraSetupPanel rig={camera.rig} disabled={locked || session.busy || camera.connected || Boolean(connection.status?.connected)} calibrationOnly />
+      </div>
         <div className={tab === "recordings" ? "hidden" : `camera-workspace-grid${tab === "live" && robotOnly ? " camera-robot-only" : ""}`}>
           <div className={`camera-source-container${tab === "live" && robotOnly ? " hidden" : ""}`}>
             <CameraSourcePanel
@@ -369,7 +213,7 @@ function CameraWorkspace({ robot, state, joints, neutral, onPreview, onSave }: P
           onPreview={onPreview}
           onSelect={(id) => void select(id)}
           onExtract={() => void extract()}
-          onCancel={() => abort.current?.abort()}
+          onCancel={library.cancelExtraction}
           onSave={() => selected && void saveDemonstration(selected, "continuous")}
           onRetry={() => void retrySave()}
           onDelete={() => void remove()}

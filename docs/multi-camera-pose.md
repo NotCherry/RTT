@@ -1,5 +1,26 @@
 # Camera setup for two or three views
 
+The Camera workspace now has separate **Camera setup** and **Calibration** tabs.
+Select **1 camera**, **2 cameras**, or **3 cameras** in Camera setup, configure each
+USB/IP source, and inspect all views together. **Save setup** retains exact source
+bindings on this device. **Start live preview** opens the selected arrangement;
+the explicitly labeled **Run on physical robot** also connects and arms DDS once
+tracking and measured state are ready. Finishing a recording keeps capture open.
+
+For guided calibration, open all sources and go to Calibration with robot control
+disconnected. Download the ChArUco board, mount it flat, measure its square and
+marker edges, and enter those dimensions. Hold the board still for each **Capture
+board pose**, varying its tilt, location and distance. The latest snapshots show
+detected corners in all views. Capture at least 14 diverse shared poses, then
+**Solve calibration**. The fitting uses at least 12 poses and independently checks
+two held-out poses; errors over two pixels are rejected. Select Calibrated
+triangulation in Camera setup and save the resulting setup.
+
+Calibration runs in a bounded spawned worker outside the DDS process. Camera
+snapshots are transient and are not saved to Archive. Geometric calibration does
+not verify exposure timing. The existing checkerboard CLI and JSON import remain
+available below for older calibrations.
+
 Camera now supports USB webcams, IP streams, or a mixture. Use **Add camera**
 once for two views or twice for three. Each view runs the bundled MediaPipe
 Holistic model; the pose estimator combines the results before retargeting.
