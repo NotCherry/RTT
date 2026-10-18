@@ -106,11 +106,13 @@ npm run test:e2e
 
 For a Vite dev server instead, use `npm run test:e2e -- --config baseUrl=http://localhost:5173`.
 
-## Production deployment
+## CI and parallel development
 
-Render production deployment is defined in [`render.yaml`](./render.yaml). Follow the one-time setup instructions in [Deploying to Render](./docs/render-deployment.md). GitHub Actions deploys only after CI passes on `main` or `master`.
+GitHub Actions validates pull requests, merge-queue candidates, and pushes to `master`/`main`. It checks infrastructure, frontend tests/design/build, backend tests, and container-backed browser journeys. The final `CI passed` check is the merge gate. There is no automated deployment or image publishing.
 
-For an isolated local production-style preview, run `./infra/scripts/preview.sh --port 8100`; this does not expose the application outside your computer.
+See [the contribution and CI guide](./docs/contributing.md) for worktree setup, reproducing checks, failure artifacts, and the GitHub ruleset needed to enforce the merge gate. Coding agents must use a separate branch and worktree for each task so independent changes can proceed at the same time.
+
+The contribution guide also shows how to start a simulation preview with a unique Compose project and ports for each worktree.
 
 ## Frontend design reference
 
