@@ -8,6 +8,7 @@ apps/api/data/
 .pytest_cache/
 .cypress/
 coverage/
+test-results/
 apps/web/cypress/screenshots/
 apps/web/cypress/videos/
 .DS_Store

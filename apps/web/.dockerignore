@@ -1,5 +1,8 @@
 node_modules
 dist
+test-results
+cypress/screenshots
+cypress/videos
 .venv
 .git
 data
